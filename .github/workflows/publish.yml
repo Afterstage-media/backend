@@ -1,0 +1,12 @@
+name: Publish backend image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    uses: medio-under/ci-cd/.github/workflows/reusable-publish-image.yml@main
+    with:
+      component: backend
