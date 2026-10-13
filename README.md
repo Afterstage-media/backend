@@ -1,0 +1,217 @@
+# Gestor editorial y de redes de Medio Under
+
+Backend Node.js desacoplado para gestionar el ciclo completo de una pieza editorial: idea, nota, material visual, copys, aprobación, programación y publicación. La interfaz React/Vite vive en `../frontend` y consume esta API.
+
+## Norte del producto
+
+Medio Under busca convertirse en un medio reconocido para acceder a pases de prensa en eventos y recitales. El gestor debe ayudar a demostrar trabajo periodístico real: archivo de coberturas, notas consistentes, fotos correctamente acreditadas, métricas y seguimiento de contactos. La automatización de redes es el último tramo de ese proceso, no un sustituto de la edición ni de la relación con productoras y salas.
+
+El dominio de prensa ya incorpora:
+
+- eventos y artistas vinculados a cada nota y cobertura;
+- dossier de prensa público con audiencia, equipo, servicios y ejemplos;
+- agenda de productoras, sellos, salas y contactos de prensa;
+- solicitudes de acreditación con estados `borrador`, `enviada`, `aceptada`, `rechazada`, `cubierta` y `seguimiento`;
+- historial de enlaces y métricas para adjuntar a cada nuevo pedido.
+
+## Arquitectura
+
+- **Frontend:** React 19 + Vite, servido como SPA por Nginx y conectado a esta API.
+- **API:** Node.js 22, Express y TypeScript estricto.
+- **Persistencia:** MongoDB obligatorio; los stores JSON sólo existen para tests unitarios aislados.
+- **IA:** endpoint compatible con OpenAI para nota completa, copys o edición.
+- **Meta:** Instagram Content Publishing API y Facebook Pages API.
+- **MCP:** servidor stdio local con herramientas editoriales; su límite de seguridad es el acceso al proceso y a sus variables.
+- **Operación:** logs JSON, health/readiness, estado del scheduler, rate limit, auditoría `data/audit.jsonl` y script de backup.
+- **Operación:** imagen Docker multi-stage, usuario sin privilegios y healthcheck.
+
+La estructura de `src` sigue una arquitectura por capas:
+
+```text
+src/
+├── domain/                    # tipos, schemas y reglas puras
+│   ├── content/
+│   └── press/
+├── application/               # casos de uso y scheduler
+├── infrastructure/
+│   ├── persistence/            # JSON/MongoDB
+│   └── integrations/           # Meta, IA, SMTP, RSS y medios
+├── interfaces/
+│   ├── http/                   # Express, seguridad y endpoints
+│   └── mcp/                    # transporte MCP
+└── bootstrap/                  # arranque del proceso
+```
+
+Las colecciones `contents`, `press_events`, `press_contacts`, `press_accreditations`, `press_coverages`, `press_settings`, `directory` y `users` se inicializan con índices para estados, fechas, agenda, directorio y búsquedas de contactos. Sin `MONGODB_URI` el servicio no inicia.
+
+No se automatiza Chrome. La API oficial de Meta evita selectores rotos, sesiones vencidas, captchas y almacenamiento de contraseñas. También ofrece IDs, estados y errores auditables. Si una función no está disponible para la cuenta, se puede añadir otro adaptador detrás de `MetaPublisher` sin cambiar el panel ni MCP.
+
+## Inicio rápido
+
+```bash
+cp .env.example .env
+# Generar un token seguro, por ejemplo: openssl rand -hex 32
+docker compose up --build
+```
+
+La interfaz queda disponible en `http://localhost:8080` y la redacción en `http://localhost:8080/admin`. El backend directo queda en `http://localhost:8787`.
+
+Para desarrollo sin Docker:
+
+```bash
+cd backend
+npm install
+ADMIN_TOKEN=desarrollo npm run dev
+```
+
+## Variables
+
+| Variable | Uso |
+| --- | --- |
+| `ADMIN_TOKEN` | Token explícito de administración local; no representa usuarios de producción. |
+| `MONGODB_URI` | URI obligatoria de MongoDB Atlas. |
+| `MONGODB_DB` | Base de datos, por defecto `medio_under`. |
+| `PUBLIC_BASE_URL` | Origen HTTPS público desde el que Meta descargará imágenes. |
+| `MEDIA_ROOT` | Raíz local autorizada para archivos que se sirven bajo `/media`. |
+| `PUBLIC_MEDIA_BASE_URL` | Base pública alternativa para medios locales. |
+| `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
+| `AI_API_KEY` | Habilita las acciones de generación. |
+| `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
+| `AI_MODEL` | Modelo de redacción. |
+| `META_ACCESS_TOKEN` | Token de Page de larga duración. |
+| `META_INSTAGRAM_ACCOUNT_ID` | ID de la cuenta profesional vinculada. |
+| `META_PAGE_ID` | ID de la página de Facebook. |
+| `META_API_VERSION` | Versión de Graph API, configurable para facilitar upgrades. |
+| `CORS_ORIGINS` | Lista opcional de orígenes permitidos, separada por comas. |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Opcionales. Habilitan el envío de solicitudes de acreditación. |
+| `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Ajustes del transporte de correo. |
+| `AUTH_USERS_JSON` | Usuarios técnicos opcionales para desarrollo, con `roles` (array) y `permissions` (array). Los usuarios de producción se gestionan en MongoDB. |
+| `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
+| `JWT_ACCESS_TTL_SECONDS` | Duración del access token emitido por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
+| `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
+| `EVENTS_RSS_URLS` | URLs RSS/Atom públicas separadas por coma. Sus eventos se combinan con la agenda editorial, con caché de 5 minutos. |
+
+El token de Meta necesita los permisos vigentes equivalentes a publicación de contenido de Instagram y gestión/publicación de páginas. La cuenta de Instagram debe ser profesional y estar vinculada a la página. Revisá los nombres y requisitos actuales en Meta antes del despliegue, porque cambian entre versiones.
+
+Para publicar imágenes locales, `PUBLIC_BASE_URL` debe resolver por HTTPS hacia este servicio o hacia un storage/CDN. `localhost` no es accesible para los servidores de Meta.
+
+Para Atlas, agregá la IP del servidor en Network Access, creá un usuario de base de datos y copiá la URI SRV completa en `MONGODB_URI`. El driver mantiene un único pool por proceso con `maxPoolSize=20`, `maxIdleTimeMS=5 min`, `serverSelectionTimeoutMS=5 s` y `waitQueueTimeoutMS=5 s`, valores conservadores para un servidor editorial de baja concurrencia.
+
+El login se administra en MongoDB. Para crear o rotar un usuario ejecutá `USER_PASSWORD='una-clave-de-12-o-más-caracteres' MONGODB_URI='...' npm run users:upsert -- redaccion editor redaccion@medio.example true`. El backend nunca guarda la contraseña en claro: usa hashes `scrypt`, emite JWT HS256 de corta duración y vuelve a consultar en Mongo el usuario activo y su rol en cada request.
+
+Si necesitás importar una instalación anterior, ejecutá la migración antes de eliminar sus archivos JSON: `DATA_DIR=./data MONGODB_URI='mongodb+srv://...' npm run migrate:json`. La migración es idempotente y no sobrescribe documentos existentes.
+
+El flujo de archivos locales y Cloudflare está detallado en [`documentacion/06-publicacion-local-cloudflare.md`](../documentacion/06-publicacion-local-cloudflare.md). La URL estable se configura con `CLOUDFLARE_TUNNEL_URL`; no se crea un container de Meta hasta que llega la fecha programada.
+
+## Sitio público conectado
+
+El `docker-compose.yml` incluye un proxy Nginx en el puerto `8080`. Sirve el sitio editorial estático y enruta `/api`, `/media`, `/notas/:slug`, `/press-kit`, `/rss.xml`, `/sitemap.xml` y `/robots.txt` al gestor. Así el feed público y las notas publicadas funcionan en el mismo dominio; directorio, comunidad y publicación exigen autenticación. El túnel Cloudflare debe apuntar al servicio web (`http://localhost:8080`) y `PUBLIC_BASE_URL` debe usar ese dominio HTTPS.
+
+Las propuestas autenticadas de `/publicar` entran como contenidos `idea` y quedan pendientes de moderación. El equipo puede completar autor, fotógrafo, fuente, SEO, créditos y destacar una nota desde `/admin`.
+
+Cada entrada del directorio nace como `unverified` con fiabilidad 0. Un usuario autorizado debe revisarla desde `/admin/directorio` y marcarla como `verified`, `stale` o `incorrect`, con una fiabilidad de 0 a 100, fecha de revisión, responsable y notas. La operación se realiza mediante `POST /api/directory/:id/verification` y queda auditada.
+
+## Flujo editorial
+
+```text
+idea → borrador → revisión → aprobado → programado → publicando → publicado
+                                      └────────────→ publicando → error
+error → borrador | aprobado | publicando
+```
+
+Una generación de IA nunca aprueba ni publica. La publicación manual pide confirmación y el endpoint solo acepta contenido aprobado, programado o fallido. **Simular publicación** ejecuta el flujo y genera IDs ficticios sin llamar a Meta.
+
+Las solicitudes de acreditación también tienen **Simular** y **Enviar**. El envío real solo se habilita cuando SMTP está configurado; el modo simulación siempre permite revisar destinatario y asunto sin salir del sistema.
+Los correos se envían con el nombre configurado en el dossier (`mediaKit.name`), `reply-to` del medio y una plantilla HTML/texto. Así no salen como mensajes personales del operador.
+
+## Seguridad y operación
+
+Las rutas privadas aceptan `Authorization: Bearer ...` o `X-API-Key`. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
+
+Para un backup local/Docker: `DATA_DIR=./data UPLOAD_DIR=./uploads ./scripts/backup.sh`. En Atlas, complementar con `mongodump` programado y retención en almacenamiento externo.
+
+## MCP
+
+Primero compilá el servicio con `npm run build`. Configuración de ejemplo para un cliente MCP que ejecuta el código local:
+
+```json
+{
+  "mcpServers": {
+    "medio-under": {
+      "command": "node",
+      "args": ["dist/mcp-stdio.js"],
+      "cwd": "/ruta/al/repo/medio-under/backend",
+      "env": {
+        "DATA_DIR": "/ruta/al/repo/medio-under/backend/data",
+        "MONGODB_URI": "mongodb+srv://<usuario>:<password>@<cluster>/medio_under",
+        "MONGODB_DB": "medio_under",
+        "AI_API_KEY": "configurar-en-el-gestor-de-secretos-del-cliente"
+      }
+    }
+  }
+}
+```
+
+Herramientas disponibles:
+
+- `listar_contenidos`
+- `obtener_contenido`
+- `crear_contenido`
+- `editar_contenido`
+- `generar_con_ia`
+- `publicar_contenido` — usa `dryRun=true` por defecto
+- `listar_prensa`
+- `crear_evento`
+- `crear_contacto_prensa`
+- `crear_solicitud_acreditacion`
+- `actualizar_solicitud_acreditacion`
+- `enviar_solicitud_acreditacion` — usa `dryRun=true` por defecto
+- `registrar_cobertura`
+- `obtener_dossier_de_prensa`
+- `actualizar_dossier_de_prensa`
+
+Para operar contra los mismos datos del contenedor, montá el volumen/directorio de datos en el proceso MCP. No incluyas tokens en el archivo si tu cliente ofrece un almacén de secretos.
+
+## API principal
+
+- `GET/POST /api/content`
+- `GET/PATCH/DELETE /api/content/:id`
+- `POST /api/content/duplicates` — analiza similitud de título, resumen, cuerpo, slug y fuente antes de guardar; devuelve coincidencias explicadas.
+- `POST /api/content/:id/generate`
+- `POST /api/content/:id/publish`
+- `POST /api/content/:id/metrics/instagram` — consulta y persiste insights de la publicación de Instagram.
+- `GET /api/metrics/instagram` — resumen agregado de alcance, impresiones, interacciones, likes, comentarios, guardados, compartidos y reproducciones.
+- `POST /api/assets`
+- `GET /media/<archivo>` — sirve únicamente archivos dentro de `MEDIA_ROOT`
+- `GET /api/public/content` y `/api/public/content/:slug`
+- `GET /notas/:slug` — vista pública segura de cada nota publicada en el canal web
+- `GET /press-kit` — dossier público compartible con productoras y salas
+- `GET /api/public/press-kit` — versión JSON del dossier y archivo de coberturas
+- `GET /api/press/snapshot`
+- `POST /api/press/events`, `PATCH/DELETE /api/press/events/:id`
+- `POST /api/press/contacts`, `PATCH/DELETE /api/press/contacts/:id`
+- `POST /api/press/accreditations`, `PATCH/DELETE /api/press/accreditations/:id`
+- `POST /api/press/coverages`, `PATCH/DELETE /api/press/coverages/:id`
+- `GET/POST/PATCH/DELETE /api/press/replacements` — búsquedas de fotógrafo/a, notero/a, cronista o videógrafo/a, asociadas a eventos y ubicación.
+- `GET /api/press/replacements/:id/applications` — postulaciones recibidas (admin/press).
+- `POST /api/public/replacements/:id/applications` — postulación autenticada de comunidad.
+- `POST /api/press/replacement-applications/:id/assign` — asigna un reemplazo, rechaza los demás y notifica por email con la identidad del medio.
+- `GET/PATCH /api/press/media-kit`
+- `POST /api/press/accreditations/:id/send` — SMTP; recibe `dryRun: true` por defecto
+- `GET /health`
+- `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, y devuelve un JWT de acceso.
+- `GET /api/auth/me` — devuelve la identidad, roles y permisos del JWT actual.
+
+El detector de duplicados bloquea al guardar coincidencias fuertes (HTTP 409), pero permite consultar coincidencias preliminares con un umbral más amplio para que edición o IA decidan si continuar.
+
+Las rutas `/api/*` requieren un JWT emitido por el login o un token técnico explícitamente configurado para desarrollo; los roles y permisos se validan contra MongoDB en cada request.
+
+## Verificación
+
+```bash
+cd backend
+npm test
+npm run build
+```
+
+Antes de una publicación real: probá **Simular publicación**, verificá que las imágenes sean públicas, usá una cuenta de prueba de Meta y confirmá el contenido en el panel de Meta Business.
