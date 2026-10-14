@@ -187,7 +187,6 @@ export class MongoPressStore implements PressRepository {
       }),
       this.collection<MongoRecord>("press_replacement_searches").createIndex({ status: 1, startsAt: 1 }),
       this.collection<MongoRecord>("press_replacement_applications").createIndex({ searchId: 1, status: 1 }),
-      this.collection<MongoRecord>("press_settings").createIndex({ _id: 1 }, { unique: true }),
     ]);
   }
 
@@ -336,7 +335,6 @@ export class MongoUserDirectory implements UserDirectory {
   async init() {
     await Promise.all([
       this.collection.createIndex({ active: 1, roles: 1 }),
-      this.collection.createIndex({ active: 1, roles: 1, permissions: 1 }),
       this.collection.createIndex({ username: 1 }, { unique: true, sparse: true }),
       this.collection.createIndex({ email: 1 }, { unique: true, sparse: true }),
     ]);
@@ -445,10 +443,10 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     maxPoolSize: 20,
     minPoolSize: 0,
     maxIdleTimeMS: 300_000,
-    connectTimeoutMS: 10_000,
-    serverSelectionTimeoutMS: 5_000,
+    connectTimeoutMS: 30_000,
+    serverSelectionTimeoutMS: 30_000,
     socketTimeoutMS: 30_000,
-    waitQueueTimeoutMS: 5_000,
+    waitQueueTimeoutMS: 30_000,
   });
   await client.connect();
   const db = client.db(process.env.MONGODB_DB ?? "medio_under");
