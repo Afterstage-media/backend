@@ -5,6 +5,7 @@ export type ExternalEvent = {
   name: string;
   artist: string;
   venue: string;
+  address: string;
   city: string;
   country?: string;
   latitude?: number | null;
@@ -63,6 +64,7 @@ export const parseEventsFeed = (xml: string, source: string): ExternalEvent[] =>
         name,
         artist: field(block, ["artist", "performer", "dc:creator"]),
         venue: field(block, ["venue", "location", "place"]),
+        address: field(block, ["address", "streetAddress", "street"]),
         city: field(block, ["city", "locality"]),
         country: field(block, ["country", "countryName"]) || "Argentina",
         latitude: coordinate(field(block, ["latitude", "lat", "geo:lat"]), -90, 90),
