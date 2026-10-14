@@ -15,6 +15,7 @@ import {
   authenticateUser,
   configureUserDirectory,
   issueAccessToken,
+  hashPassword,
   RateLimiter,
   requireRole,
   requirePermission,
@@ -236,6 +237,32 @@ export const createApp = async (
         permissions: user.permissions,
       },
     });
+  });
+  app.post("/api/auth/register", loginRateLimit, async (request, response) => {
+    if (!process.env.JWT_SECRET || !users?.createCollaborator) {
+      response.status(503).json({ error: "El registro no está configurado" });
+      return;
+    }
+    const input = z
+      .object({
+        email: z.string().trim().toLowerCase().email().max(180),
+        password: z.string().min(12).max(200),
+      })
+      .parse(request.body);
+    const passwordHash = await hashPassword(input.password);
+    try {
+      const user = await users.createCollaborator(input.email, passwordHash);
+      response.status(201).json({
+        accessToken: issueAccessToken(user),
+        user: { id: user.id, roles: user.roles, permissions: user.permissions },
+      });
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        response.status(409).json({ error: "Ya existe una cuenta con ese email" });
+        return;
+      }
+      throw error;
+    }
   });
   app.get("/api/public/press-kit", async (_request, response) => {
     const snapshot = await press.snapshot();

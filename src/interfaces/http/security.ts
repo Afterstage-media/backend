@@ -12,6 +12,7 @@ export type ActiveUser = { id: string; roles: Role[]; permissions: Permission[];
 export type UserDirectory = {
   findActiveUser: (id: string) => Promise<ActiveUser | undefined>;
   findByIdentifier?: (identifier: string) => Promise<(ActiveUser & { passwordHash?: string }) | undefined>;
+  createCollaborator?: (email: string, passwordHash: string) => Promise<ActiveUser>;
 };
 const passwordCost = 16384;
 const passwordBlockSize = 8;
