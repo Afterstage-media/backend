@@ -369,6 +369,20 @@ export const createApp = async (
       .sort((a, b) => (a.startsAt ?? "9999").localeCompare(b.startsAt ?? "9999"));
     response.json(events);
   });
+  app.get("/api/public/events/:id", async (request, response) => {
+    const snapshot = await press.snapshot();
+    const local = snapshot.events.find((event) => event.id === request.params.id);
+    if (local) {
+      response.json(local);
+      return;
+    }
+    const external = (await eventsFeed.list()).find((event) => event.id === request.params.id);
+    if (!external) {
+      response.status(404).json({ error: "Evento no encontrado" });
+      return;
+    }
+    response.json(external);
+  });
   const publicSubmissionRateLimit = new RateLimiter(5, 60_000).middleware;
   app.post(
     "/api/public/submissions",
