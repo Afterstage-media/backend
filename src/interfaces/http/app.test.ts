@@ -130,7 +130,7 @@ test("combina eventos editoriales con fuentes RSS externas", async (context) => 
   };
   const app = await createApp(manager, press, eventsFeed);
   await withServer(app, async (base) => {
-    const response = await fetch(`${base}/api/public/events`);
+    const response = await fetch(`${base}/api/public/events?limit=1`);
     assert.equal(response.status, 200);
     assert.equal((await response.json())[0].name, "Fecha RSS");
   });
@@ -156,7 +156,7 @@ test("expone el catálogo público sin contactos privados y protege el directori
     directoryManager,
   );
   await withServer(app, async (base) => {
-    const publicResponse = await fetch(`${base}/api/public/directory`, {
+    const publicResponse = await fetch(`${base}/api/public/directory?limit=999999`, {
       headers: { Authorization: `Bearer ${testTokens.admin}` },
     });
     const publicItem = (await publicResponse.json())[0];
