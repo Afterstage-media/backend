@@ -131,7 +131,7 @@ export const createApp = async (
   directory = new DirectoryManager(),
 ) => {
   const app = express();
-  configureUserDirectory(users);
+  if (users) configureUserDirectory(users);
   const uploadDir = process.env.UPLOAD_DIR ?? path.resolve("uploads");
   const mediaRoot = process.env.MEDIA_ROOT ?? uploadDir;
   await mkdir(uploadDir, { recursive: true });
