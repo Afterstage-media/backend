@@ -372,6 +372,20 @@ export class MongoUserDirectory implements UserDirectory {
         }
       : undefined;
   }
+  async createCollaborator(email: string, passwordHash: string): Promise<ActiveUser> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user: ActiveUser = { id: randomUUID(), roles: ["community"], permissions: [], active: true };
+    await this.collection.insertOne({
+      _id: user.id,
+      email: normalizedEmail,
+      passwordHash,
+      roles: user.roles,
+      permissions: user.permissions,
+      active: true,
+      createdAt: new Date().toISOString(),
+    });
+    return user;
+  }
 }
 
 export class MongoDirectoryStore implements DirectoryRepository {
