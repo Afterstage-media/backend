@@ -10,6 +10,22 @@ import { PressManager } from "../../application/press-manager.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
+import { configureUserDirectory, issueAccessToken, type ActiveUser } from "./security.js";
+
+const testUsers: Record<string, ActiveUser> = {
+  admin: {
+    id: "admin",
+    roles: ["admin"],
+    permissions: ["instagram:read", "instagram:metrics", "instagram:publish"],
+    active: true,
+  },
+  editor: { id: "editor", roles: ["editor"], permissions: [], active: true },
+  auditor: { id: "auditor", roles: ["auditor"], permissions: [], active: true },
+  social: { id: "social", roles: ["editor", "social"], permissions: ["instagram:metrics"], active: true },
+};
+process.env.JWT_SECRET = "app-test-secret";
+configureUserDirectory({ findActiveUser: async (id) => testUsers[id] });
+const testTokens = Object.fromEntries(Object.entries(testUsers).map(([id, user]) => [id, issueAccessToken(user)]));
 
 const withServer = async (
   app: ReturnType<typeof createApp> extends Promise<infer T> ? T : never,
@@ -41,9 +57,6 @@ test("expone health, readiness y feed editorial público", async (context) => {
     status: "published",
     publishedAt: new Date().toISOString(),
   });
-  const oldMongo = process.env.MONGODB_URI;
-  const oldAdmin = process.env.ADMIN_TOKEN;
-  process.env.ADMIN_TOKEN = "community-test-admin";
   delete process.env.MONGODB_URI;
   const app = await createApp(manager, new PressManager(new PressStore(directory)));
   await withServer(app, async (base) => {
@@ -76,7 +89,7 @@ test("expone health, readiness y feed editorial público", async (context) => {
     assert.match(articleHtml, /src="\/share\.js"/);
     const submission = await fetch(`${base}/api/public/submissions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer community-test-admin" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${testTokens.admin}` },
       body: JSON.stringify({
         kind: "Una historia",
         title: "Propuesta real",
@@ -91,10 +104,6 @@ test("expone health, readiness y feed editorial público", async (context) => {
     assert.equal((await fetch(`${base}/sitemap.xml`)).status, 200);
     assert.equal((await fetch(`${base}/robots.txt`)).status, 200);
   });
-  if (oldMongo === undefined) delete process.env.MONGODB_URI;
-  else process.env.MONGODB_URI = oldMongo;
-  if (oldAdmin === undefined) delete process.env.ADMIN_TOKEN;
-  else process.env.ADMIN_TOKEN = oldAdmin;
 });
 
 test("combina eventos editoriales con fuentes RSS externas", async (context) => {
@@ -139,8 +148,6 @@ test("expone el catálogo público sin contactos privados y protege el directori
     longitude: -58.3816,
     contacts: [{ name: "Manager", role: "Manager", email: "private@example.com" }],
   });
-  const oldToken = process.env.ADMIN_TOKEN;
-  process.env.ADMIN_TOKEN = "directory-admin";
   const app = await createApp(
     manager,
     new PressManager(new PressStore(directory)),
@@ -150,46 +157,35 @@ test("expone el catálogo público sin contactos privados y protege el directori
   );
   await withServer(app, async (base) => {
     const publicResponse = await fetch(`${base}/api/public/directory`, {
-      headers: { Authorization: "Bearer directory-admin" },
+      headers: { Authorization: `Bearer ${testTokens.admin}` },
     });
     const publicItem = (await publicResponse.json())[0];
     assert.equal(publicResponse.status, 200);
     assert.equal(publicItem.name, "Banda API");
     assert.equal(publicItem.contacts, undefined);
     const nearby = await fetch(`${base}/api/public/directory?lat=-34.60&lng=-58.38&radiusKm=5`, {
-      headers: { Authorization: "Bearer directory-admin" },
+      headers: { Authorization: `Bearer ${testTokens.admin}` },
     });
     assert.equal((await nearby.json()).length, 1);
     const privateResponse = await fetch(`${base}/api/directory`, {
-      headers: { Authorization: "Bearer directory-admin" },
+      headers: { Authorization: `Bearer ${testTokens.admin}` },
     });
     assert.equal(privateResponse.status, 200);
     assert.equal((await privateResponse.json())[0].contacts[0].email, "private@example.com");
     const verification = await fetch(`${base}/api/directory/${publicItem.id}/verification`, {
       method: "POST",
-      headers: { Authorization: "Bearer directory-admin", "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
       body: JSON.stringify({ status: "verified", reliabilityScore: 90 }),
     });
     assert.equal(verification.status, 200);
     assert.equal((await verification.json()).reliabilityScore, 90);
   });
-  if (oldToken === undefined) delete process.env.ADMIN_TOKEN;
-  else process.env.ADMIN_TOKEN = oldToken;
 });
 
 test("aplica roles, token bearer y rate limit", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-auth-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
-  const previous = {
-    admin: process.env.ADMIN_TOKEN,
-    users: process.env.AUTH_USERS_JSON,
-    rate: process.env.RATE_LIMIT,
-  };
-  process.env.ADMIN_TOKEN = "admin-secret";
-  process.env.AUTH_USERS_JSON = JSON.stringify([
-    { id: "redaccion", token: "editor-secret", roles: ["editor"], permissions: [] },
-    { id: "auditoria", token: "auditor-secret", roles: ["auditor"], permissions: [] },
-  ]);
+  const previousRate = process.env.RATE_LIMIT;
   process.env.RATE_LIMIT = "20";
   const app = await createApp(
     new ContentManager(new ContentStore(directory)),
@@ -199,20 +195,20 @@ test("aplica roles, token bearer y rate limit", async (context) => {
     assert.equal((await fetch(`${base}/api/content`)).status, 401);
     assert.equal((await fetch(`${base}/api/auth/me`)).status, 401);
     const identity = await fetch(`${base}/api/auth/me`, {
-      headers: { Authorization: "Bearer editor-secret" },
+      headers: { Authorization: `Bearer ${testTokens.editor}` },
     });
     assert.equal(identity.status, 200);
     assert.deepEqual((await identity.json()).user.roles, ["editor"]);
     assert.equal((await fetch(`${base}/api/public/directory`)).status, 401);
     assert.equal(
-      (await fetch(`${base}/api/content`, { headers: { Authorization: "Bearer auditor-secret" } })).status,
+      (await fetch(`${base}/api/content`, { headers: { Authorization: `Bearer ${testTokens.auditor}` } })).status,
       200,
     );
     assert.equal(
       (
         await fetch(`${base}/api/content`, {
           method: "POST",
-          headers: { Authorization: "Bearer auditor-secret", "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${testTokens.auditor}`, "Content-Type": "application/json" },
           body: JSON.stringify({ title: "No debe crear" }),
         })
       ).status,
@@ -221,7 +217,7 @@ test("aplica roles, token bearer y rate limit", async (context) => {
     assert.equal(
       (
         await fetch(`${base}/api/content`, {
-          headers: { Authorization: "Bearer editor-secret" },
+          headers: { Authorization: `Bearer ${testTokens.editor}` },
         })
       ).status,
       200,
@@ -229,7 +225,7 @@ test("aplica roles, token bearer y rate limit", async (context) => {
     assert.equal(
       (
         await fetch(`${base}/api/ops/status`, {
-          headers: { Authorization: "Bearer editor-secret" },
+          headers: { Authorization: `Bearer ${testTokens.editor}` },
         })
       ).status,
       403,
@@ -237,7 +233,7 @@ test("aplica roles, token bearer y rate limit", async (context) => {
     assert.equal(
       (
         await fetch(`${base}/api/press/snapshot`, {
-          headers: { Authorization: "Bearer editor-secret" },
+          headers: { Authorization: `Bearer ${testTokens.editor}` },
         })
       ).status,
       403,
@@ -245,33 +241,27 @@ test("aplica roles, token bearer y rate limit", async (context) => {
     assert.equal(
       (
         await fetch(`${base}/api/ops/status`, {
-          headers: { "X-API-Key": "admin-secret" },
+          headers: { Authorization: `Bearer ${testTokens.admin}` },
         })
       ).status,
       200,
     );
     assert.equal((await fetch(`${base}/health`)).headers.get("x-content-type-options"), "nosniff");
   });
-  if (previous.admin === undefined) delete process.env.ADMIN_TOKEN;
-  else process.env.ADMIN_TOKEN = previous.admin;
-  if (previous.users === undefined) delete process.env.AUTH_USERS_JSON;
-  else process.env.AUTH_USERS_JSON = previous.users;
-  if (previous.rate === undefined) delete process.env.RATE_LIMIT;
-  else process.env.RATE_LIMIT = previous.rate;
+  if (previousRate === undefined) delete process.env.RATE_LIMIT;
+  else process.env.RATE_LIMIT = previousRate;
 });
 
 test("rechaza payloads inválidos y protege rutas privadas de prensa", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-validation-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
-  const oldToken = process.env.ADMIN_TOKEN;
-  process.env.ADMIN_TOKEN = "admin";
   const app = await createApp(
     new ContentManager(new ContentStore(directory)),
     new PressManager(new PressStore(directory)),
   );
   await withServer(app, async (base) => {
     const headers = {
-      Authorization: "Bearer admin",
+      Authorization: `Bearer ${testTokens.admin}`,
       "Content-Type": "application/json",
     };
     const invalid = await fetch(`${base}/api/content`, {
@@ -281,25 +271,21 @@ test("rechaza payloads inválidos y protege rutas privadas de prensa", async (co
     });
     assert.equal(invalid.status, 400);
     const privateRoute = await fetch(`${base}/api/press/snapshot`, {
-      headers: { Authorization: "Bearer admin" },
+      headers: { Authorization: `Bearer ${testTokens.admin}` },
     });
     assert.equal(privateRoute.status, 200);
   });
-  if (oldToken === undefined) delete process.env.ADMIN_TOKEN;
-  else process.env.ADMIN_TOKEN = oldToken;
 });
 
 test("permite buscar reemplazo para una cobertura cuando el fotógrafo o notero no puede asistir", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-replacement-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
-  const oldToken = process.env.ADMIN_TOKEN;
-  process.env.ADMIN_TOKEN = "community-test-admin";
   const app = await createApp(manager, new PressManager(new PressStore(directory)));
   await withServer(app, async (base) => {
     const response = await fetch(`${base}/api/public/submissions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer community-test-admin" },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${testTokens.admin}` },
       body: JSON.stringify({
         kind: "Reemplazo de fotógrafo",
         title: "Buscamos fotógrafa para cubrir recital",
@@ -319,8 +305,6 @@ test("permite buscar reemplazo para una cobertura cuando el fotógrafo o notero 
     assert.match(stored.notes, /redaccion@example.com/);
     assert.equal((await manager.store.list("published")).length, 0);
   });
-  if (oldToken === undefined) delete process.env.ADMIN_TOKEN;
-  else process.env.ADMIN_TOKEN = oldToken;
 });
 
 test("expone y protege las métricas de Instagram", async (context) => {
@@ -329,80 +313,56 @@ test("expone y protege las métricas de Instagram", async (context) => {
   const manager = new ContentManager(new ContentStore(directory));
   const item = await manager.create({ title: "Post con métricas", channels: ["instagram"] });
   await manager.store.update(item.id, { remoteIds: { instagram: "media-1" } });
-  const oldAdmin = process.env.ADMIN_TOKEN;
-  process.env.ADMIN_TOKEN = "metrics-admin";
   const app = await createApp(manager, new PressManager(new PressStore(directory)));
-  try {
-    await withServer(app, async (base) => {
-      assert.equal((await fetch(`${base}/api/metrics/instagram`)).status, 401);
-      const refresh = await fetch(`${base}/api/content/${item.id}/metrics/instagram`, {
-        method: "POST",
-        headers: { Authorization: "Bearer metrics-admin", "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun: true }),
-      });
-      assert.equal(refresh.status, 200);
-      const refreshed = await refresh.json();
-      assert.equal(refreshed.instagramMetrics.totalInteractions, 0);
-      const summary = await fetch(`${base}/api/metrics/instagram`, {
-        headers: { Authorization: "Bearer metrics-admin" },
-      });
-      assert.equal(summary.status, 200);
-      const data = await summary.json();
-      assert.equal(data.posts, 1);
-      assert.equal(data.totals.reach, 0);
-      assert.equal(
-        (
-          await fetch(`${base}/api/content/${item.id}/metrics/instagram`, {
-            method: "POST",
-            headers: { Authorization: "Bearer metrics-admin", "Content-Type": "application/json" },
-            body: JSON.stringify({ dryRun: true }),
-          })
-        ).status,
-        200,
-      );
+  await withServer(app, async (base) => {
+    assert.equal((await fetch(`${base}/api/metrics/instagram`)).status, 401);
+    const refresh = await fetch(`${base}/api/content/${item.id}/metrics/instagram`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: true }),
     });
-  } finally {
-    if (oldAdmin === undefined) delete process.env.ADMIN_TOKEN;
-    else process.env.ADMIN_TOKEN = oldAdmin;
-  }
+    assert.equal(refresh.status, 200);
+    const refreshed = await refresh.json();
+    assert.equal(refreshed.instagramMetrics.totalInteractions, 0);
+    const summary = await fetch(`${base}/api/metrics/instagram`, {
+      headers: { Authorization: `Bearer ${testTokens.admin}` },
+    });
+    assert.equal(summary.status, 200);
+    const data = await summary.json();
+    assert.equal(data.posts, 1);
+    assert.equal(data.totals.reach, 0);
+    assert.equal(
+      (
+        await fetch(`${base}/api/content/${item.id}/metrics/instagram`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: true }),
+        })
+      ).status,
+      200,
+    );
+  });
 });
 
 test("limita Instagram por permiso aunque el usuario tenga rol editorial", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-instagram-permissions-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
-  const oldUsers = process.env.AUTH_USERS_JSON;
-  const oldSecret = process.env.JWT_SECRET;
-  delete process.env.JWT_SECRET;
-  process.env.AUTH_USERS_JSON = JSON.stringify([
-    { id: "editor", token: "editor-token", roles: ["editor"], permissions: [] },
-    {
-      id: "social",
-      token: "social-token",
-      roles: ["editor", "social"],
-      permissions: ["instagram:metrics"],
-    },
-  ]);
   const app = await createApp(
     new ContentManager(new ContentStore(directory)),
     new PressManager(new PressStore(directory)),
   );
-  try {
-    await withServer(app, async (base) => {
-      assert.equal(
-        (await fetch(`${base}/api/metrics/instagram`, { headers: { Authorization: "Bearer editor-token" } })).status,
-        403,
-      );
-      assert.equal(
-        (await fetch(`${base}/api/metrics/instagram`, { headers: { Authorization: "Bearer social-token" } })).status,
-        200,
-      );
-    });
-  } finally {
-    if (oldUsers === undefined) delete process.env.AUTH_USERS_JSON;
-    else process.env.AUTH_USERS_JSON = oldUsers;
-    if (oldSecret === undefined) delete process.env.JWT_SECRET;
-    else process.env.JWT_SECRET = oldSecret;
-  }
+  await withServer(app, async (base) => {
+    assert.equal(
+      (await fetch(`${base}/api/metrics/instagram`, { headers: { Authorization: `Bearer ${testTokens.editor}` } }))
+        .status,
+      403,
+    );
+    assert.equal(
+      (await fetch(`${base}/api/metrics/instagram`, { headers: { Authorization: `Bearer ${testTokens.social}` } }))
+        .status,
+      200,
+    );
+  });
 });
 
 test("permite previsualizar duplicados y rechaza guardar una coincidencia fuerte", async (context) => {
@@ -410,27 +370,20 @@ test("permite previsualizar duplicados y rechaza guardar una coincidencia fuerte
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   await manager.create({ title: "Festival repetido", body: "Cobertura completa del festival." });
-  const oldAdmin = process.env.ADMIN_TOKEN;
-  process.env.ADMIN_TOKEN = "duplicates-admin";
   const app = await createApp(manager, new PressManager(new PressStore(directory)));
-  try {
-    await withServer(app, async (base) => {
-      const preview = await fetch(`${base}/api/content/duplicates`, {
-        method: "POST",
-        headers: { Authorization: "Bearer duplicates-admin", "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "Festival repetido", body: "Otra versión." }),
-      });
-      assert.equal(preview.status, 200);
-      assert.equal((await preview.json()).length, 1);
-      const duplicate = await fetch(`${base}/api/content`, {
-        method: "POST",
-        headers: { Authorization: "Bearer duplicates-admin", "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "Festival repetido", body: "Cobertura completa del festival." }),
-      });
-      assert.equal(duplicate.status, 409);
+  await withServer(app, async (base) => {
+    const preview = await fetch(`${base}/api/content/duplicates`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Festival repetido", body: "Otra versión." }),
     });
-  } finally {
-    if (oldAdmin === undefined) delete process.env.ADMIN_TOKEN;
-    else process.env.ADMIN_TOKEN = oldAdmin;
-  }
+    assert.equal(preview.status, 200);
+    assert.equal((await preview.json()).length, 1);
+    const duplicate = await fetch(`${base}/api/content`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Festival repetido", body: "Cobertura completa del festival." }),
+    });
+    assert.equal(duplicate.status, 409);
+  });
 });

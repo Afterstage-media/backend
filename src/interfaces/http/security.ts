@@ -6,10 +6,8 @@ import type { Request, RequestHandler } from "express";
 export type Role = "admin" | "editor" | "press" | "directory" | "community" | "auditor" | "social";
 export const permissionNames = ["instagram:read", "instagram:metrics", "instagram:publish"] as const;
 export type Permission = (typeof permissionNames)[number];
-const roleNames: Role[] = ["admin", "editor", "press", "directory", "community", "auditor", "social"];
 export type Actor = { id: string; roles: Role[]; permissions: Permission[] };
 
-type ConfiguredUser = { token: string; id?: string; roles: Role[]; permissions: Permission[] };
 export type ActiveUser = { id: string; roles: Role[]; permissions: Permission[]; active?: boolean };
 export type UserDirectory = {
   findActiveUser: (id: string) => Promise<ActiveUser | undefined>;
@@ -33,12 +31,6 @@ let userDirectory: UserDirectory | undefined;
 
 export const configureUserDirectory = (directory?: UserDirectory) => {
   userDirectory = directory;
-};
-
-const equal = (a: string, b: string) => {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  return left.length === right.length && timingSafeEqual(left, right);
 };
 
 export const hashPassword = async (password: string): Promise<string> => {
@@ -105,48 +97,6 @@ export const authenticateUser = async (identifier: string, password: string): Pr
   };
 };
 
-const users = (): ConfiguredUser[] => {
-  try {
-    const parsed = JSON.parse(process.env.AUTH_USERS_JSON ?? "[]") as ConfiguredUser[];
-    if (Array.isArray(parsed))
-      return parsed.filter(
-        (item) =>
-          item?.token &&
-          Array.isArray(item.roles) &&
-          item.roles.length > 0 &&
-          item.roles.every((role) => roleNames.includes(role)) &&
-          Array.isArray(item.permissions) &&
-          item.permissions.every((permission) => permissionNames.includes(permission)),
-      );
-  } catch {
-    /* configuration errors are reported by the empty set */
-  }
-  return [];
-};
-
-export const actorFromRequest = (request: Request): Actor | undefined => {
-  const token = request.get("authorization")?.replace(/^Bearer\s+/i, "") ?? request.get("x-api-key") ?? "";
-  const configured = users();
-  const fallback: ConfiguredUser[] = process.env.ADMIN_TOKEN
-    ? [
-        {
-          token: process.env.ADMIN_TOKEN,
-          id: "admin",
-          roles: ["admin"],
-          permissions: ["instagram:read", "instagram:metrics", "instagram:publish"],
-        },
-      ]
-    : [];
-  const found = [...configured, ...fallback].find((item) => equal(token, item.token));
-  return found
-    ? {
-        id: found.id ?? found.roles[0]!,
-        roles: found.roles,
-        permissions: found.permissions,
-      }
-    : undefined;
-};
-
 const decodePart = (value: string): unknown => JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
 
 export const actorFromJwt = async (token: string): Promise<Actor | undefined> => {
@@ -211,7 +161,7 @@ export const requireRole =
   async (request, response, next) => {
     const authorization = request.get("authorization");
     const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-    const actor = bearer?.split(".").length === 3 ? await actorFromJwt(bearer) : actorFromRequest(request);
+    const actor = bearer ? await actorFromJwt(bearer) : undefined;
     if (!actor) {
       response.status(401).json({ error: "No autorizado" });
       return;
@@ -232,7 +182,7 @@ export const requirePermission =
   async (request, response, next) => {
     const authorization = request.get("authorization");
     const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-    const actor = bearer?.split(".").length === 3 ? await actorFromJwt(bearer) : actorFromRequest(request);
+    const actor = bearer ? await actorFromJwt(bearer) : undefined;
     if (!actor) {
       response.status(401).json({ error: "No autorizado" });
       return;

@@ -61,14 +61,13 @@ Para desarrollo sin Docker:
 ```bash
 cd backend
 npm install
-ADMIN_TOKEN=desarrollo npm run dev
+npm run dev
 ```
 
 ## Variables
 
 | Variable | Uso |
 | --- | --- |
-| `ADMIN_TOKEN` | Token explícito de administración local; no representa usuarios de producción. |
 | `MONGODB_URI` | URI obligatoria de MongoDB Atlas. |
 | `MONGODB_DB` | Base de datos, por defecto `medio_under`. |
 | `PUBLIC_BASE_URL` | Origen HTTPS público desde el que Meta descargará imágenes. |
@@ -85,7 +84,6 @@ ADMIN_TOKEN=desarrollo npm run dev
 | `CORS_ORIGINS` | Lista opcional de orígenes permitidos, separada por comas. |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Opcionales. Habilitan el envío de solicitudes de acreditación. |
 | `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Ajustes del transporte de correo. |
-| `AUTH_USERS_JSON` | Usuarios técnicos opcionales para desarrollo, con `roles` (array) y `permissions` (array). Los usuarios de producción se gestionan en MongoDB. |
 | `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
 | `JWT_ACCESS_TTL_SECONDS` | Duración del access token emitido por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
 | `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
@@ -99,7 +97,6 @@ Para Atlas, agregá la IP del servidor en Network Access, creá un usuario de ba
 
 El login se administra en MongoDB. Para crear o rotar un usuario ejecutá `USER_PASSWORD='una-clave-de-12-o-más-caracteres' MONGODB_URI='...' npm run users:upsert -- redaccion editor redaccion@medio.example true`. El backend nunca guarda la contraseña en claro: usa hashes `scrypt`, emite JWT HS256 de corta duración y vuelve a consultar en Mongo el usuario activo y su rol en cada request.
 
-Si necesitás importar una instalación anterior, ejecutá la migración antes de eliminar sus archivos JSON: `DATA_DIR=./data MONGODB_URI='mongodb+srv://...' npm run migrate:json`. La migración es idempotente y no sobrescribe documentos existentes.
 
 El flujo de archivos locales y Cloudflare está detallado en [`documentacion/06-publicacion-local-cloudflare.md`](../documentacion/06-publicacion-local-cloudflare.md). La URL estable se configura con `CLOUDFLARE_TUNNEL_URL`; no se crea un container de Meta hasta que llega la fecha programada.
 
@@ -126,7 +123,7 @@ Los correos se envían con el nombre configurado en el dossier (`mediaKit.name`)
 
 ## Seguridad y operación
 
-Las rutas privadas aceptan `Authorization: Bearer ...` o `X-API-Key`. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
+Las rutas privadas aceptan únicamente `Authorization: Bearer <JWT>`. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
 
 Para un backup local/Docker: `DATA_DIR=./data UPLOAD_DIR=./uploads ./scripts/backup.sh`. En Atlas, complementar con `mongodump` programado y retención en almacenamiento externo.
 
@@ -204,7 +201,7 @@ Para operar contra los mismos datos del contenedor, montá el volumen/directorio
 
 El detector de duplicados bloquea al guardar coincidencias fuertes (HTTP 409), pero permite consultar coincidencias preliminares con un umbral más amplio para que edición o IA decidan si continuar.
 
-Las rutas `/api/*` requieren un JWT emitido por el login o un token técnico explícitamente configurado para desarrollo; los roles y permisos se validan contra MongoDB en cada request.
+Las rutas `/api/*` requieren un JWT emitido por el login; los roles y permisos se validan contra MongoDB en cada request.
 
 ## Verificación
 

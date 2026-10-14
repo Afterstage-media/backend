@@ -6,7 +6,6 @@ import os from "node:os";
 import { createHmac } from "node:crypto";
 import {
   actorFromJwt,
-  actorFromRequest,
   audit,
   authenticateUser,
   configureUserDirectory,
@@ -24,30 +23,19 @@ const request = (headers: Record<string, string> = {}) =>
     ip: "127.0.0.1",
   }) as any;
 
-test("resuelve actor por bearer o api key y no acepta tokens parciales", () => {
-  const previous = {
-    admin: process.env.ADMIN_TOKEN,
-    users: process.env.AUTH_USERS_JSON,
-  };
-  process.env.ADMIN_TOKEN = "secret-token";
-  process.env.AUTH_USERS_JSON = JSON.stringify([
-    { id: "ed", token: "editor-token", roles: ["editor"], permissions: [] },
-  ]);
-  assert.deepEqual(actorFromRequest(request({ authorization: "Bearer secret-token" })), {
-    id: "admin",
-    roles: ["admin"],
-    permissions: ["instagram:read", "instagram:metrics", "instagram:publish"],
-  });
-  assert.deepEqual(actorFromRequest(request({ "x-api-key": "editor-token" })), {
-    id: "ed",
-    roles: ["editor"],
-    permissions: [],
-  });
-  assert.equal(actorFromRequest(request({ authorization: "Bearer secret" })), undefined);
-  if (previous.admin === undefined) delete process.env.ADMIN_TOKEN;
-  else process.env.ADMIN_TOKEN = previous.admin;
-  if (previous.users === undefined) delete process.env.AUTH_USERS_JSON;
-  else process.env.AUTH_USERS_JSON = previous.users;
+test("acepta únicamente JWT firmados y revalidados contra Mongo", async () => {
+  const previous = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "jwt-test-secret";
+  const user: ActiveUser = { id: "admin", roles: ["admin"], permissions: [], active: true };
+  configureUserDirectory({ findActiveUser: async (id) => (id === user.id ? user : undefined) });
+  const valid = issueAccessToken(user);
+  const parsedRequest = request({ authorization: `Bearer ${valid}` });
+  assert.deepEqual(await actorFromJwt(valid), { id: "admin", roles: ["admin"], permissions: [] });
+  assert.equal(await actorFromJwt(`${valid}broken`), undefined);
+  assert.equal(parsedRequest.get("x-api-key"), undefined);
+  configureUserDirectory(undefined);
+  if (previous === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = previous;
 });
 
 test("escribe auditoría estructurada con actor y metadata", async (context) => {
