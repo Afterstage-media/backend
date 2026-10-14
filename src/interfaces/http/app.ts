@@ -100,6 +100,12 @@ const publicDirectory = (item: DirectoryItem & { distanceKm?: number }) => ({
   updatedAt: item.updatedAt,
 });
 
+const parsePublicLimit = (value: unknown, fallback = 50, maximum = 100): number => {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, maximum);
+};
+
 const renderArticle = (item: Awaited<ReturnType<ContentManager["required"]>>): string => {
   const paragraphs = item.body
     .split(/\n{2,}/)
@@ -335,9 +341,11 @@ export const createApp = async (
         !parsedLocation.success
       )
         return response.status(400).json({ error: "Ubicación inválida" });
+      const limit = parsePublicLimit(request.query.limit);
       response.json(
         (await directory.list(query, parsedLocation.success ? parsedLocation.data : undefined))
           .filter((item) => item.status === "active")
+          .slice(0, limit)
           .map(publicDirectory),
       );
     },
@@ -367,7 +375,7 @@ export const createApp = async (
         return distance <= location.data.radiusKm ? [{ ...event, distanceKm: Math.round(distance * 10) / 10 }] : [];
       })
       .sort((a, b) => (a.startsAt ?? "9999").localeCompare(b.startsAt ?? "9999"));
-    response.json(events);
+    response.json(events.slice(0, parsePublicLimit(_request.query.limit)));
   });
   app.get("/api/public/events/:id", async (request, response) => {
     const snapshot = await press.snapshot();
@@ -441,7 +449,9 @@ export const createApp = async (
           const distance = distanceKm(location.data.lat, location.data.lng, item.latitude, item.longitude);
           return distance <= location.data.radiusKm ? [{ ...item, distanceKm: Math.round(distance * 10) / 10 }] : [];
         });
-      response.json(items.map(({ contactEmail: _private, ...item }) => item));
+      response.json(
+        items.slice(0, parsePublicLimit(request.query.limit)).map(({ contactEmail: _private, ...item }) => item),
+      );
     },
   );
   app.post(

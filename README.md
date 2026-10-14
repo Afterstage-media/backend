@@ -201,6 +201,8 @@ Para operar contra los mismos datos del contenedor, montá el volumen/directorio
 
 El detector de duplicados bloquea al guardar coincidencias fuertes (HTTP 409), pero permite consultar coincidencias preliminares con un umbral más amplio para que edición o IA decidan si continuar.
 
+Los listados públicos de contenido, eventos, directorio y reemplazos aplican un límite seguro por request (default 50, máximo 100). El backend devuelve sólo ese máximo efectivo; la paginación/cursor queda como siguiente evolución si el volumen editorial lo requiere.
+
 Las rutas `/api/*` requieren un JWT emitido por el login; los roles y permisos se validan contra MongoDB en cada request.
 
 ## Verificación
