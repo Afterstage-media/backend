@@ -5,7 +5,7 @@ export type ExternalEvent = {
   name: string;
   artist: string;
   venue: string;
-  address: string;
+  address?: string;
   city: string;
   country?: string;
   latitude?: number | null;
