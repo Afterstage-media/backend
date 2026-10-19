@@ -56,7 +56,10 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
 
   const approval = response();
   await provider.approveAuthorization(requestId, "redaccion", "una-clave-segura-123", approval as never);
-  const code = new URL(approval.result.redirectTo!).searchParams.get("code");
+  const callbackUrl =
+    approval.result.redirectTo ??
+    approval.result.body?.match(/<textarea readonly>(.*?)<\/textarea>/)?.[1]?.replaceAll("&amp;", "&");
+  const code = new URL(callbackUrl!).searchParams.get("code");
   assert.ok(code);
   assert.equal(await provider.challengeForAuthorizationCode(client, code), "challenge");
 
