@@ -591,6 +591,9 @@ export const createApp = async (
   app.post("/api/content", requireRole("admin", "editor"), async (request, response) =>
     response.status(201).json(await manager.create(request.body)),
   );
+  app.post("/api/content/with-ai", requireRole("admin", "editor"), async (request, response) =>
+    response.status(201).json(await manager.createNoteWithAi(request.body)),
+  );
   app.patch("/api/content/:id", requireRole("admin", "editor"), async (request, response) =>
     response.json(await manager.update(String(request.params.id), request.body)),
   );

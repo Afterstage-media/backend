@@ -3,6 +3,8 @@ import { MetaPublisher } from "../infrastructure/integrations/meta.js";
 import { ContentStore, type ContentRepository } from "../infrastructure/persistence/content-store.js";
 import {
   contentInputSchema,
+  aiNoteInputSchema,
+  type AiNoteInput,
   type ContentInput,
   type ContentItem,
   type ContentPatch,
@@ -36,16 +38,9 @@ export class ContentManager {
     return this.store.create(parsed);
   }
 
-  async createNoteWithAi(input: {
-    brief: string;
-    title?: string;
-    summary?: string;
-    channels?: ContentInput["channels"];
-    tags?: string[];
-    source?: string;
-    instructions?: string;
-  }): Promise<ContentItem> {
-    const brief = input.brief.trim();
+  async createNoteWithAi(input: unknown): Promise<ContentItem> {
+    const parsed = aiNoteInputSchema.parse(input) as AiNoteInput;
+    const brief = parsed.brief;
     if (!brief) throw new Error("El brief de la nota no puede estar vacío");
 
     const fallbackTitle =
@@ -55,16 +50,16 @@ export class ContentManager {
         .slice(0, 180) || "Nueva nota editorial";
     const draft = await this.create({
       type: "article",
-      title: input.title?.trim() || fallbackTitle,
-      summary: input.summary ?? "",
+      title: parsed.title || fallbackTitle,
+      summary: parsed.summary,
       body: brief,
       status: "draft",
-      channels: input.channels ?? ["website", "instagram"],
-      tags: input.tags ?? [],
-      source: input.source ?? "",
+      channels: parsed.channels,
+      tags: parsed.tags,
+      source: parsed.source,
     });
 
-    return this.generate(draft.id, "full_article", input.instructions ?? "");
+    return this.generate(draft.id, "full_article", parsed.instructions);
   }
 
   async findDuplicates(input: unknown, excludeId?: string): Promise<DuplicateMatch[]> {
