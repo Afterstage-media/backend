@@ -71,8 +71,12 @@ export const issueAccessToken = (user: ActiveUser): string => {
   return `${header}.${payload}.${signature}`;
 };
 
-export const authenticateUser = async (identifier: string, password: string): Promise<ActiveUser | undefined> => {
-  const user = await userDirectory?.findByIdentifier?.(identifier.trim());
+export const authenticateUser = async (
+  identifier: string,
+  password: string,
+  directory: UserDirectory | undefined = userDirectory,
+): Promise<ActiveUser | undefined> => {
+  const user = await directory?.findByIdentifier?.(identifier.trim());
   if (!user?.passwordHash) {
     await derivePassword(
       password,
