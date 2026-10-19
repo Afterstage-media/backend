@@ -106,6 +106,34 @@ test("expone health, readiness y feed editorial público", async (context) => {
   });
 });
 
+test("no publica fixtures demo en las superficies públicas", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-demo-filter-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new ContentManager(new ContentStore(directory));
+  const demo = await manager.create({
+    title: "DEMO — Nota de prueba",
+    source: "seed-demo",
+    tags: ["demo"],
+    channels: ["website"],
+  });
+  await manager.update(demo.id, { status: "review" });
+  await manager.update(demo.id, { status: "approved" });
+  await manager.store.update(demo.id, { status: "published", publishedAt: new Date().toISOString() });
+  const press = new PressManager(new PressStore(directory));
+  await press.createEvent({
+    name: "DEMO — Evento de prueba",
+    notes: "Evento ficticio generado para pruebas.",
+    startsAt: "2099-01-01T21:00:00.000Z",
+  });
+  const app = await createApp(manager, press);
+  await withServer(app, async (base) => {
+    assert.deepEqual(await (await fetch(`${base}/api/public/content`)).json(), []);
+    assert.deepEqual(await (await fetch(`${base}/api/public/events`)).json(), []);
+    assert.equal((await fetch(`${base}/api/public/content/${demo.slug}`)).status, 404);
+    assert.equal((await fetch(`${base}/notas/${demo.slug}`)).status, 404);
+  });
+});
+
 test("combina eventos editoriales con fuentes RSS externas", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-events-feed-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

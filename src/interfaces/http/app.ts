@@ -108,6 +108,12 @@ const parsePublicLimit = (value: unknown, fallback = 50, maximum = 100): number 
   return Math.min(parsed, maximum);
 };
 
+const includeDemoData = () => process.env.PUBLIC_INCLUDE_DEMO_DATA === "true";
+const isDemoContent = (item: Awaited<ReturnType<ContentManager["required"]>>) =>
+  !includeDemoData() && (item.source === "seed-demo" || item.tags.some((tag) => tag.toLowerCase() === "demo"));
+const isDemoEvent = (event: { name: string; notes?: string }) =>
+  !includeDemoData() && (event.notes === "Evento ficticio generado para pruebas." || /^DEMO\s*[—-]/i.test(event.name));
+
 const renderArticle = (item: Awaited<ReturnType<ContentManager["required"]>>): string => {
   const paragraphs = item.body
     .split(/\n{2,}/)
@@ -325,14 +331,16 @@ export const createApp = async (
     const items = (await manager.store.list("published"))
       .filter(
         (item) =>
-          item.channels.includes("website") && (!tag || item.tags.some((itemTag) => itemTag.toLowerCase() === tag)),
+          item.channels.includes("website") &&
+          !isDemoContent(item) &&
+          (!tag || item.tags.some((itemTag) => itemTag.toLowerCase() === tag)),
       )
       .slice(0, limit);
     response.json(items.map(publicContent));
   });
   app.get("/api/public/content/:slug", async (request, response) => {
     const item = (await manager.store.list("published")).find(
-      (entry) => entry.slug === request.params.slug && entry.channels.includes("website"),
+      (entry) => entry.slug === request.params.slug && entry.channels.includes("website") && !isDemoContent(entry),
     );
     if (!item) return response.status(404).json({ error: "Contenido no encontrado" });
     const updated = await manager.store.incrementViews(item.id);
@@ -340,14 +348,14 @@ export const createApp = async (
   });
   app.get("/notas/:slug", async (request, response) => {
     const item = (await manager.store.list("published")).find(
-      (entry) => entry.slug === request.params.slug && entry.channels.includes("website"),
+      (entry) => entry.slug === request.params.slug && entry.channels.includes("website") && !isDemoContent(entry),
     );
     if (!item) return response.status(404).send("Nota no encontrada");
     const updated = await manager.store.incrementViews(item.id);
     response.type("html").send(renderArticle(updated ?? item));
   });
   app.get("/api/public/metrics", async (_request, response) => {
-    const items = await manager.store.list("published");
+    const items = (await manager.store.list("published")).filter((item) => !isDemoContent(item));
     const pressSnapshot = await press.snapshot();
     response.json({
       published: items.length,
@@ -394,9 +402,12 @@ export const createApp = async (
   app.get("/api/public/events", async (_request, response) => {
     const snapshot = await press.snapshot();
     const local = snapshot.events.filter(
-      (event) => event.status === "planned" && (!event.startsAt || Date.parse(event.startsAt) >= Date.now()),
+      (event) =>
+        !isDemoEvent(event) &&
+        event.status === "planned" &&
+        (!event.startsAt || Date.parse(event.startsAt) >= Date.now()),
     );
-    const external = await eventsFeed.list();
+    const external = (await eventsFeed.list()).filter((event) => !isDemoEvent(event));
     const location = distanceQuery.safeParse({
       lat: _request.query.lat,
       lng: _request.query.lng,
@@ -420,12 +431,12 @@ export const createApp = async (
   });
   app.get("/api/public/events/:id", async (request, response) => {
     const snapshot = await press.snapshot();
-    const local = snapshot.events.find((event) => event.id === request.params.id);
+    const local = snapshot.events.find((event) => event.id === request.params.id && !isDemoEvent(event));
     if (local) {
       response.json(local);
       return;
     }
-    const external = (await eventsFeed.list()).find((event) => event.id === request.params.id);
+    const external = (await eventsFeed.list()).find((event) => event.id === request.params.id && !isDemoEvent(event));
     if (!external) {
       response.status(404).json({ error: "Evento no encontrado" });
       return;
@@ -508,7 +519,7 @@ export const createApp = async (
   app.get("/rss.xml", async (_request, response) => {
     const base = (process.env.PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
     const items = (await manager.store.list("published"))
-      .filter((item) => item.channels.includes("website"))
+      .filter((item) => item.channels.includes("website") && !isDemoContent(item))
       .slice(0, 50);
     const xml = items
       .map(
@@ -524,7 +535,9 @@ export const createApp = async (
   });
   app.get("/sitemap.xml", async (_request, response) => {
     const base = (process.env.PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
-    const items = (await manager.store.list("published")).filter((item) => item.channels.includes("website"));
+    const items = (await manager.store.list("published")).filter(
+      (item) => item.channels.includes("website") && !isDemoContent(item),
+    );
     response
       .type("application/xml")
       .send(
