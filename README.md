@@ -21,7 +21,7 @@ El dominio de prensa ya incorpora:
 - **Persistencia:** MongoDB obligatorio; los stores JSON sólo existen para tests unitarios aislados.
 - **IA:** endpoint compatible con OpenAI para nota completa, copys o edición.
 - **Meta:** Instagram Content Publishing API y Facebook Pages API.
-- **MCP:** cliente stdio local del backend HTTP; usa el token del usuario de Afterstage y nunca conecta directamente con MongoDB.
+- **MCP:** servidor remoto Streamable HTTP con OAuth 2.1, PKCE, scopes y perfiles por cuenta; nunca guarda tokens de usuarios en variables de entorno.
 - **Operación:** logs JSON, health/readiness, estado del scheduler, rate limit, auditoría `data/audit.jsonl` y script de backup.
 - **Operación:** imagen Docker multi-stage, usuario sin privilegios y healthcheck.
 
@@ -88,6 +88,7 @@ npm run dev
 | `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Ajustes del transporte de correo. |
 | `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
 | `JWT_ACCESS_TTL_SECONDS` | Duración del access token emitido por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
+| `MCP_PUBLIC_URL` | URL pública HTTPS del recurso MCP y su Authorization Server; por defecto usa `PUBLIC_BASE_URL`. |
 | `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
 | `EVENTS_RSS_URLS` | URLs RSS/Atom públicas separadas por coma. Sus eventos se combinan con la agenda editorial, con caché de 5 minutos. |
 
@@ -131,44 +132,37 @@ Para un backup local/Docker: `DATA_DIR=./data UPLOAD_DIR=./uploads ./scripts/bac
 
 ## MCP
 
-Primero compilá el servicio con `npm run build`. Configuración de ejemplo para un cliente MCP que ejecuta el código local:
+El MCP se publica como `https://afterstage.ar/mcp`. El cliente descubre los metadatos OAuth en:
+
+- `/.well-known/oauth-protected-resource/mcp`
+- `/.well-known/oauth-authorization-server`
+
+La primera vez que una cuenta usa una herramienta, el cliente abre la pantalla de conexión de Afterstage. El usuario inicia sesión y autoriza scopes. El servidor emite un access token MCP de corta duración y un refresh token; ambos quedan asociados al usuario, cliente y recurso. No se copia ningún JWT de usuario a `.env`, Git ni configuración del agente.
+
+Scopes disponibles:
+
+- `notes:read`: perfil y lectura de notas.
+- `notes:write`: creación de borradores con IA; requiere usuario `editor` o `admin`.
+
+Configuración remota de ejemplo:
 
 ```json
 {
   "mcpServers": {
     "medio-under": {
-      "command": "bash",
-      "args": ["-lc", "cd /ruta/al/repo/medio-under/backend && if [ -f .env ]; then set -a; source .env; set +a; fi; exec node dist/interfaces/mcp/stdio.js"],
-      "cwd": "/ruta/al/repo/medio-under/backend",
-      "env": {
-        "AFTERSTAGE_API_URL": "https://afterstage.ar",
-        "AFTERSTAGE_ACCESS_TOKEN": "configurar-en-el-gestor-de-secretos-del-cliente"
-      }
+      "url": "https://afterstage.ar/mcp"
     }
   }
 }
 ```
 
-Herramientas disponibles:
+Herramientas remotas:
 
-- `listar_contenidos`
-- `obtener_contenido`
-- `crear_contenido`
-- `crear_nota_con_ia` — recibe un brief, redacta una nota completa y la guarda como borrador
-- `editar_contenido`
-- `generar_con_ia`
-- `publicar_contenido` — usa `dryRun=true` por defecto
-- `listar_prensa`
-- `crear_evento`
-- `crear_contacto_prensa`
-- `crear_solicitud_acreditacion`
-- `actualizar_solicitud_acreditacion`
-- `enviar_solicitud_acreditacion` — usa `dryRun=true` por defecto
-- `registrar_cobertura`
-- `obtener_dossier_de_prensa`
-- `actualizar_dossier_de_prensa`
+- `crear_nota_con_ia` — recibe un brief, redacta una nota completa y la guarda como borrador.
+- `listar_notas` — busca notas del workspace conectado.
+- `get_profile` — devuelve la identidad estable, roles y permisos de la cuenta conectada.
 
-El MCP no necesita `MONGODB_URI` ni `AI_API_KEY`: el backend autentica el token, aplica roles y permisos, ejecuta la IA y persiste la nota. Configurá `AFTERSTAGE_API_URL` y `AFTERSTAGE_ACCESS_TOKEN` en el entorno del cliente MCP o en `backend/.env`; no incluyas el token en Git.
+El backend sí necesita sus secretos de servidor (`MONGODB_URI`, `AI_API_KEY`, `JWT_SECRET`), pero ninguno representa a un usuario del MCP. La conexión de cada usuario se autoriza por OAuth y se vuelve a validar contra MongoDB en cada llamada.
 
 Ejemplo de instrucción para un agente:
 

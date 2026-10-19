@@ -7,7 +7,6 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/bootstrap/server.js",
-    "mcp": "node dist/interfaces/mcp/stdio.js",
     "users:upsert": "node scripts/upsert-user.mjs",
     "test": "node --test --import tsx 'src/**/*.test.ts'",
     "format": "prettier --write src",
