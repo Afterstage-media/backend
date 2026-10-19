@@ -142,6 +142,29 @@ test("guarda resultado de IA sin permitir que cambie el estado", async (context)
   assert.equal(updated.status, "draft");
 });
 
+test("crea y redacta una nota desde un brief sin publicarla", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-ai-note-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const ai = {
+    generate: async (item: { body: string }, kind: string, instructions: string) => ({
+      title: "La banda vuelve a escena",
+      summary: "Una nueva fecha para la escena independiente.",
+      body: `${item.body} ${kind} ${instructions}`,
+      tags: ["música"],
+    }),
+  } as unknown as AiWriter;
+  const manager = new ContentManager(new ContentStore(directory), ai, {} as MetaPublisher);
+
+  const note = await manager.createNoteWithAi({
+    brief: "La banda vuelve a escena con un show en el barrio.",
+    instructions: "Escribí con tono cercano.",
+  });
+
+  assert.equal(note.title, "La banda vuelve a escena");
+  assert.equal(note.status, "draft");
+  assert.match(note.body, /full_article/);
+});
+
 test("busca contexto editorial por título, cuerpo, etiquetas y fuente", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-search-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

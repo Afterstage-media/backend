@@ -321,6 +321,21 @@ server.tool(
 );
 
 server.tool(
+  "crear_nota_con_ia",
+  "Crea una nota periodística desde un brief y la redacta con IA. El resultado queda como borrador y nunca se publica automáticamente.",
+  {
+    brief: z.string().trim().min(10).max(8000),
+    title: z.string().trim().min(1).max(180).optional(),
+    summary: z.string().max(600).default(""),
+    channels: z.array(z.enum(channels)).default(["website", "instagram"]),
+    tags: z.array(z.string().max(80)).default([]),
+    source: z.string().max(500).default(""),
+    instructions: z.string().max(3000).default(""),
+  },
+  async (input) => json(await manager.createNoteWithAi(input)),
+);
+
+server.tool(
   "editar_contenido",
   "Edita campos editoriales de un contenido existente. Respeta las transiciones de estado del flujo.",
   {

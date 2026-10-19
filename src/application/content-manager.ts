@@ -36,6 +36,37 @@ export class ContentManager {
     return this.store.create(parsed);
   }
 
+  async createNoteWithAi(input: {
+    brief: string;
+    title?: string;
+    summary?: string;
+    channels?: ContentInput["channels"];
+    tags?: string[];
+    source?: string;
+    instructions?: string;
+  }): Promise<ContentItem> {
+    const brief = input.brief.trim();
+    if (!brief) throw new Error("El brief de la nota no puede estar vacío");
+
+    const fallbackTitle =
+      brief
+        .split(/[.!?\n]/, 1)[0]
+        ?.trim()
+        .slice(0, 180) || "Nueva nota editorial";
+    const draft = await this.create({
+      type: "article",
+      title: input.title?.trim() || fallbackTitle,
+      summary: input.summary ?? "",
+      body: brief,
+      status: "draft",
+      channels: input.channels ?? ["website", "instagram"],
+      tags: input.tags ?? [],
+      source: input.source ?? "",
+    });
+
+    return this.generate(draft.id, "full_article", input.instructions ?? "");
+  }
+
   async findDuplicates(input: unknown, excludeId?: string): Promise<DuplicateMatch[]> {
     const parsed = contentInputSchema.parse(input);
     return detectDuplicates(parsed, await this.store.list(), excludeId);
