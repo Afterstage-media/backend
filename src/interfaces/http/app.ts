@@ -29,6 +29,8 @@ import type { DirectoryItem } from "../../domain/directory/types.js";
 import { distanceQuery, distanceKm } from "../../domain/location.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
 import { monetizationStatuses } from "../../domain/monetization/types.js";
+import { mountRemoteMcp } from "../mcp/remote.js";
+import type { McpOAuthStore } from "../mcp/oauth.js";
 
 const escapeHtml = (value: string): string =>
   value.replace(
@@ -145,6 +147,7 @@ export const createApp = async (
   users?: UserDirectory,
   directory = new DirectoryManager(),
   monetization = new MonetizationManager(),
+  mcpOAuthStore?: McpOAuthStore,
 ) => {
   const app = express();
   if (users) configureUserDirectory(users);
@@ -184,6 +187,10 @@ export const createApp = async (
   app.use(auditMiddleware);
   app.use(cors({ origin: origins.length ? origins : false }));
   app.use(express.json({ limit: "2mb" }));
+  if (mcpOAuthStore && users) {
+    const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
+    if (publicUrl) mountRemoteMcp(app, manager, mcpOAuthStore, users, new URL(publicUrl));
+  }
   app.use(
     "/media",
     express.static(mediaRoot, {

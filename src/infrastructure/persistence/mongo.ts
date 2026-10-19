@@ -34,6 +34,7 @@ import type { DirectoryInput, DirectoryItem, DirectoryPatch } from "../../domain
 import type { ActiveUser, UserDirectory } from "../../interfaces/http/security.js";
 import { MongoMonetizationStore } from "./monetization-store.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
+import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -450,6 +451,7 @@ export type MongoPersistence = {
   users: MongoUserDirectory;
   directory: MongoDirectoryStore;
   monetization: MongoMonetizationStore;
+  mcpOAuth: MongoMcpOAuthStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -472,8 +474,16 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const users = new MongoUserDirectory(db.collection<MongoRecord>("users"));
   const directory = new MongoDirectoryStore(db.collection<MongoRecord>("directory"));
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
-  await Promise.all([content.init(), press.init(), users.init(), directory.init(), monetization.init()]);
-  return { client, content, press, users, directory, monetization };
+  const mcpOAuth = new MongoMcpOAuthStore(db);
+  await Promise.all([
+    content.init(),
+    press.init(),
+    users.init(),
+    directory.init(),
+    monetization.init(),
+    mcpOAuth.init(),
+  ]);
+  return { client, content, press, users, directory, monetization, mcpOAuth };
 };
 
 export const createManagers = async () => {
@@ -485,5 +495,6 @@ export const createManagers = async () => {
     users: persistence?.users,
     directory: new DirectoryManager(persistence?.directory),
     monetization: new MonetizationManager(persistence?.monetization),
+    mcpOAuth: persistence?.mcpOAuth,
   };
 };
