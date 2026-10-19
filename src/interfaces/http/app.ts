@@ -27,6 +27,8 @@ import { schedulerStatus } from "../../application/ops.js";
 import { log } from "./logger.js";
 import type { DirectoryItem } from "../../domain/directory/types.js";
 import { distanceQuery, distanceKm } from "../../domain/location.js";
+import { MonetizationManager } from "../../application/monetization-manager.js";
+import { monetizationStatuses } from "../../domain/monetization/types.js";
 
 const escapeHtml = (value: string): string =>
   value.replace(
@@ -136,6 +138,7 @@ export const createApp = async (
   eventsFeed: Pick<EventsFeed, "list"> = new EventsFeed(),
   users?: UserDirectory,
   directory = new DirectoryManager(),
+  monetization = new MonetizationManager(),
 ) => {
   const app = express();
   if (users) configureUserDirectory(users);
@@ -277,6 +280,44 @@ export const createApp = async (
       events: snapshot.events.filter((event) => event.status === "covered"),
       coverages: snapshot.coverages.filter((coverage) => coverage.url),
     });
+  });
+  app.get("/api/public/monetization/products", (_request, response) => response.json(monetization.listProducts()));
+  app.get("/api/public/promotions", async (_request, response) => {
+    const items = await monetization.repository.list();
+    response.json(
+      items
+        .filter((item) => ["approved", "fulfilled"].includes(item.status))
+        .map(({ customerEmail: _email, notes: _notes, ...item }) => item),
+    );
+  });
+  app.get("/api/public/promotions/:id", async (request, response) => {
+    const item = await monetization.repository.get(String(request.params.id));
+    if (!item) return response.status(404).json({ error: "Solicitud no encontrada" });
+    response.json({
+      id: item.id,
+      productId: item.productId,
+      title: item.title,
+      status: item.status,
+      paymentUrl: item.paymentUrl,
+    });
+  });
+  app.post("/api/public/promotions", new RateLimiter(5, 60_000).middleware, async (request, response) => {
+    const item = await monetization.create(request.body);
+    response.status(201).json({
+      id: item.id,
+      status: item.status,
+      paymentUrl: item.paymentUrl,
+      paymentPending: item.status === "pending_payment",
+      message: item.paymentUrl
+        ? "Solicitud creada. Continuá con el pago."
+        : "Solicitud recibida. El medio se va a contactar para coordinarla.",
+    });
+  });
+  app.post("/api/payments/mercadopago/webhook", async (request, response) => {
+    const paymentId = String(request.body?.data?.id ?? request.query.id ?? "");
+    if (!paymentId) return response.status(400).json({ error: "Falta el identificador del pago" });
+    await monetization.processPayment(paymentId);
+    response.status(200).json({ received: true });
   });
   app.get("/api/public/content", async (request, response) => {
     const limit = Math.min(100, Math.max(1, Number(request.query.limit ?? 50)));
@@ -501,6 +542,16 @@ export const createApp = async (
     response.type("html").send(renderPressKit(await press.snapshot())),
   );
   app.use("/api", requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"));
+  app.get("/api/monetization/promotions", requireRole("admin", "editor"), async (request, response) => {
+    const status =
+      typeof request.query.status === "string" && monetizationStatuses.includes(request.query.status as never)
+        ? (request.query.status as (typeof monetizationStatuses)[number])
+        : undefined;
+    response.json(await monetization.repository.list(status));
+  });
+  app.patch("/api/monetization/promotions/:id", requireRole("admin", "editor"), async (request, response) =>
+    response.json(await monetization.update(String(request.params.id), request.body)),
+  );
   app.get("/api/content", requireRole("admin", "editor", "auditor"), async (request, response) => {
     const status = z.enum(contentStatuses).optional().parse(request.query.status);
     const query = typeof request.query.q === "string" ? request.query.q : "";

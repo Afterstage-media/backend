@@ -32,6 +32,8 @@ import type { PressRepository } from "./press-store.js";
 import type { DirectoryRepository } from "./directory-store.js";
 import type { DirectoryInput, DirectoryItem, DirectoryPatch } from "../../domain/directory/types.js";
 import type { ActiveUser, UserDirectory } from "../../interfaces/http/security.js";
+import { MongoMonetizationStore } from "./monetization-store.js";
+import { MonetizationManager } from "../../application/monetization-manager.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -447,6 +449,7 @@ export type MongoPersistence = {
   press: MongoPressStore;
   users: MongoUserDirectory;
   directory: MongoDirectoryStore;
+  monetization: MongoMonetizationStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -468,8 +471,9 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const press = new MongoPressStore(db);
   const users = new MongoUserDirectory(db.collection<MongoRecord>("users"));
   const directory = new MongoDirectoryStore(db.collection<MongoRecord>("directory"));
-  await Promise.all([content.init(), press.init(), users.init(), directory.init()]);
-  return { client, content, press, users, directory };
+  const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
+  await Promise.all([content.init(), press.init(), users.init(), directory.init(), monetization.init()]);
+  return { client, content, press, users, directory, monetization };
 };
 
 export const createManagers = async () => {
@@ -480,5 +484,6 @@ export const createManagers = async () => {
     press: new PressManager(persistence?.press),
     users: persistence?.users,
     directory: new DirectoryManager(persistence?.directory),
+    monetization: new MonetizationManager(persistence?.monetization),
   };
 };
