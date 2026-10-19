@@ -70,7 +70,9 @@ npm run dev
 | --- | --- |
 | `MONGODB_URI` | URI obligatoria de MongoDB Atlas. |
 | `MONGODB_DB` | Base de datos, por defecto `medio_under`. |
-| `PUBLIC_BASE_URL` | Origen HTTPS público desde el que Meta descargará imágenes. |
+| `PUBLIC_BASE_URL` | Origen HTTPS público desde el que Meta descargará imágenes y Mercado Pago volverá al checkout. |
+| `MERCADOPAGO_ACCESS_TOKEN` | Token privado para crear preferencias y validar pagos desde el webhook. |
+| `MONETIZATION_PRODUCTS_JSON` | Catálogo opcional configurable en JSON; si se omite se usa el catálogo inicial de monetización. |
 | `MEDIA_ROOT` | Raíz local autorizada para archivos que se sirven bajo `/media`. |
 | `PUBLIC_MEDIA_BASE_URL` | Base pública alternativa para medios locales. |
 | `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
