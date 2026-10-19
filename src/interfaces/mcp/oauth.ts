@@ -371,6 +371,14 @@ export class McpOAuthProvider implements OAuthServerProvider {
     const redirect = new URL(consumed.redirectUri);
     redirect.searchParams.set("code", code);
     if (consumed.state) redirect.searchParams.set("state", consumed.state);
+    if (redirect.hostname === "127.0.0.1" || redirect.hostname === "localhost") {
+      response
+        .type("html")
+        .send(
+          `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Afterstage autorizado</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:720px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{margin-top:0}textarea{box-sizing:border-box;width:100%;min-height:120px;border:1px solid #171717;padding:12px;font:13px ui-monospace,monospace}a{display:inline-block;background:#171717;color:#fff;text-decoration:none;padding:13px 18px;margin-top:16px}small{color:#57534e}</style><main class="card"><h1>Afterstage autorizado</h1><p>Copiá esta URL completa y pegala en el prompt de Codex para terminar la conexión:</p><textarea readonly>${escapeHtml(redirect.href)}</textarea><p><a href="${escapeHtml(redirect.href)}">Abrir retorno local</a></p><small>El código es temporal y se puede usar una sola vez.</small></main></html>`,
+        );
+      return;
+    }
     response.redirect(302, redirect.href);
   }
 
