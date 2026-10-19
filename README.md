@@ -138,7 +138,7 @@ Primero compilá el servicio con `npm run build`. Configuración de ejemplo para
   "mcpServers": {
     "medio-under": {
       "command": "node",
-      "args": ["dist/mcp-stdio.js"],
+      "args": ["dist/interfaces/mcp/stdio.js"],
       "cwd": "/ruta/al/repo/medio-under/backend",
       "env": {
         "DATA_DIR": "/ruta/al/repo/medio-under/backend/data",
@@ -156,6 +156,7 @@ Herramientas disponibles:
 - `listar_contenidos`
 - `obtener_contenido`
 - `crear_contenido`
+- `crear_nota_con_ia` — recibe un brief, redacta una nota completa y la guarda como borrador
 - `editar_contenido`
 - `generar_con_ia`
 - `publicar_contenido` — usa `dryRun=true` por defecto
@@ -170,6 +171,13 @@ Herramientas disponibles:
 - `actualizar_dossier_de_prensa`
 
 Para operar contra los mismos datos del contenedor, montá el volumen/directorio de datos en el proceso MCP. No incluyas tokens en el archivo si tu cliente ofrece un almacén de secretos.
+
+Ejemplo de instrucción para un agente:
+
+```text
+Usá crear_nota_con_ia con este brief: "La banda X presenta su nuevo disco el viernes en Y...".
+Conservá únicamente los datos verificables, marcá con [VERIFICAR] lo que falte y dejá la nota en borrador.
+```
 
 ## API principal
 
