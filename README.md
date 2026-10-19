@@ -21,7 +21,7 @@ El dominio de prensa ya incorpora:
 - **Persistencia:** MongoDB obligatorio; los stores JSON sólo existen para tests unitarios aislados.
 - **IA:** endpoint compatible con OpenAI para nota completa, copys o edición.
 - **Meta:** Instagram Content Publishing API y Facebook Pages API.
-- **MCP:** servidor stdio local con herramientas editoriales; su límite de seguridad es el acceso al proceso y a sus variables.
+- **MCP:** cliente stdio local del backend HTTP; usa el token del usuario de Afterstage y nunca conecta directamente con MongoDB.
 - **Operación:** logs JSON, health/readiness, estado del scheduler, rate limit, auditoría `data/audit.jsonl` y script de backup.
 - **Operación:** imagen Docker multi-stage, usuario sin privilegios y healthcheck.
 
@@ -137,14 +137,12 @@ Primero compilá el servicio con `npm run build`. Configuración de ejemplo para
 {
   "mcpServers": {
     "medio-under": {
-      "command": "node",
-      "args": ["dist/interfaces/mcp/stdio.js"],
+      "command": "bash",
+      "args": ["-lc", "cd /ruta/al/repo/medio-under/backend && if [ -f .env ]; then set -a; source .env; set +a; fi; exec node dist/interfaces/mcp/stdio.js"],
       "cwd": "/ruta/al/repo/medio-under/backend",
       "env": {
-        "DATA_DIR": "/ruta/al/repo/medio-under/backend/data",
-        "MONGODB_URI": "mongodb+srv://<usuario>:<password>@<cluster>/medio_under",
-        "MONGODB_DB": "medio_under",
-        "AI_API_KEY": "configurar-en-el-gestor-de-secretos-del-cliente"
+        "AFTERSTAGE_API_URL": "https://afterstage.ar",
+        "AFTERSTAGE_ACCESS_TOKEN": "configurar-en-el-gestor-de-secretos-del-cliente"
       }
     }
   }
@@ -170,7 +168,7 @@ Herramientas disponibles:
 - `obtener_dossier_de_prensa`
 - `actualizar_dossier_de_prensa`
 
-Para operar contra los mismos datos del contenedor, montá el volumen/directorio de datos en el proceso MCP. No incluyas tokens en el archivo si tu cliente ofrece un almacén de secretos.
+El MCP no necesita `MONGODB_URI` ni `AI_API_KEY`: el backend autentica el token, aplica roles y permisos, ejecuta la IA y persiste la nota. Configurá `AFTERSTAGE_API_URL` y `AFTERSTAGE_ACCESS_TOKEN` en el entorno del cliente MCP o en `backend/.env`; no incluyas el token en Git.
 
 Ejemplo de instrucción para un agente:
 

@@ -52,8 +52,19 @@ export const contentInputSchema = z.object({
 
 export const contentPatchSchema = contentInputSchema.partial();
 
+export const aiNoteInputSchema = z.object({
+  brief: z.string().trim().min(10).max(8000),
+  title: z.string().trim().min(1).max(180).optional(),
+  summary: z.string().max(600).default(""),
+  channels: z.array(z.enum(channels)).default(["website", "instagram"]),
+  tags: z.array(z.string().max(80)).default([]),
+  source: z.string().max(500).default(""),
+  instructions: z.string().max(2000).default(""),
+});
+
 export type ContentInput = z.infer<typeof contentInputSchema>;
 export type ContentPatch = z.infer<typeof contentPatchSchema>;
+export type AiNoteInput = z.infer<typeof aiNoteInputSchema>;
 export type ContentStatus = (typeof contentStatuses)[number];
 export type Channel = (typeof channels)[number];
 

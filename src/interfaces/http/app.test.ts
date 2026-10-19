@@ -10,6 +10,8 @@ import { PressManager } from "../../application/press-manager.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
+import { AiWriter } from "../../infrastructure/integrations/ai.js";
+import { MetaPublisher } from "../../infrastructure/integrations/meta.js";
 import { configureUserDirectory, issueAccessToken, type ActiveUser } from "./security.js";
 
 const testUsers: Record<string, ActiveUser> = {
@@ -413,5 +415,36 @@ test("permite previsualizar duplicados y rechaza guardar una coincidencia fuerte
       body: JSON.stringify({ title: "Festival repetido", body: "Cobertura completa del festival." }),
     });
     assert.equal(duplicate.status, 409);
+  });
+});
+
+test("crea una nota con IA desde el endpoint autenticado del backend", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-ai-api-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const ai = {
+    generate: async () => ({
+      title: "Nota generada por API",
+      summary: "Bajada",
+      body: "Cuerpo redactado",
+      tags: ["api"],
+    }),
+  } as unknown as AiWriter;
+  const manager = new ContentManager(new ContentStore(directory), ai, {} as MetaPublisher);
+  const app = await createApp(manager, new PressManager(new PressStore(directory)));
+
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/content/with-ai`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${testTokens.editor}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ brief: "La banda presenta una fecha nueva en la ciudad." }),
+    });
+    assert.equal(response.status, 201);
+    const note = await response.json();
+    assert.equal(note.title, "Nota generada por API");
+    assert.equal(note.status, "draft");
+    assert.equal((await manager.required(note.id)).status, "draft");
   });
 });
