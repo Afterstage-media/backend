@@ -24,15 +24,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
   const directoryPath = await mkdtemp(path.join(os.tmpdir(), "medio-under-mcp-contract-"));
   context.after(() => rm(directoryPath, { recursive: true, force: true }));
 
-  const ai = {
-    generate: async () => ({
-      title: "Nota generada",
-      summary: "Bajada generada",
-      body: "Cuerpo generado con datos verificables.",
-      tags: ["mcp"],
-    }),
-  };
-  const manager = new ContentManager(new ContentStore(directoryPath), ai as never);
+  const manager = new ContentManager(new ContentStore(directoryPath));
   const press = new PressManager(new PressStore(directoryPath));
   const directory = new DirectoryManager(new DirectoryStore(directoryPath));
 
@@ -116,10 +108,27 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
 
     const draft = await client.callTool({
       name: "crear_nota_con_ia",
-      arguments: { brief: "La banda de prueba presentó una canción nueva en CABA." },
+      arguments: {
+        title: "La banda de prueba presenta una canción nueva",
+        summary: "Una novedad de la escena local.",
+        body: "La banda de prueba presentó una canción nueva en CABA.",
+        idempotencyKey: "contract-note-1",
+      },
     });
     assert.equal(draft.isError, undefined);
-    assert.equal((draft.structuredContent as { status: string }).status, "draft");
+    const draftResult = draft.structuredContent as { id: string; status: string; idempotencyKey?: string };
+    assert.equal(draftResult.status, "draft");
+    assert.equal("idempotencyKey" in draftResult, false);
+    const replay = await client.callTool({
+      name: "crear_nota_con_ia",
+      arguments: {
+        title: "La banda de prueba presenta una canción nueva",
+        summary: "Una novedad de la escena local.",
+        body: "La banda de prueba presentó una canción nueva en CABA.",
+        idempotencyKey: "contract-note-1",
+      },
+    });
+    assert.equal((replay.structuredContent as { id: string }).id, draftResult.id);
 
     currentAuth = authInfo(["press"]);
     const agenda = await client.callTool({

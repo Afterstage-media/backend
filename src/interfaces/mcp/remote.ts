@@ -11,7 +11,7 @@ import {
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
-import { channels, contentStatuses } from "../../domain/content/types.js";
+import { channels, contentStatuses, type ContentItem } from "../../domain/content/types.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
 import { directoryKinds, directoryStatuses } from "../../domain/directory/types.js";
@@ -48,6 +48,7 @@ const textResult = (value: Record<string, unknown>) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
   structuredContent: value,
 });
+const publicNote = ({ idempotencyKey: _idempotencyKey, ...note }: ContentItem) => note;
 
 const profileOutputSchema = z.object({
   userId: z.string(),
@@ -141,7 +142,7 @@ export const createRemoteMcpServer = (
     async ({ query, status, limit }, extra) => {
       authFromExtra(extra, "notes:read", readNotesRoles);
       const candidates = await manager.search(query, status);
-      return textResult({ notes: candidates.slice(0, limit), total: candidates.length, limit });
+      return textResult({ notes: candidates.slice(0, limit).map(publicNote), total: candidates.length, limit });
     },
   );
 
@@ -291,17 +292,25 @@ export const createRemoteMcpServer = (
   server.registerTool(
     "crear_nota_con_ia",
     {
-      title: "Crear nota con IA",
+      title: "Guardar nota redactada por el agente",
       description:
-        "Redacta una nota editorial como borrador usando el brief proporcionado. Nunca publica ni envía comunicaciones automáticamente.",
+        "Guarda como borrador una nota que el agente ya redactó. El MCP no llama a otra IA, nunca publica ni programa automáticamente y no envía comunicaciones.",
       inputSchema: {
-        brief: z.string().trim().min(10).max(8000),
-        title: z.string().trim().min(1).max(180).optional(),
+        title: z.string().trim().min(1).max(180),
         summary: z.string().max(600).default(""),
+        body: z.string().trim().min(1).max(50_000),
+        instagramCopy: z.string().max(2_200).default(""),
+        facebookCopy: z.string().default(""),
         channels: z.array(z.enum(channels)).default(["website", "instagram"]),
         tags: z.array(z.string().max(80)).default([]),
         source: z.string().max(500).default(""),
-        instructions: z.string().max(2000).default(""),
+        idempotencyKey: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("Clave estable para repetir la misma solicitud sin crear otro borrador"),
       },
       outputSchema: z
         .object({
@@ -310,13 +319,13 @@ export const createRemoteMcpServer = (
           createdBy: z.string(),
         })
         .passthrough(),
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async (input, extra) => {
       const actor = authFromExtra(extra, "notes:write");
-      const note = await manager.createNoteWithAi(input);
-      return textResult({ ...note, createdBy: actor.userId });
+      const note = await manager.createAgentNote(input, actor.userId);
+      return textResult({ ...publicNote(note), createdBy: actor.userId });
     },
   );
 

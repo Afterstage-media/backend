@@ -3,8 +3,8 @@ import { MetaPublisher } from "../infrastructure/integrations/meta.js";
 import { ContentStore, type ContentRepository } from "../infrastructure/persistence/content-store.js";
 import {
   contentInputSchema,
-  aiNoteInputSchema,
-  type AiNoteInput,
+  agentNoteInputSchema,
+  type AgentNoteInput,
   type ContentInput,
   type ContentItem,
   type ContentPatch,
@@ -33,33 +33,42 @@ export class ContentManager {
     if (!["idea", "draft"].includes(parsed.status)) {
       throw new Error("El contenido nuevo debe comenzar como idea o borrador");
     }
+    if (parsed.idempotencyKey) {
+      const existing = await this.store.findByIdempotencyKey(parsed.idempotencyKey);
+      if (existing) return existing;
+    }
     const duplicates = detectDuplicates(parsed, await this.store.list(), undefined, 0.82);
-    if (duplicates.length) throw new DuplicateContentError(duplicates);
+    if (duplicates.length) {
+      if (parsed.idempotencyKey) {
+        const existing = await this.store.findByIdempotencyKey(parsed.idempotencyKey);
+        if (existing) return existing;
+      }
+      throw new DuplicateContentError(duplicates);
+    }
     return this.store.create(parsed);
   }
 
-  async createNoteWithAi(input: unknown): Promise<ContentItem> {
-    const parsed = aiNoteInputSchema.parse(input) as AiNoteInput;
-    const brief = parsed.brief;
-    if (!brief) throw new Error("El brief de la nota no puede estar vacío");
-
-    const fallbackTitle =
-      brief
-        .split(/[.!?\n]/, 1)[0]
-        ?.trim()
-        .slice(0, 180) || "Nueva nota editorial";
-    const draft = await this.create({
+  async createAgentNote(input: unknown, idempotencyScope = "global"): Promise<ContentItem> {
+    const parsed = agentNoteInputSchema.parse(input) as AgentNoteInput;
+    const idempotencyKey = parsed.idempotencyKey ? `${idempotencyScope}:${parsed.idempotencyKey}` : undefined;
+    return this.create({
       type: "article",
-      title: parsed.title || fallbackTitle,
+      title: parsed.title,
       summary: parsed.summary,
-      body: brief,
+      body: parsed.body,
+      instagramCopy: parsed.instagramCopy,
+      facebookCopy: parsed.facebookCopy,
       status: "draft",
       channels: parsed.channels,
       tags: parsed.tags,
       source: parsed.source,
+      idempotencyKey,
     });
+  }
 
-    return this.generate(draft.id, "full_article", parsed.instructions);
+  /** Compatibility name for existing HTTP callers; generation happens in the agent, not here. */
+  async createNoteWithAi(input: unknown, idempotencyScope = "global"): Promise<ContentItem> {
+    return this.createAgentNote(input, idempotencyScope);
   }
 
   async findDuplicates(input: unknown, excludeId?: string): Promise<DuplicateMatch[]> {
