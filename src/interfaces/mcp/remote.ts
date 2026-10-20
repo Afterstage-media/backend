@@ -3,7 +3,11 @@ import express, { type Express } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { getOAuthProtectedResourceMetadataUrl, mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
+import {
+  createOAuthMetadata,
+  getOAuthProtectedResourceMetadataUrl,
+  mcpAuthRouter,
+} from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
@@ -293,6 +297,18 @@ export const mountRemoteMcp = (
     }
     response.locals.afterstageActor = actor;
     next();
+  });
+  app.use("/.well-known/oauth-authorization-server", (_request, response) => {
+    response.json({
+      ...createOAuthMetadata({
+        provider,
+        issuerUrl: publicUrl,
+        baseUrl: publicUrl,
+        serviceDocumentationUrl: new URL("/politica-editorial", publicUrl),
+        scopesSupported: [...mcpScopes],
+      }),
+      authorization_response_iss_parameter_supported: true,
+    });
   });
   app.use(
     mcpAuthRouter({
