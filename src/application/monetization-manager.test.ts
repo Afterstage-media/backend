@@ -15,7 +15,20 @@ test("crea una solicitud paga sin exponer datos privados en el catálogo", async
   });
   assert.equal(item.status, "pending_payment");
   assert.equal(item.amountArs, 12000);
-  assert.equal(manager.listProducts().length, 8);
+  assert.equal(manager.listProducts().length, 13);
+  assert.deepEqual(
+    manager
+      .listProducts()
+      .slice(-5)
+      .map((product) => product.id),
+    [
+      "pasarela-entradas",
+      "promocion-festivales",
+      "organizacion-festivales",
+      "publicidad-viajes-conciertos",
+      "tienda-merch",
+    ],
+  );
 });
 
 test("crea servicios a consultar directamente en revisión", async () => {
