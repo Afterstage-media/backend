@@ -216,6 +216,7 @@ export const createApp = async (
     response.json({
       status: "ready",
       mongo: Boolean(process.env.MONGODB_URI),
+      ai: Boolean(process.env.AI_API_KEY),
       smtp: Boolean(process.env.SMTP_HOST),
       meta: Boolean(process.env.META_ACCESS_TOKEN),
     }),
@@ -230,6 +231,11 @@ export const createApp = async (
       persistence: {
         mongoConfigured: Boolean(process.env.MONGODB_URI),
         dataDir: process.env.DATA_DIR ?? "data",
+      },
+      ai: {
+        configured: Boolean(process.env.AI_API_KEY),
+        baseUrl: process.env.AI_BASE_URL ?? "https://api.openai.com/v1",
+        model: process.env.AI_MODEL ?? "gpt-5-mini",
       },
     }),
   );

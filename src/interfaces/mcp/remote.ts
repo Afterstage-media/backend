@@ -44,9 +44,38 @@ const authFromExtra = (extra: McpExtra, scope: McpScope, allowedRoles?: readonly
   };
 };
 
-const textResult = (value: unknown) => ({
+const textResult = (value: Record<string, unknown>) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-  structuredContent: value as Record<string, unknown>,
+  structuredContent: value,
+});
+
+const profileOutputSchema = z.object({
+  userId: z.string(),
+  roles: z.array(z.string()),
+  permissions: z.array(z.string()),
+});
+const notesOutputSchema = z.object({
+  notes: z.array(z.unknown()),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+});
+const agendaOutputSchema = z.object({
+  events: z.array(z.unknown()),
+  accreditations: z.array(z.unknown()),
+  coverages: z.array(z.unknown()),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+});
+const directoryOutputSchema = z.object({
+  items: z.array(z.unknown()),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
+});
+const replacementsOutputSchema = z.object({
+  searches: z.array(z.unknown()),
+  applications: z.array(z.unknown()).optional(),
+  total: z.number().int().nonnegative(),
+  limit: z.number().int().positive(),
 });
 
 const readNotesRoles = ["admin", "editor", "auditor"] as const;
@@ -89,6 +118,7 @@ export const createRemoteMcpServer = (
       title: "Perfil de Afterstage",
       description: "Devuelve la identidad y permisos de la cuenta de Afterstage conectada.",
       inputSchema: {},
+      outputSchema: profileOutputSchema,
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
     },
     async (_input, extra) => textResult(authFromExtra(extra, "notes:read")),
@@ -104,12 +134,14 @@ export const createRemoteMcpServer = (
         status: z.enum(contentStatuses).optional(),
         limit: z.number().int().min(1).max(100).default(50),
       },
+      outputSchema: notesOutputSchema,
       annotations: { readOnlyHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
     },
     async ({ query, status, limit }, extra) => {
       authFromExtra(extra, "notes:read", readNotesRoles);
-      return textResult((await manager.search(query, status)).slice(0, limit));
+      const candidates = await manager.search(query, status);
+      return textResult({ notes: candidates.slice(0, limit), total: candidates.length, limit });
     },
   );
 
@@ -125,6 +157,7 @@ export const createRemoteMcpServer = (
         to: z.string().datetime().optional(),
         limit: z.number().int().min(1).max(100).default(50),
       },
+      outputSchema: agendaOutputSchema,
       annotations: { readOnlyHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:read"] }] },
     },
@@ -133,8 +166,11 @@ export const createRemoteMcpServer = (
       const normalized = query.trim().toLowerCase();
       const fromMs = from ? Date.parse(from) : undefined;
       const toMs = to ? Date.parse(to) : undefined;
+      if (fromMs !== undefined && toMs !== undefined && fromMs > toMs) {
+        throw new Error("El inicio del rango no puede ser posterior al final");
+      }
       const snapshot = await press.snapshot();
-      const events = snapshot.events
+      const candidates = snapshot.events
         .filter((event) => {
           if (status && event.status !== status) return false;
           if (
@@ -149,13 +185,15 @@ export const createRemoteMcpServer = (
           if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
           return true;
         })
-        .sort((left, right) => (left.startsAt ?? "9999").localeCompare(right.startsAt ?? "9999"))
-        .slice(0, limit);
+        .sort((left, right) => (left.startsAt ?? "9999").localeCompare(right.startsAt ?? "9999"));
+      const events = candidates.slice(0, limit);
       const eventIds = new Set(events.map((event) => event.id));
       return textResult({
         events,
         accreditations: snapshot.accreditations.filter((item) => eventIds.has(item.eventId)),
         coverages: snapshot.coverages.filter((item) => item.eventId !== null && eventIds.has(item.eventId)),
+        total: candidates.length,
+        limit,
       });
     },
   );
@@ -174,18 +212,26 @@ export const createRemoteMcpServer = (
         location: z.object({ lat: z.number(), lng: z.number(), radiusKm: z.number().positive().max(500) }).optional(),
         limit: z.number().int().min(1).max(100).default(50),
       },
+      outputSchema: directoryOutputSchema,
       annotations: { readOnlyHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["directory:read"] }] },
     },
     async ({ query, kind, city, status, includeContacts, location, limit }, extra) => {
-      authFromExtra(extra, "directory:read", readDirectoryRoles);
+      const actor = authFromExtra(extra, "directory:read", readDirectoryRoles);
       const items = await directory.list(query, location);
       const candidates = items
         .filter((item) => !kind || item.kind === kind)
         .filter((item) => !city || item.city.toLowerCase().includes(city.trim().toLowerCase()))
         .filter((item) => !status || item.status === status);
-      const filtered = candidates.slice(0, limit).map((item) => (includeContacts ? item : { ...item, contacts: [] }));
-      return textResult({ items: filtered, total: candidates.length });
+      if (includeContacts && !["admin", "editor", "press", "directory"].some((role) => actor.roles.includes(role))) {
+        throw new Error("Tu usuario no tiene permiso para consultar datos de contacto");
+      }
+      const filtered = candidates.slice(0, limit).map((item) => {
+        if (includeContacts) return item;
+        const { contacts: _contacts, emails: _emails, phones: _phones, ...safeItem } = item;
+        return { ...safeItem, contacts: [] };
+      });
+      return textResult({ items: filtered, total: candidates.length, limit });
     },
   );
 
@@ -203,6 +249,7 @@ export const createRemoteMcpServer = (
         includeApplications: z.boolean().default(false),
         limit: z.number().int().min(1).max(100).default(50),
       },
+      outputSchema: replacementsOutputSchema,
       annotations: { readOnlyHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["replacements:read"] }] },
     },
@@ -210,8 +257,11 @@ export const createRemoteMcpServer = (
       authFromExtra(extra, "replacements:read", readReplacementsRoles);
       const fromMs = from ? Date.parse(from) : undefined;
       const toMs = to ? Date.parse(to) : undefined;
+      if (fromMs !== undefined && toMs !== undefined && fromMs > toMs) {
+        throw new Error("El inicio del rango no puede ser posterior al final");
+      }
       const snapshot = await press.snapshot();
-      const searches = snapshot.replacementSearches
+      const candidates = snapshot.replacementSearches
         .filter((item) => !status || item.status === status)
         .filter((item) => !profile || item.profile === profile)
         .filter((item) => !city || item.city.toLowerCase().includes(city.trim().toLowerCase()))
@@ -221,8 +271,8 @@ export const createRemoteMcpServer = (
           if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
           return true;
         })
-        .sort((left, right) => (left.startsAt ?? "9999").localeCompare(right.startsAt ?? "9999"))
-        .slice(0, limit);
+        .sort((left, right) => (left.startsAt ?? "9999").localeCompare(right.startsAt ?? "9999"));
+      const searches = candidates.slice(0, limit);
       return textResult({
         searches,
         ...(includeApplications
@@ -232,6 +282,8 @@ export const createRemoteMcpServer = (
               ),
             }
           : {}),
+        total: candidates.length,
+        limit,
       });
     },
   );
@@ -251,6 +303,13 @@ export const createRemoteMcpServer = (
         source: z.string().max(500).default(""),
         instructions: z.string().max(2000).default(""),
       },
+      outputSchema: z
+        .object({
+          id: z.string(),
+          status: z.literal("draft"),
+          createdBy: z.string(),
+        })
+        .passthrough(),
       annotations: { destructiveHint: false, idempotentHint: false },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },

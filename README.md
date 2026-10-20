@@ -76,7 +76,7 @@ npm run dev
 | `MEDIA_ROOT` | Raíz local autorizada para archivos que se sirven bajo `/media`. |
 | `PUBLIC_MEDIA_BASE_URL` | Base pública alternativa para medios locales. |
 | `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
-| `AI_API_KEY` | Habilita las acciones de generación. |
+| `AI_API_KEY` | Secreto del proveedor OpenAI-compatible; habilita las acciones de generación. Debe configurarse como secreto del servidor, nunca en el cliente, Git o la conexión MCP. |
 | `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
 | `AI_MODEL` | Modelo de redacción. |
 | `META_ACCESS_TOKEN` | Token de Page de larga duración. |
@@ -159,8 +159,13 @@ Configuración remota de ejemplo:
 Herramientas remotas:
 
 - `crear_nota_con_ia` — recibe un brief, redacta una nota completa y la guarda como borrador.
-- `listar_notas` — busca notas del workspace conectado.
+- `listar_notas` — busca notas del workspace conectado y devuelve `{ notes, total, limit }` para mantener un contrato MCP de objeto, incluso sin resultados.
+- `listar_agenda` — consulta eventos, acreditaciones y coberturas con filtros de texto, estado y fecha.
+- `buscar_directorio` — busca entradas del directorio; los emails, teléfonos y contactos sólo se incluyen cuando se solicita y el rol está autorizado.
+- `listar_reemplazos` — consulta búsquedas y, opcionalmente, sus postulaciones.
 - `get_profile` — devuelve la identidad estable, roles y permisos de la cuenta conectada.
+
+La disponibilidad de la IA se expone en `GET /ready` como `ai` y en `GET /api/ops/status` como `ai.configured`, sin devolver nunca la clave. Si es `false`, las consultas de lectura siguen disponibles pero `crear_nota_con_ia` devuelve un error de configuración hasta que se cargue `AI_API_KEY` en el Secret de producción.
 
 El backend sí necesita sus secretos de servidor (`MONGODB_URI`, `AI_API_KEY`, `JWT_SECRET`), pero ninguno representa a un usuario del MCP. La conexión de cada usuario se autoriza por OAuth y se vuelve a validar contra MongoDB en cada llamada.
 
