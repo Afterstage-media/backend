@@ -8,6 +8,10 @@ const response = () => {
   return {
     result,
     locals: {},
+    status(status: number) {
+      result.redirectStatus = status;
+      return this;
+    },
     type() {
       return this;
     },
@@ -116,7 +120,11 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   assert.ok(webRequestId);
   const webApproval = response();
   await provider.approveAuthorization(webRequestId, user.id, webApproval as never);
-  assert.equal(webApproval.result.redirectStatus, 303);
-  assert.equal(new URL(webApproval.result.redirectTo!).origin, "https://chatgpt.com");
-  assert.equal(new URL(webApproval.result.redirectTo!).searchParams.get("iss"), "https://afterstage.ar/");
+  assert.equal(webApproval.result.redirectStatus, 200);
+  assert.match(webApproval.result.body ?? "", /Redirigiendo a ChatGPT/);
+  const webCallbackUrl = webApproval.result.body
+    ?.match(/<a href="([^"]+)">Continuar a ChatGPT/)?.[1]
+    ?.replaceAll("&amp;", "&");
+  assert.equal(new URL(webCallbackUrl!).origin, "https://chatgpt.com");
+  assert.equal(new URL(webCallbackUrl!).searchParams.get("iss"), "https://afterstage.ar/");
 });

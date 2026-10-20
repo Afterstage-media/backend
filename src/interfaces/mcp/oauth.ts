@@ -424,7 +424,12 @@ export class McpOAuthProvider implements OAuthServerProvider {
         );
       return;
     }
-    response.redirect(303, redirect.href);
+    response
+      .status(200)
+      .type("html")
+      .send(
+        `<!doctype html><html lang="es"><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${escapeHtml(redirect.href)}"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Afterstage autorizado</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:720px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{margin-top:0}a{display:inline-block;background:#171717;color:#fff;text-decoration:none;padding:13px 18px;margin-top:16px}small{color:#57534e}</style><main class="card"><h1>Afterstage autorizado</h1><p>Redirigiendo a ChatGPT para completar la conexión…</p><p><a href="${escapeHtml(redirect.href)}">Continuar a ChatGPT</a></p><small>El código es temporal y se puede usar una sola vez.</small></main></html>`,
+      );
   }
 
   async challengeForAuthorizationCode(_client: OAuthClientInformationFull, authorizationCode: string): Promise<string> {
