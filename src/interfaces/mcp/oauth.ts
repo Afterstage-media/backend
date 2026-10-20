@@ -37,6 +37,8 @@ type PendingAuthorization = {
   scopes: string[];
   resource?: string;
   expiresAt: number;
+  approvedUserId?: string;
+  approvedAt?: number;
 };
 
 type AuthorizationCode = PendingAuthorization & {
@@ -63,6 +65,7 @@ export interface McpOAuthStore {
   registerClient(client: OAuthClientInformationFull): Promise<OAuthClientInformationFull>;
   createPendingAuthorization(input: Omit<PendingAuthorization, "id">): Promise<string>;
   getPendingAuthorization(id: string): Promise<PendingAuthorization | undefined>;
+  approvePendingAuthorization(id: string, userId: string): Promise<PendingAuthorization | undefined>;
   consumePendingAuthorization(id: string): Promise<PendingAuthorization | undefined>;
   createAuthorizationCode(input: Omit<AuthorizationCode, "id" | "codeHash">): Promise<string>;
   getAuthorizationCode(code: string): Promise<AuthorizationCode | undefined>;
@@ -128,6 +131,21 @@ export class MongoMcpOAuthStore implements McpOAuthStore {
 
   async getPendingAuthorization(id: string): Promise<PendingAuthorization | undefined> {
     const document = await this.pending.findOne({ _id: id, expiresAt: { $gt: now() } });
+    if (!document) return undefined;
+    const { _id: _ignored, ...pending } = document;
+    return { id, ...(pending as Omit<PendingAuthorization, "id">) };
+  }
+
+  async approvePendingAuthorization(id: string, userId: string): Promise<PendingAuthorization | undefined> {
+    const document = await this.pending.findOneAndUpdate(
+      {
+        _id: id,
+        expiresAt: { $gt: now() },
+        $or: [{ approvedUserId: { $exists: false } }, { approvedUserId: userId }],
+      },
+      { $set: { approvedUserId: userId, approvedAt: now() } },
+      { returnDocument: "after" },
+    );
     if (!document) return undefined;
     const { _id: _ignored, ...pending } = document;
     return { id, ...(pending as Omit<PendingAuthorization, "id">) };
@@ -252,6 +270,14 @@ export class MemoryMcpOAuthStore implements McpOAuthStore {
     const value = this.pending.get(id);
     return value && value.expiresAt > now() ? value : undefined;
   }
+  async approvePendingAuthorization(id: string, userId: string) {
+    const value = this.pending.get(id);
+    if (!value || value.expiresAt <= now()) return undefined;
+    if (value.approvedUserId && value.approvedUserId !== userId) return undefined;
+    value.approvedUserId = userId;
+    value.approvedAt = now();
+    return value;
+  }
   async consumePendingAuthorization(id: string) {
     const value = this.pending.get(id);
     this.pending.delete(id);
@@ -373,21 +399,21 @@ export class McpOAuthProvider implements OAuthServerProvider {
       return !allowedRoles?.some((role) => user.roles.includes(role));
     });
     if (deniedScope) throw new AccessDeniedError(`Tu usuario no tiene permiso para el scope ${deniedScope}`);
-    const consumed = await this.store.consumePendingAuthorization(requestId);
-    if (!consumed) throw new InvalidGrantError("La solicitud OAuth ya fue utilizada");
+    const approved = await this.store.approvePendingAuthorization(requestId, user.id);
+    if (!approved) throw new InvalidGrantError("La solicitud OAuth expiró o fue autorizada por otra cuenta");
     const code = await this.store.createAuthorizationCode({
-      clientId: consumed.clientId,
-      redirectUri: consumed.redirectUri,
-      ...(consumed.state ? { state: consumed.state } : {}),
-      codeChallenge: consumed.codeChallenge,
-      scopes: consumed.scopes,
-      ...(consumed.resource ? { resource: consumed.resource } : {}),
-      expiresAt: consumed.expiresAt,
+      clientId: approved.clientId,
+      redirectUri: approved.redirectUri,
+      ...(approved.state ? { state: approved.state } : {}),
+      codeChallenge: approved.codeChallenge,
+      scopes: approved.scopes,
+      ...(approved.resource ? { resource: approved.resource } : {}),
+      expiresAt: approved.expiresAt,
       userId: user.id,
     });
-    const redirect = new URL(consumed.redirectUri);
+    const redirect = new URL(approved.redirectUri);
     redirect.searchParams.set("code", code);
-    if (consumed.state) redirect.searchParams.set("state", consumed.state);
+    if (approved.state) redirect.searchParams.set("state", approved.state);
     if (redirect.hostname === "127.0.0.1" || redirect.hostname === "localhost") {
       response
         .type("html")

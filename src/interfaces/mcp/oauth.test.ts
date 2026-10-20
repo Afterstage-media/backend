@@ -63,6 +63,14 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   assert.ok(code);
   assert.equal(await provider.challengeForAuthorizationCode(client, code), "challenge");
 
+  const duplicateApproval = response();
+  await provider.approveAuthorization(requestId, "redaccion", "una-clave-segura-123", duplicateApproval as never);
+  const duplicateCallbackUrl =
+    duplicateApproval.result.redirectTo ??
+    duplicateApproval.result.body?.match(/<textarea readonly>(.*?)<\/textarea>/)?.[1]?.replaceAll("&amp;", "&");
+  assert.ok(duplicateCallbackUrl);
+  assert.notEqual(new URL(duplicateCallbackUrl).searchParams.get("code"), code);
+
   const tokens = await provider.exchangeAuthorizationCode(
     client,
     code,
