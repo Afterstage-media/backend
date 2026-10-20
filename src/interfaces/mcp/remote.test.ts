@@ -35,7 +35,7 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
     assert.deepEqual((await metadataResponse.json()) as Record<string, unknown>, {
       resource: "https://afterstage.test/mcp",
       authorization_servers: ["https://afterstage.test/"],
-      scopes_supported: ["notes:read", "notes:write"],
+      scopes_supported: ["notes:read", "notes:write", "agenda:read", "directory:read", "replacements:read"],
       resource_name: "Afterstage",
       resource_documentation: "https://afterstage.test/politica-editorial",
     });
