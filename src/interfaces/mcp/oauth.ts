@@ -14,8 +14,7 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import type { Role, UserDirectory } from "../http/security.js";
-import { authenticateUser } from "../http/security.js";
+import type { Actor, Role, UserDirectory } from "../http/security.js";
 
 export const mcpScopes = ["notes:read", "notes:write", "agenda:read", "directory:read", "replacements:read"] as const;
 export type McpScope = (typeof mcpScopes)[number];
@@ -377,25 +376,24 @@ export class McpOAuthProvider implements OAuthServerProvider {
     const scopeList = scopes
       .map((scope) => `<li>${escapeHtml(scopeLabel(scope))} <code>${escapeHtml(scope)}</code></li>`)
       .join("");
+    const sessionActor = response.locals.afterstageActor as Actor | undefined;
+    const sessionBlock = sessionActor
+      ? `<p>Sesión iniciada en Afterstage. La contraseña no se comparte con esta conexión.</p><form method="post" action="/oauth/approve"><input type="hidden" name="request_id" value="${escapeHtml(requestId)}"><button type="submit">Autorizar conexión</button></form>`
+      : `<p>Para continuar, iniciá sesión en Afterstage en otra pestaña y luego volvé a esta pantalla.</p><p><a href="/colaborador" target="_blank" rel="noreferrer">Abrir Afterstage e iniciar sesión</a></p><form method="post" action="/oauth/approve"><input type="hidden" name="request_id" value="${escapeHtml(requestId)}"><button type="submit">Ya inicié sesión, continuar</button></form>`;
     response
       .set("Cache-Control", "no-store")
       .type("html")
       .send(
-        `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Afterstage</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:560px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{font-size:42px;letter-spacing:-.06em;margin-top:0}label{display:block;font-weight:700;margin:18px 0 6px}input{box-sizing:border-box;border:1px solid #171717;font:inherit;padding:12px;width:100%}button{background:#171717;color:#fff;border:0;font:inherit;font-weight:700;margin-top:24px;padding:13px 18px;width:100%}button:disabled{cursor:wait;opacity:.7}small{color:#57534e}code{font-size:.8em}</style><main class="card"><h1>Conectar Afterstage</h1><p><strong>${escapeHtml(client.client_name ?? "Una aplicación")}</strong> quiere trabajar con tu cuenta.</p><ul>${scopeList}</ul><small>El acceso queda limitado a estos permisos y puede revocarse.</small><form method="post" action="/oauth/approve" onsubmit="const button=this.querySelector('button[type=submit]'); if(button.disabled) return false; button.disabled=true; button.textContent='Autorizando…';"><input type="hidden" name="request_id" value="${escapeHtml(requestId)}"><label for="identifier">Usuario o email</label><input id="identifier" name="identifier" autocomplete="username" required><label for="password">Contraseña</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Autorizar conexión</button></form></main></html>`,
+        `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Afterstage</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:560px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{font-size:42px;letter-spacing:-.06em;margin-top:0}a{color:#171717;font-weight:700}button{background:#171717;color:#fff;border:0;font:inherit;font-weight:700;margin-top:24px;padding:13px 18px;width:100%}small{color:#57534e}code{font-size:.8em}</style><main class="card"><h1>Conectar Afterstage</h1><p><strong>${escapeHtml(client.client_name ?? "Una aplicación")}</strong> quiere trabajar con tu cuenta.</p><ul>${scopeList}</ul><small>El acceso queda limitado a estos permisos y puede revocarse.</small>${sessionBlock}</main></html>`,
       );
   }
 
-  async approveAuthorization(
-    requestId: string,
-    identifier: string,
-    password: string,
-    response: Response,
-  ): Promise<void> {
+  async approveAuthorization(requestId: string, userId: string, response: Response): Promise<void> {
     response.set("Cache-Control", "no-store");
     const request = await this.store.getPendingAuthorization(requestId);
     if (!request) throw new InvalidGrantError("La solicitud OAuth expiró o ya fue utilizada");
-    const user = await authenticateUser(identifier, password, this.options.users);
-    if (!user) throw new AccessDeniedError("Las credenciales de Afterstage no son válidas");
+    const user = await this.options.users.findActiveUser(userId);
+    if (!user || user.active === false) throw new AccessDeniedError("La sesión de Afterstage no es válida");
     const deniedScope = request.scopes.find((scope) => {
       const allowedRoles = mcpScopeRoles[scope as McpScope];
       return !allowedRoles?.some((role) => user.roles.includes(role));

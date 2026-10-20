@@ -15,6 +15,7 @@ import {
   authenticateUser,
   configureUserDirectory,
   issueAccessToken,
+  setAuthCookie,
   hashPassword,
   RateLimiter,
   requireRole,
@@ -251,8 +252,10 @@ export const createApp = async (
       response.status(401).json({ error: "Credenciales inválidas" });
       return;
     }
+    const accessToken = issueAccessToken(user);
+    setAuthCookie(response, accessToken);
     response.json({
-      accessToken: issueAccessToken(user),
+      accessToken,
       user: {
         id: user.id,
         roles: user.roles,
@@ -274,8 +277,10 @@ export const createApp = async (
     const passwordHash = await hashPassword(input.password);
     try {
       const user = await users.createCollaborator(input.email, passwordHash);
+      const accessToken = issueAccessToken(user);
+      setAuthCookie(response, accessToken);
       response.status(201).json({
-        accessToken: issueAccessToken(user),
+        accessToken,
         user: { id: user.id, roles: user.roles, permissions: user.permissions },
       });
     } catch (error) {

@@ -1,7 +1,7 @@
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 
 export type Role = "admin" | "editor" | "press" | "directory" | "community" | "auditor" | "social";
 export const permissionNames = ["instagram:read", "instagram:metrics", "instagram:publish"] as const;
@@ -50,13 +50,18 @@ export const verifyPassword = async (password: string, encoded: string): Promise
 };
 
 const jwtPart = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+export const authCookieName = "afterstage_session";
+
+const accessTokenTtlSeconds = (): number => {
+  const configuredTtl = Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 900);
+  return Number.isFinite(configuredTtl) ? Math.max(300, configuredTtl) : 900;
+};
 
 export const issueAccessToken = (user: ActiveUser): string => {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET no está configurado");
   const now = Math.floor(Date.now() / 1000);
-  const configuredTtl = Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 900);
-  const ttl = Number.isFinite(configuredTtl) ? Math.max(300, configuredTtl) : 900;
+  const ttl = accessTokenTtlSeconds();
   const header = jwtPart({ alg: "HS256", typ: "JWT" });
   const payload = jwtPart({
     sub: user.id,
@@ -161,12 +166,32 @@ export const actorFromJwt = async (token: string): Promise<Actor | undefined> =>
   }
 };
 
+const cookieValue = (request: Request, name: string): string | undefined => {
+  const cookies = request.get("cookie")?.split(";") ?? [];
+  const entry = cookies.find((item) => item.trim().startsWith(`${name}=`));
+  if (!entry) return undefined;
+  const value = entry.slice(entry.indexOf("=") + 1).trim();
+  return value ? decodeURIComponent(value) : undefined;
+};
+
+export const actorFromRequest = async (request: Request): Promise<Actor | undefined> => {
+  const authorization = request.get("authorization");
+  const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const token = bearer ?? cookieValue(request, authCookieName);
+  return token ? actorFromJwt(token) : undefined;
+};
+
+export const setAuthCookie = (response: Response, token: string): void => {
+  response.setHeader(
+    "Set-Cookie",
+    `${authCookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${accessTokenTtlSeconds()}`,
+  );
+};
+
 export const requireRole =
   (...roles: Role[]): RequestHandler =>
   async (request, response, next) => {
-    const authorization = request.get("authorization");
-    const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-    const actor = bearer ? await actorFromJwt(bearer) : undefined;
+    const actor = await actorFromRequest(request);
     if (!actor) {
       response.status(401).json({ error: "No autorizado" });
       return;
@@ -185,9 +210,7 @@ export const hasPermission = (actor: Actor, permission: Permission): boolean =>
 export const requirePermission =
   (...permissions: Permission[]): RequestHandler =>
   async (request, response, next) => {
-    const authorization = request.get("authorization");
-    const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-    const actor = bearer ? await actorFromJwt(bearer) : undefined;
+    const actor = await actorFromRequest(request);
     if (!actor) {
       response.status(401).json({ error: "No autorizado" });
       return;

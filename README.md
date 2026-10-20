@@ -126,7 +126,7 @@ Los correos se envían con el nombre configurado en el dossier (`mediaKit.name`)
 
 ## Seguridad y operación
 
-Las rutas privadas aceptan únicamente `Authorization: Bearer <JWT>`. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
+Las rutas privadas aceptan `Authorization: Bearer <JWT>` o la sesión de navegador `HttpOnly` emitida por el login. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
 
 Para un backup local/Docker: `DATA_DIR=./data UPLOAD_DIR=./uploads ./scripts/backup.sh`. En Atlas, complementar con `mongodump` programado y retención en almacenamiento externo.
 
@@ -137,7 +137,7 @@ El MCP se publica como `https://afterstage.ar/mcp`. El cliente descubre los meta
 - `/.well-known/oauth-protected-resource/mcp`
 - `/.well-known/oauth-authorization-server`
 
-La primera vez que una cuenta usa una herramienta, el cliente abre la pantalla de conexión de Afterstage. El usuario inicia sesión y autoriza scopes. El servidor emite un access token MCP de corta duración y un refresh token; ambos quedan asociados al usuario, cliente y recurso. No se copia ningún JWT de usuario a `.env`, Git ni configuración del agente.
+La primera vez que una cuenta usa una herramienta, el cliente abre la pantalla de conexión de Afterstage. El usuario inicia sesión en Afterstage y autoriza scopes. El login deja una cookie `HttpOnly`, `Secure` y `SameSite=Lax`; la pantalla de consentimiento sólo envía el `request_id`, nunca usuario ni contraseña. El servidor emite un access token MCP de corta duración y un refresh token; ambos quedan asociados al usuario, cliente y recurso. No se copia ningún JWT de usuario a `.env`, Git ni configuración del agente.
 
 Scopes disponibles:
 
@@ -198,14 +198,14 @@ Conservá únicamente los datos verificables, marcá con [VERIFICAR] lo que falt
 - `GET/PATCH /api/press/media-kit`
 - `POST /api/press/accreditations/:id/send` — SMTP; recibe `dryRun: true` por defecto
 - `GET /health`
-- `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, y devuelve un JWT de acceso.
+- `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, devuelve un JWT de acceso y establece la sesión de navegador segura.
 - `GET /api/auth/me` — devuelve la identidad, roles y permisos del JWT actual.
 
 El detector de duplicados bloquea al guardar coincidencias fuertes (HTTP 409), pero permite consultar coincidencias preliminares con un umbral más amplio para que edición o IA decidan si continuar.
 
 Los listados públicos de contenido, eventos, directorio y reemplazos aplican un límite seguro por request (default 50, máximo 100). El backend devuelve sólo ese máximo efectivo; la paginación/cursor queda como siguiente evolución si el volumen editorial lo requiere.
 
-Las rutas `/api/*` requieren un JWT emitido por el login; los roles y permisos se validan contra MongoDB en cada request.
+Las rutas `/api/*` requieren el JWT emitido por el login o la sesión de navegador segura; los roles y permisos se validan contra MongoDB en cada request.
 
 ## Verificación
 
