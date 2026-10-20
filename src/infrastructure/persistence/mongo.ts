@@ -31,7 +31,7 @@ import type { ContentRepository } from "./content-store.js";
 import type { PressRepository } from "./press-store.js";
 import type { DirectoryRepository } from "./directory-store.js";
 import type { DirectoryInput, DirectoryItem, DirectoryPatch } from "../../domain/directory/types.js";
-import type { ActiveUser, UserDirectory } from "../../interfaces/http/security.js";
+import type { ActiveUser, ManagedUser, ManagedUserInput, UserDirectory } from "../../interfaces/http/security.js";
 import { MongoMonetizationStore } from "./monetization-store.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
 import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
@@ -394,6 +394,52 @@ export class MongoUserDirectory implements UserDirectory {
           passwordHash: typeof user.passwordHash === "string" ? user.passwordHash : undefined,
         }
       : undefined;
+  }
+  private managed(document: MongoRecord): ManagedUser {
+    return {
+      id: String(document._id),
+      username: typeof document.username === "string" ? document.username : undefined,
+      email: typeof document.email === "string" ? document.email : undefined,
+      roles: Array.isArray(document.roles) ? (document.roles as ManagedUser["roles"]) : [],
+      permissions: Array.isArray(document.permissions) ? (document.permissions as ManagedUser["permissions"]) : [],
+      active: document.active !== false,
+      createdAt: typeof document.createdAt === "string" ? document.createdAt : undefined,
+      updatedAt: typeof document.updatedAt === "string" ? document.updatedAt : undefined,
+      lastLoginAt: typeof document.lastLoginAt === "string" ? document.lastLoginAt : undefined,
+    };
+  }
+  async listUsers(): Promise<ManagedUser[]> {
+    const users = await this.collection
+      .find({ roles: { $exists: true, $type: "array", $ne: [] } } as never)
+      .sort({ active: -1, updatedAt: -1, createdAt: -1 })
+      .toArray();
+    return users.map((user) => this.managed(user));
+  }
+  async createUser(input: ManagedUserInput): Promise<ManagedUser> {
+    const now = timestamps();
+    await this.collection.insertOne({
+      _id: input.id,
+      username: input.username,
+      email: input.email,
+      passwordHash: input.passwordHash,
+      roles: input.roles,
+      permissions: input.permissions,
+      active: input.active,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const created = await this.collection.findOne({ _id: input.id });
+    if (!created) throw new Error("No se pudo crear el usuario");
+    return this.managed(created);
+  }
+  async updateUser(
+    id: string,
+    patch: Partial<Omit<ManagedUserInput, "id" | "passwordHash">> & { passwordHash?: string },
+  ): Promise<ManagedUser | undefined> {
+    const values = cleanPatch({ ...patch, updatedAt: timestamps() });
+    await this.collection.updateOne({ _id: id }, { $set: values });
+    const updated = await this.collection.findOne({ _id: id });
+    return updated ? this.managed(updated) : undefined;
   }
   async createCollaborator(email: string, passwordHash: string): Promise<ActiveUser> {
     const normalizedEmail = email.trim().toLowerCase();
