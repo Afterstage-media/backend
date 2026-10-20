@@ -6,11 +6,14 @@ import os from "node:os";
 import { createHmac } from "node:crypto";
 import {
   actorFromJwt,
+  actorFromRequest,
+  authCookieName,
   audit,
   authenticateUser,
   configureUserDirectory,
   hashPassword,
   issueAccessToken,
+  setAuthCookie,
   verifyPassword,
   type ActiveUser,
 } from "./security.js";
@@ -33,6 +36,29 @@ test("acepta únicamente JWT firmados y revalidados contra Mongo", async () => {
   assert.deepEqual(await actorFromJwt(valid), { id: "admin", roles: ["admin"], permissions: [] });
   assert.equal(await actorFromJwt(`${valid}broken`), undefined);
   assert.equal(parsedRequest.get("x-api-key"), undefined);
+  configureUserDirectory(undefined);
+  if (previous === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = previous;
+});
+
+test("acepta la sesión HttpOnly como autenticación del navegador", async () => {
+  const previous = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "cookie-test-secret";
+  const user: ActiveUser = { id: "editor-cookie", roles: ["editor"], permissions: [], active: true };
+  configureUserDirectory({ findActiveUser: async (id) => (id === user.id ? user : undefined) });
+  const token = issueAccessToken(user);
+  let setCookie = "";
+  setAuthCookie({ setHeader: (_name: string, value: string) => (setCookie = value) } as any, token);
+  assert.match(setCookie, new RegExp(`${authCookieName}=`));
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /Secure/);
+  assert.match(setCookie, /SameSite=Lax/);
+  const cookie = setCookie.split(";")[0]!;
+  assert.deepEqual(await actorFromRequest(request({ cookie })), {
+    id: user.id,
+    roles: ["editor"],
+    permissions: [],
+  });
   configureUserDirectory(undefined);
   if (previous === undefined) delete process.env.JWT_SECRET;
   else process.env.JWT_SECRET = previous;

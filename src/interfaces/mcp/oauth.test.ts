@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hashPassword, type ActiveUser, type UserDirectory } from "../http/security.js";
+import { type ActiveUser, type UserDirectory } from "../http/security.js";
 import { MemoryMcpOAuthStore, McpOAuthProvider } from "./oauth.js";
 
 const response = () => {
   const result: { body?: string; redirectTo?: string; redirectStatus?: number } = {};
   return {
     result,
+    locals: {},
     type() {
       return this;
     },
@@ -26,12 +27,9 @@ const response = () => {
 };
 
 test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorno", async () => {
-  const passwordHash = await hashPassword("una-clave-segura-123");
   const user: ActiveUser = { id: "editor-1", roles: ["editor"], permissions: [], active: true };
   const users: UserDirectory = {
     findActiveUser: async (id: string) => (id === user.id ? user : undefined),
-    findByIdentifier: async (identifier: string) =>
-      identifier === "redaccion" ? { ...user, passwordHash } : undefined,
   };
   const resourceUrl = new URL("https://afterstage.ar/mcp");
   const provider = new McpOAuthProvider({ store: new MemoryMcpOAuthStore(), users, resourceUrl });
@@ -57,9 +55,11 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   );
   const requestId = authorization.result.body?.match(/name="request_id" value="([^"]+)"/)?.[1];
   assert.ok(requestId);
+  assert.doesNotMatch(authorization.result.body ?? "", /name="password"/);
+  assert.match(authorization.result.body ?? "", /Abrir Afterstage e iniciar sesión/);
 
   const approval = response();
-  await provider.approveAuthorization(requestId, "redaccion", "una-clave-segura-123", approval as never);
+  await provider.approveAuthorization(requestId, user.id, approval as never);
   const callbackUrl =
     approval.result.redirectTo ??
     approval.result.body?.match(/<textarea readonly>(.*?)<\/textarea>/)?.[1]?.replaceAll("&amp;", "&");
@@ -68,7 +68,7 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   assert.equal(await provider.challengeForAuthorizationCode(client, code), "challenge");
 
   const duplicateApproval = response();
-  await provider.approveAuthorization(requestId, "redaccion", "una-clave-segura-123", duplicateApproval as never);
+  await provider.approveAuthorization(requestId, user.id, duplicateApproval as never);
   const duplicateCallbackUrl =
     duplicateApproval.result.redirectTo ??
     duplicateApproval.result.body?.match(/<textarea readonly>(.*?)<\/textarea>/)?.[1]?.replaceAll("&amp;", "&");
@@ -110,7 +110,7 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   const webRequestId = webAuthorization.result.body?.match(/name="request_id" value="([^"]+)"/)?.[1];
   assert.ok(webRequestId);
   const webApproval = response();
-  await provider.approveAuthorization(webRequestId, "redaccion", "una-clave-segura-123", webApproval as never);
+  await provider.approveAuthorization(webRequestId, user.id, webApproval as never);
   assert.equal(webApproval.result.redirectStatus, 303);
   assert.equal(new URL(webApproval.result.redirectTo!).origin, "https://chatgpt.com");
 });

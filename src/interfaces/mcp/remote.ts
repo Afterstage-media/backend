@@ -13,7 +13,7 @@ import { PressManager } from "../../application/press-manager.js";
 import { directoryKinds, directoryStatuses } from "../../domain/directory/types.js";
 import { eventStatuses, replacementProfiles, replacementStatuses } from "../../domain/press/types.js";
 import { McpOAuthProvider, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
-import type { UserDirectory } from "../http/security.js";
+import { actorFromRequest, type UserDirectory } from "../http/security.js";
 
 type McpExtra = { authInfo?: { scopes: string[]; extra?: Record<string, unknown> } };
 
@@ -254,6 +254,10 @@ export const mountRemoteMcp = (
     expectedResource: resourceUrl,
   });
 
+  app.use("/oauth/authorize", async (request, response, next) => {
+    response.locals.afterstageActor = await actorFromRequest(request);
+    next();
+  });
   app.use(
     mcpAuthRouter({
       provider,
@@ -271,11 +275,20 @@ export const mountRemoteMcp = (
       const input = z
         .object({
           request_id: z.string().uuid(),
-          identifier: z.string().min(1).max(180),
-          password: z.string().min(1).max(200),
         })
         .parse(request.body);
-      await provider.approveAuthorization(input.request_id, input.identifier, input.password, response);
+      const actor = await actorFromRequest(request);
+      if (!actor) {
+        response
+          .status(401)
+          .set("Cache-Control", "no-store")
+          .type("html")
+          .send(
+            `<p>Iniciá sesión en Afterstage antes de autorizar la conexión.</p><p><a href="/colaborador">Abrir Afterstage</a></p>`,
+          );
+        return;
+      }
+      await provider.approveAuthorization(input.request_id, actor.id, response);
     } catch (error) {
       if (error instanceof OAuthError) {
         response
