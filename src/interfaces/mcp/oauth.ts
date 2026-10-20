@@ -22,6 +22,7 @@ export const mcpScopes = [
   "agenda:read",
   "agenda:write",
   "directory:read",
+  "directory:write",
   "replacements:read",
 ] as const;
 export type McpScope = (typeof mcpScopes)[number];
@@ -32,6 +33,7 @@ export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
   "agenda:read": ["admin", "press", "auditor"],
   "agenda:write": ["admin", "press"],
   "directory:read": ["admin", "editor", "press", "directory", "auditor"],
+  "directory:write": ["admin", "editor", "press", "directory"],
   "replacements:read": ["admin", "press", "auditor"],
 };
 
@@ -55,10 +57,12 @@ type AuthorizationCode = PendingAuthorization & {
 
 type AccessToken = {
   tokenHash: string;
+  grantId?: string;
   clientId: string;
   userId: string;
   scopes: string[];
   resource?: string;
+  issuedAt?: number;
   expiresAt: number;
   revoked?: boolean;
 };
@@ -66,6 +70,15 @@ type AccessToken = {
 type RefreshToken = AccessToken & { tokenHash: string };
 
 type OAuthDocument = Record<string, unknown> & { _id: string };
+
+export type McpAccessGrant = {
+  id: string;
+  clientId: string;
+  userId: string;
+  scopes: string[];
+  issuedAt?: number;
+  expiresAt: number;
+};
 
 export interface McpOAuthStore {
   getClient(clientId: string): Promise<OAuthClientInformationFull | undefined>;
@@ -83,6 +96,8 @@ export interface McpOAuthStore {
   getRefreshToken(token: string): Promise<RefreshToken | undefined>;
   consumeRefreshToken(token: string): Promise<RefreshToken | undefined>;
   revokeToken(token: string): Promise<void>;
+  listAccessGrants(userId: string): Promise<McpAccessGrant[]>;
+  revokeAccessGrant(userId: string, grantId: string): Promise<boolean>;
 }
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("base64url");
@@ -252,6 +267,29 @@ export class MongoMcpOAuthStore implements McpOAuthStore {
       this.refreshTokens.updateOne({ _id: hash }, { $set: { revoked: true } }),
     ]);
   }
+
+  async listAccessGrants(userId: string): Promise<McpAccessGrant[]> {
+    const documents = await this.refreshTokens
+      .find({ userId, revoked: { $ne: true }, expiresAt: { $gt: now() }, grantId: { $exists: true } })
+      .sort({ issuedAt: -1 })
+      .toArray();
+    return documents.map((document) => ({
+      id: String(document.grantId),
+      clientId: String(document.clientId),
+      userId,
+      scopes: Array.isArray(document.scopes) ? document.scopes.map(String) : [],
+      ...(typeof document.issuedAt === "number" ? { issuedAt: document.issuedAt } : {}),
+      expiresAt: Number(document.expiresAt),
+    }));
+  }
+
+  async revokeAccessGrant(userId: string, grantId: string): Promise<boolean> {
+    const [access, refresh] = await Promise.all([
+      this.accessTokens.updateMany({ userId, grantId }, { $set: { revoked: true } }),
+      this.refreshTokens.updateMany({ userId, grantId }, { $set: { revoked: true } }),
+    ]);
+    return access.matchedCount > 0 || refresh.matchedCount > 0;
+  }
 }
 
 export class MemoryMcpOAuthStore implements McpOAuthStore {
@@ -336,6 +374,31 @@ export class MemoryMcpOAuthStore implements McpOAuthStore {
     const refresh = this.refreshTokens.get(hash);
     if (refresh) refresh.revoked = true;
   }
+
+  async listAccessGrants(userId: string): Promise<McpAccessGrant[]> {
+    return [...this.refreshTokens.values()]
+      .filter((value) => value.userId === userId && value.grantId && value.expiresAt > now() && !value.revoked)
+      .sort((left, right) => (right.issuedAt ?? 0) - (left.issuedAt ?? 0))
+      .map((value) => ({
+        id: value.grantId!,
+        clientId: value.clientId,
+        userId: value.userId,
+        scopes: [...value.scopes],
+        ...(value.issuedAt !== undefined ? { issuedAt: value.issuedAt } : {}),
+        expiresAt: value.expiresAt,
+      }));
+  }
+
+  async revokeAccessGrant(userId: string, grantId: string): Promise<boolean> {
+    let found = false;
+    for (const value of [...this.accessTokens.values(), ...this.refreshTokens.values()]) {
+      if (value.userId === userId && value.grantId === grantId) {
+        value.revoked = true;
+        found = true;
+      }
+    }
+    return found;
+  }
 }
 
 type McpOAuthOptions = {
@@ -350,7 +413,9 @@ const scopeLabel = (scope: string) =>
     "notes:read": "Leer notas",
     "notes:write": "Crear y modificar notas",
     "agenda:read": "Leer agenda y coberturas",
+    "agenda:write": "Crear y gestionar agenda",
     "directory:read": "Leer directorio editorial",
+    "directory:write": "Crear y modificar directorio editorial",
     "replacements:read": "Leer búsquedas de reemplazo",
   })[scope] ?? scope;
 
@@ -484,7 +549,7 @@ export class McpOAuthProvider implements OAuthServerProvider {
       return !allowedRoles?.some((role) => user.roles.includes(role));
     });
     if (deniedScope) throw new InvalidGrantError(`El usuario ya no tiene permiso para el scope ${deniedScope}`);
-    return this.issueTokens(client.client_id, user.id, granted, stored.resource);
+    return this.issueTokens(client.client_id, user.id, granted, stored.resource, stored.grantId);
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
@@ -511,21 +576,27 @@ export class McpOAuthProvider implements OAuthServerProvider {
     userId: string,
     scopes: string[],
     resource?: string,
+    grantId: string = randomUUID(),
   ): Promise<OAuthTokens> {
     const expiresIn = 3600;
+    const issuedAt = now();
     const accessToken = await this.store.createAccessToken({
+      grantId,
       clientId,
       userId,
       scopes,
       ...(resource ? { resource } : {}),
-      expiresAt: now() + expiresIn * 1000,
+      issuedAt,
+      expiresAt: issuedAt + expiresIn * 1000,
     });
     const refreshToken = await this.store.createRefreshToken({
+      grantId,
       clientId,
       userId,
       scopes,
       ...(resource ? { resource } : {}),
-      expiresAt: now() + 30 * 24 * 60 * 60_000,
+      issuedAt,
+      expiresAt: issuedAt + 30 * 24 * 60 * 60_000,
     });
     return {
       access_token: accessToken,

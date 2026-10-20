@@ -36,8 +36,9 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
     findActiveUser: async (id: string) => (id === user.id ? user : undefined),
   };
   const resourceUrl = new URL("https://afterstage.ar/mcp");
+  const store = new MemoryMcpOAuthStore();
   const provider = new McpOAuthProvider({
-    store: new MemoryMcpOAuthStore(),
+    store,
     users,
     resourceUrl,
     issuerUrl: new URL("https://afterstage.ar/"),
@@ -98,6 +99,12 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   const authInfo = await provider.verifyAccessToken(tokens.access_token);
   assert.deepEqual(authInfo.extra, { userId: user.id, roles: ["editor"], permissions: [] });
   assert.deepEqual(authInfo.scopes, ["notes:read", "notes:write"]);
+  const grants = await store.listAccessGrants(user.id);
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0]?.clientId, client.client_id);
+  assert.deepEqual(grants[0]?.scopes, ["notes:read", "notes:write"]);
+  assert.equal(await store.revokeAccessGrant(user.id, grants[0]!.id), true);
+  await assert.rejects(() => provider.verifyAccessToken(tokens.access_token), /access token no es válido/);
 
   const webClient = {
     ...client,

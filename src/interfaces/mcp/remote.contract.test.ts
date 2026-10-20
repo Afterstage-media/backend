@@ -16,7 +16,15 @@ import { createRemoteMcpServer } from "./remote.js";
 const authInfo = (roles: string[]) => ({
   token: "test-token",
   clientId: "test-client",
-  scopes: ["notes:read", "notes:write", "agenda:read", "agenda:write", "directory:read", "replacements:read"],
+  scopes: [
+    "notes:read",
+    "notes:write",
+    "agenda:read",
+    "agenda:write",
+    "directory:read",
+    "directory:write",
+    "replacements:read",
+  ],
   extra: { userId: "editor-1", roles, permissions: [] },
 });
 
@@ -73,6 +81,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       [
         "actualizar_nota",
         "cambiar_estado_nota",
+        "crear_contacto",
         "crear_nota_con_ia",
         "crear_evento",
         "buscar_directorio",
@@ -83,6 +92,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "listar_notas",
         "listar_reemplazos",
         "modificar_nota",
+        "actualizar_contacto",
         "obtener_estadisticas",
         "obtener_nota",
       ].sort(),
@@ -127,6 +137,29 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       .items[0]!;
     assert.deepEqual(detailedDirectory.emails, ["banda@example.com"]);
     assert.equal((detailedDirectory.contacts as Array<Record<string, unknown>>)[0]?.email, "manager@example.com");
+
+    const createdDirectoryItem = await client.callTool({
+      name: "crear_contacto",
+      arguments: {
+        kind: "media",
+        name: "Medio creado por MCP",
+        city: "CABA",
+        emails: ["medio@example.com"],
+        contacts: [{ name: "Editora MCP", email: "editora@example.com" }],
+      },
+    });
+    assert.equal(createdDirectoryItem.isError, undefined);
+    const createdDirectoryResult = createdDirectoryItem.structuredContent as { id: string; createdBy: string };
+    assert.equal(createdDirectoryResult.createdBy, "editor-1");
+    const updatedDirectoryItem = await client.callTool({
+      name: "actualizar_contacto",
+      arguments: { id: createdDirectoryResult.id, description: "Medio actualizado desde MCP" },
+    });
+    assert.equal(updatedDirectoryItem.isError, undefined);
+    assert.equal(
+      (updatedDirectoryItem.structuredContent as { description: string }).description,
+      "Medio actualizado desde MCP",
+    );
 
     const draft = await client.callTool({
       name: "crear_nota_con_ia",
