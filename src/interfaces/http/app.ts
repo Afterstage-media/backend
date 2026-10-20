@@ -573,6 +573,55 @@ export const createApp = async (
     response.type("html").send(renderPressKit(await press.snapshot())),
   );
   app.use("/api", requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"));
+  app.get(
+    "/api/account/ai-access",
+    requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
+    async (request, response) => {
+      if (!mcpOAuthStore) {
+        response.status(503).json({ error: "La gestión de accesos de IA no está configurada" });
+        return;
+      }
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      const grants = await mcpOAuthStore.listAccessGrants(actor.id);
+      response.json(
+        await Promise.all(
+          grants.map(async (grant) => {
+            const client = await mcpOAuthStore.getClient(grant.clientId);
+            return {
+              id: grant.id,
+              clientId: grant.clientId,
+              application: client?.client_name ?? grant.clientId,
+              scopes: grant.scopes,
+              issuedAt: grant.issuedAt ?? null,
+              expiresAt: grant.expiresAt,
+            };
+          }),
+        ),
+      );
+    },
+  );
+  app.delete(
+    "/api/account/ai-access/:grantId",
+    requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
+    async (request, response) => {
+      if (!mcpOAuthStore) {
+        response.status(503).json({ error: "La gestión de accesos de IA no está configurada" });
+        return;
+      }
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      const grantId = z.string().uuid().parse(request.params.grantId);
+      const revoked = await mcpOAuthStore.revokeAccessGrant(actor.id, grantId);
+      response.status(revoked ? 204 : 404).end();
+    },
+  );
   app.get("/api/monetization/promotions", requireRole("admin", "editor"), async (request, response) => {
     const status =
       typeof request.query.status === "string" && monetizationStatuses.includes(request.query.status as never)

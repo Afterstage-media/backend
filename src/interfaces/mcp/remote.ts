@@ -14,7 +14,12 @@ import { ContentManager } from "../../application/content-manager.js";
 import { channels, contentStatuses, type ContentItem } from "../../domain/content/types.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
-import { directoryKinds, directoryStatuses } from "../../domain/directory/types.js";
+import {
+  directoryInputSchema,
+  directoryKinds,
+  directoryStatuses,
+  directoryPatchSchema,
+} from "../../domain/directory/types.js";
 import {
   accreditationStatuses,
   accreditationSchema,
@@ -124,6 +129,7 @@ const replacementsOutputSchema = z.object({
 const readNotesRoles = ["admin", "editor", "press", "auditor"] as const;
 const readAgendaRoles = ["admin", "press", "auditor"] as const;
 const readDirectoryRoles = ["admin", "editor", "press", "directory", "auditor"] as const;
+const writeDirectoryRoles = ["admin", "editor", "press", "directory"] as const;
 const readReplacementsRoles = ["admin", "press", "auditor"] as const;
 const escapeHtml = (value: string): string =>
   value.replace(
@@ -410,6 +416,42 @@ export const createRemoteMcpServer = (
         return { ...safeItem, contacts: [] };
       });
       return textResult({ items: filtered, total: candidates.length, limit });
+    },
+  );
+
+  server.registerTool(
+    "crear_contacto",
+    {
+      title: "Crear entrada de directorio",
+      description:
+        "Crea una entrada del directorio editorial —banda, artista, medio, sala u organización— con sus contactos y datos de comunicación.",
+      inputSchema: directoryInputSchema.shape,
+      outputSchema: z.object({ id: z.string() }).passthrough(),
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["directory:write"] }] },
+    },
+    async (input, extra) => {
+      const actor = authFromExtra(extra, "directory:write", writeDirectoryRoles);
+      const item = await directory.create(input);
+      return textResult({ ...item, createdBy: actor.userId });
+    },
+  );
+
+  server.registerTool(
+    "actualizar_contacto",
+    {
+      title: "Actualizar entrada de directorio",
+      description:
+        "Actualiza una entrada existente del directorio editorial. Envía solo los campos que cambiaron; no modifica los datos de verificación.",
+      inputSchema: { id: z.string().uuid(), ...directoryPatchSchema.shape },
+      outputSchema: z.object({ id: z.string() }).passthrough(),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["directory:write"] }] },
+    },
+    async ({ id, ...input }, extra) => {
+      const actor = authFromExtra(extra, "directory:write", writeDirectoryRoles);
+      const item = await directory.update(id, input);
+      return textResult({ ...item, updatedBy: actor.userId });
     },
   );
 

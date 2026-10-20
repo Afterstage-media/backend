@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ContentManager } from "../../application/content-manager.js";
 import { PressManager } from "../../application/press-manager.js";
-import { hashPassword, type ActiveUser, type UserDirectory } from "../http/security.js";
+import { hashPassword, issueAccessToken, type ActiveUser, type UserDirectory } from "../http/security.js";
 import { createApp } from "../http/app.js";
 import { MemoryMcpOAuthStore } from "./oauth.js";
 
@@ -41,6 +41,7 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
         "agenda:read",
         "agenda:write",
         "directory:read",
+        "directory:write",
         "replacements:read",
       ],
       resource_name: "Afterstage",
@@ -66,6 +67,58 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     if (previousPublicUrl === undefined) delete process.env.PUBLIC_BASE_URL;
     else process.env.PUBLIC_BASE_URL = previousPublicUrl;
+  }
+});
+
+test("permite consultar y revocar las conexiones MCP de la cuenta", async () => {
+  const previousJwtSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "test-secret-for-access-management";
+  const user: ActiveUser = { id: "admin-1", roles: ["admin"], permissions: [], active: true };
+  const users: UserDirectory = { findActiveUser: async (id: string) => (id === user.id ? user : undefined) };
+  const store = new MemoryMcpOAuthStore();
+  await store.registerClient({
+    client_id: "codex-client",
+    client_name: "Codex",
+    client_id_issued_at: Math.floor(Date.now() / 1000),
+    redirect_uris: ["http://127.0.0.1:43123/callback"],
+    token_endpoint_auth_method: "none",
+  });
+  await store.createRefreshToken({
+    grantId: "6cc5f2d1-5f22-4a2a-971e-c7783fb8c1a1",
+    clientId: "codex-client",
+    userId: user.id,
+    scopes: ["notes:read", "directory:write"],
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 30 * 24 * 60 * 60_000,
+  });
+  const app = await createApp(new ContentManager(), new PressManager(), undefined, users, undefined, undefined, store);
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("No se pudo obtener el puerto de prueba");
+  const base = `http://127.0.0.1:${address.port}`;
+  const headers = { Authorization: `Bearer ${issueAccessToken(user)}` };
+  try {
+    const listed = await fetch(`${base}/api/account/ai-access`, { headers });
+    assert.equal(listed.status, 200);
+    const listedConnection = (await listed.json())[0];
+    assert.equal(listedConnection.id, "6cc5f2d1-5f22-4a2a-971e-c7783fb8c1a1");
+    assert.equal(listedConnection.clientId, "codex-client");
+    assert.equal(listedConnection.application, "Codex");
+    assert.deepEqual(listedConnection.scopes, ["notes:read", "directory:write"]);
+    assert.equal(typeof listedConnection.issuedAt, "number");
+    assert.equal(typeof listedConnection.expiresAt, "number");
+    const revoked = await fetch(`${base}/api/account/ai-access/6cc5f2d1-5f22-4a2a-971e-c7783fb8c1a1`, {
+      method: "DELETE",
+      headers,
+    });
+    assert.equal(revoked.status, 204);
+    const remaining = await fetch(`${base}/api/account/ai-access`, { headers });
+    assert.deepEqual(await remaining.json(), []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousJwtSecret;
   }
 });
 
