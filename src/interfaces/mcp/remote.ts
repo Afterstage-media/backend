@@ -1,6 +1,9 @@
 import cors from "cors";
 import express, { type Express } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import {
@@ -28,7 +31,7 @@ import {
   replacementProfiles,
   replacementStatuses,
 } from "../../domain/press/types.js";
-import { McpOAuthProvider, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
+import { McpOAuthProvider, mcpScopeRoles, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
 import {
   actorFromRequest,
   authenticateUser,
@@ -127,10 +130,36 @@ const replacementsOutputSchema = z.object({
 });
 
 const readNotesRoles = ["admin", "editor", "press", "auditor"] as const;
+const writeNotesRoles = ["admin", "editor"] as const;
 const readAgendaRoles = ["admin", "press", "auditor"] as const;
 const readDirectoryRoles = ["admin", "editor", "press", "directory", "auditor"] as const;
 const writeDirectoryRoles = ["admin", "editor", "press", "directory"] as const;
 const readReplacementsRoles = ["admin", "press", "auditor"] as const;
+const toolScopes: Record<string, readonly McpScope[]> = {
+  get_profile: ["notes:read"],
+  obtener_nota: ["notes:read"],
+  listar_notas: ["notes:read"],
+  consultar_borradores: ["notes:read"],
+  obtener_estadisticas: ["notes:read", "agenda:read"],
+  listar_agenda: ["agenda:read"],
+  crear_evento: ["agenda:write"],
+  gestionar_acreditacion: ["agenda:write"],
+  buscar_directorio: ["directory:read"],
+  crear_contacto: ["directory:write"],
+  actualizar_contacto: ["directory:write"],
+  listar_reemplazos: ["replacements:read"],
+  crear_nota: ["notes:write"],
+  modificar_nota: ["notes:write"],
+  actualizar_nota: ["notes:write"],
+  cambiar_estado_nota: ["notes:write"],
+};
+
+const toolsAllowedForRoles = (roles: readonly string[]): Set<string> =>
+  new Set(
+    Object.entries(toolScopes)
+      .filter(([, scopes]) => scopes.every((scope) => mcpScopeRoles[scope].some((role) => roles.includes(role))))
+      .map(([name]) => name),
+  );
 const escapeHtml = (value: string): string =>
   value.replace(
     /[&<>"']/g,
@@ -155,13 +184,33 @@ export const createRemoteMcpServer = (
   manager: ContentManager,
   press: PressManager = new PressManager(),
   directory: DirectoryManager = new DirectoryManager(),
+  roles?: readonly string[],
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
     version: "1.0.0",
   });
+  const allowedTools = roles ? toolsAllowedForRoles(roles) : undefined;
+  const registerTool = <
+    OutputArgs extends ZodRawShapeCompat | AnySchema,
+    InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined,
+  >(
+    name: string,
+    config: {
+      title?: string;
+      description?: string;
+      inputSchema?: InputArgs;
+      outputSchema?: OutputArgs;
+      annotations?: ToolAnnotations;
+      _meta?: Record<string, unknown>;
+    },
+    callback: ToolCallback<InputArgs>,
+  ) => {
+    if (allowedTools && !allowedTools.has(name)) return;
+    return server.registerTool(name, config, callback);
+  };
 
-  server.registerTool(
+  registerTool(
     "get_profile",
     {
       title: "Perfil de Afterstage",
@@ -173,7 +222,7 @@ export const createRemoteMcpServer = (
     async (_input, extra) => textResult(authFromExtra(extra, "notes:read")),
   );
 
-  server.registerTool(
+  registerTool(
     "obtener_nota",
     {
       title: "Obtener nota",
@@ -189,7 +238,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "listar_notas",
     {
       title: "Listar notas",
@@ -210,7 +259,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "consultar_borradores",
     {
       title: "Consultar borradores",
@@ -231,7 +280,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "obtener_estadisticas",
     {
       title: "Obtener estadísticas",
@@ -276,7 +325,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "listar_agenda",
     {
       title: "Listar agenda editorial",
@@ -329,7 +378,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "crear_evento",
     {
       title: "Crear evento",
@@ -346,7 +395,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "gestionar_acreditacion",
     {
       title: "Gestionar acreditación",
@@ -382,7 +431,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "buscar_directorio",
     {
       title: "Buscar en directorio",
@@ -419,7 +468,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "crear_contacto",
     {
       title: "Crear entrada de directorio",
@@ -437,7 +486,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "actualizar_contacto",
     {
       title: "Actualizar entrada de directorio",
@@ -455,7 +504,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "listar_reemplazos",
     {
       title: "Listar reemplazos",
@@ -508,7 +557,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "crear_nota",
     {
       title: "Guardar nota redactada por el agente",
@@ -542,13 +591,13 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async (input, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const note = await manager.createAgentNote(input, actor.userId);
       return textResult({ ...publicNote(note), createdBy: actor.userId });
     },
   );
 
-  server.registerTool(
+  registerTool(
     "modificar_nota",
     {
       title: "Modificar nota",
@@ -563,14 +612,14 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async ({ id, ...patch }, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para modificar la nota");
       const note = await manager.update(id, patch);
       return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
   );
 
-  server.registerTool(
+  registerTool(
     "actualizar_nota",
     {
       title: "Actualizar nota",
@@ -585,7 +634,7 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async ({ id, ...patch }, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para actualizar la nota");
       const note = await manager.update(id, patch);
       return textResult({ ...publicNote(note), updatedBy: actor.userId });
@@ -606,7 +655,7 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async ({ id, status }, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const note = await manager.update(id, { status });
       return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
@@ -746,7 +795,10 @@ export const mountRemoteMcp = (
 
   app.all("/mcp", cors(), auth, async (request, response, next) => {
     try {
-      const server = createRemoteMcpServer(manager, press, directory);
+      const roles = Array.isArray(request.auth?.extra?.roles)
+        ? request.auth.extra.roles.filter((role): role is string => typeof role === "string")
+        : [];
+      const server = createRemoteMcpServer(manager, press, directory, roles);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
       await transport.handleRequest(request, response, request.body);

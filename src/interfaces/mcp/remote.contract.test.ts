@@ -306,3 +306,36 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     await server.close();
   }
 });
+
+test("filtra las tools expuestas según los roles del usuario", async () => {
+  const server = createRemoteMcpServer(new ContentManager(), new PressManager(), new DirectoryManager(), ["editor"]);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "role-filter-test-client", version: "1.0.0" });
+  await client.connect(clientTransport);
+
+  try {
+    const tools = await client.listTools();
+    assert.deepEqual(
+      tools.tools.map((tool) => tool.name).sort(),
+      [
+        "actualizar_contacto",
+        "actualizar_nota",
+        "buscar_directorio",
+        "cambiar_estado_nota",
+        "consultar_borradores",
+        "crear_contacto",
+        "crear_nota",
+        "get_profile",
+        "listar_notas",
+        "modificar_nota",
+        "obtener_nota",
+      ].sort(),
+    );
+    const forbidden = await client.callTool({ name: "crear_evento", arguments: { name: "No debe existir" } });
+    assert.equal(forbidden.isError, true);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
