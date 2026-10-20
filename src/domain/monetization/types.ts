@@ -87,6 +87,46 @@ export const defaultMonetizationProducts: MonetizationProduct[] = [
     priceArs: null,
     active: true,
   },
+  {
+    id: "pasarela-entradas",
+    name: "Pasarela de venta de entradas",
+    description: "Consultá por una solución para centralizar la venta y el acceso a tu fecha.",
+    delivery: "A coordinar",
+    priceArs: null,
+    active: true,
+  },
+  {
+    id: "promocion-festivales",
+    name: "Promoción para festivales",
+    description: "Campaña de difusión para que tu festival llegue a más gente y se mueva por la escena.",
+    delivery: "A coordinar",
+    priceArs: null,
+    active: true,
+  },
+  {
+    id: "organizacion-festivales",
+    name: "Creación y organización de festivales",
+    description: "Pensamos y coordinamos tu festival: propuesta, agenda, comunicación y operación.",
+    delivery: "A coordinar",
+    priceArs: null,
+    active: true,
+  },
+  {
+    id: "publicidad-viajes-conciertos",
+    name: "Publicidad para viajes a conciertos",
+    description: "Espacio publicitario para promocionar viajes organizados a conciertos y festivales.",
+    delivery: "A coordinar",
+    priceArs: null,
+    active: true,
+  },
+  {
+    id: "tienda-merch",
+    name: "Tienda de merch",
+    description: "Propuesta de tienda online para vender merch de bandas, fechas y festivales.",
+    delivery: "A coordinar",
+    priceArs: null,
+    active: true,
+  },
 ];
 
 export const promotionInputSchema = z.object({
