@@ -270,7 +270,7 @@ export const mountRemoteMcp = (
   publicUrl: URL,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
-  const provider = new McpOAuthProvider({ store, users, resourceUrl });
+  const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(resourceUrl);
   const auth = requireBearerAuth({
     verifier: provider,
