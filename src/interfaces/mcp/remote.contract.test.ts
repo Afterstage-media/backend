@@ -73,10 +73,12 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       [
         "crear_nota_con_ia",
         "buscar_directorio",
+        "consultar_borradores",
         "get_profile",
         "listar_agenda",
         "listar_notas",
         "listar_reemplazos",
+        "modificar_nota",
       ].sort(),
     );
     const notes = await client.callTool({ name: "listar_notas", arguments: { limit: 1 } });
@@ -86,6 +88,16 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal(noteResult.total, 2);
     assert.equal(noteResult.limit, 1);
     assert.equal(noteResult.notes.length, 1);
+
+    const drafts = await client.callTool({ name: "consultar_borradores", arguments: { query: "Primera", limit: 10 } });
+    assert.equal(drafts.isError, undefined);
+    const draftsResult = drafts.structuredContent as {
+      notes: Array<Record<string, unknown>>;
+      total: number;
+      limit: number;
+    };
+    assert.equal(draftsResult.total, 1);
+    assert.equal(draftsResult.notes[0]?.title, "Primera nota");
 
     const directoryWithoutContacts = await client.callTool({
       name: "buscar_directorio",
@@ -119,6 +131,25 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const draftResult = draft.structuredContent as { id: string; status: string; idempotencyKey?: string };
     assert.equal(draftResult.status, "draft");
     assert.equal("idempotencyKey" in draftResult, false);
+    const modified = await client.callTool({
+      name: "modificar_nota",
+      arguments: {
+        id: draftResult.id,
+        title: "La banda de prueba presenta una canción nueva — actualización",
+        summary: "La novedad de la escena local, actualizada.",
+      },
+    });
+    assert.equal(modified.isError, undefined);
+    const modifiedResult = modified.structuredContent as {
+      id: string;
+      status: string;
+      title: string;
+      updatedBy: string;
+    };
+    assert.equal(modifiedResult.id, draftResult.id);
+    assert.equal(modifiedResult.status, "draft");
+    assert.equal(modifiedResult.title, "La banda de prueba presenta una canción nueva — actualización");
+    assert.equal(modifiedResult.updatedBy, "editor-1");
     const replay = await client.callTool({
       name: "crear_nota_con_ia",
       arguments: {

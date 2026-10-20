@@ -60,6 +60,13 @@ const notesOutputSchema = z.object({
   total: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
 });
+const noteMutationOutputSchema = z
+  .object({
+    id: z.string(),
+    status: z.enum(contentStatuses),
+    updatedBy: z.string(),
+  })
+  .passthrough();
 const agendaOutputSchema = z.object({
   events: z.array(z.unknown()),
   accreditations: z.array(z.unknown()),
@@ -142,6 +149,27 @@ export const createRemoteMcpServer = (
     async ({ query, status, limit }, extra) => {
       authFromExtra(extra, "notes:read", readNotesRoles);
       const candidates = await manager.search(query, status);
+      return textResult({ notes: candidates.slice(0, limit).map(publicNote), total: candidates.length, limit });
+    },
+  );
+
+  server.registerTool(
+    "consultar_borradores",
+    {
+      title: "Consultar borradores",
+      description:
+        "Devuelve los borradores editoriales del workspace para revisar su contenido antes de avanzar el flujo.",
+      inputSchema: {
+        query: z.string().max(200).default(""),
+        limit: z.number().int().min(1).max(100).default(50),
+      },
+      outputSchema: notesOutputSchema,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async ({ query, limit }, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      const candidates = await manager.search(query, "draft");
       return textResult({ notes: candidates.slice(0, limit).map(publicNote), total: candidates.length, limit });
     },
   );
@@ -326,6 +354,44 @@ export const createRemoteMcpServer = (
       const actor = authFromExtra(extra, "notes:write");
       const note = await manager.createAgentNote(input, actor.userId);
       return textResult({ ...publicNote(note), createdBy: actor.userId });
+    },
+  );
+
+  server.registerTool(
+    "modificar_nota",
+    {
+      title: "Modificar nota",
+      description:
+        "Actualiza el contenido editorial de una nota existente. Requiere el ID de la nota y solo modifica los campos enviados; no publica ni cambia estados internos del flujo.",
+      inputSchema: {
+        id: z.string().trim().min(1).max(180),
+        type: z.enum(["article", "post", "carousel", "reel", "story"]).optional(),
+        title: z.string().trim().min(1).max(180).optional(),
+        summary: z.string().max(600).optional(),
+        body: z.string().optional(),
+        instagramCopy: z.string().max(2200).optional(),
+        facebookCopy: z.string().optional(),
+        tags: z.array(z.string().max(80)).optional(),
+        channels: z.array(z.enum(channels)).optional(),
+        scheduledAt: z.string().datetime().nullable().optional(),
+        notes: z.string().optional(),
+        author: z.string().max(180).optional(),
+        photographer: z.string().max(180).optional(),
+        source: z.string().max(500).optional(),
+        seoTitle: z.string().max(180).optional(),
+        seoDescription: z.string().max(320).optional(),
+        canonicalUrl: z.string().url().or(z.literal("")).optional(),
+        featured: z.boolean().optional(),
+      },
+      outputSchema: noteMutationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ id, ...patch }, extra) => {
+      const actor = authFromExtra(extra, "notes:write");
+      if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para modificar la nota");
+      const note = await manager.update(id, patch);
+      return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
   );
 
