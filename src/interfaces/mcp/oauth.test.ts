@@ -4,7 +4,7 @@ import { hashPassword, type ActiveUser, type UserDirectory } from "../http/secur
 import { MemoryMcpOAuthStore, McpOAuthProvider } from "./oauth.js";
 
 const response = () => {
-  const result: { body?: string; redirectTo?: string } = {};
+  const result: { body?: string; redirectTo?: string; redirectStatus?: number } = {};
   return {
     result,
     type() {
@@ -14,8 +14,12 @@ const response = () => {
       result.body = body;
       return this;
     },
-    redirect(_status: number, url: string) {
+    redirect(status: number, url: string) {
+      result.redirectStatus = status;
       result.redirectTo = url;
+      return this;
+    },
+    set() {
       return this;
     },
   };
@@ -85,4 +89,28 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   const authInfo = await provider.verifyAccessToken(tokens.access_token);
   assert.deepEqual(authInfo.extra, { userId: user.id, roles: ["editor"], permissions: [] });
   assert.deepEqual(authInfo.scopes, ["notes:read", "notes:write"]);
+
+  const webClient = {
+    ...client,
+    client_id: "chatgpt-client",
+    redirect_uris: ["https://chatgpt.com/connector/oauth/callback"],
+  };
+  await provider.clientsStore.registerClient(webClient);
+  const webAuthorization = response();
+  await provider.authorize(
+    webClient,
+    {
+      redirectUri: webClient.redirect_uris[0]!,
+      codeChallenge: "web-challenge",
+      scopes: ["notes:read"],
+      resource: resourceUrl,
+    },
+    webAuthorization as never,
+  );
+  const webRequestId = webAuthorization.result.body?.match(/name="request_id" value="([^"]+)"/)?.[1];
+  assert.ok(webRequestId);
+  const webApproval = response();
+  await provider.approveAuthorization(webRequestId, "redaccion", "una-clave-segura-123", webApproval as never);
+  assert.equal(webApproval.result.redirectStatus, 303);
+  assert.equal(new URL(webApproval.result.redirectTo!).origin, "https://chatgpt.com");
 });
