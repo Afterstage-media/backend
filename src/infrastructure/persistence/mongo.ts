@@ -50,6 +50,7 @@ export class MongoContentStore implements ContentRepository {
       this.collection.createIndex({ status: 1, updatedAt: -1 }),
       this.collection.createIndex({ slug: 1 }, { unique: true }),
       this.collection.createIndex({ scheduledAt: 1, status: 1 }),
+      this.collection.createIndex({ idempotencyKey: 1 }, { unique: true, sparse: true }),
     ]);
   }
 
@@ -71,10 +72,21 @@ export class MongoContentStore implements ContentRepository {
     return document ? this.fromDocument(document) : undefined;
   }
 
+  async findByIdempotencyKey(key: string): Promise<ContentItem | undefined> {
+    const document = await this.collection.findOne({ idempotencyKey: key });
+    return document ? this.fromDocument(document) : undefined;
+  }
+
   async create(input: ContentInput): Promise<ContentItem> {
+    if (input.idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(input.idempotencyKey);
+      if (existing) return existing;
+    }
+    const { idempotencyKey, ...inputWithoutIdempotencyKey } = input;
     const now = timestamps();
     const item: ContentItem = {
-      ...input,
+      ...inputWithoutIdempotencyKey,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       id: randomUUID(),
       slug: input.slug || slugify(input.title),
       createdAt: now,
@@ -89,7 +101,15 @@ export class MongoContentStore implements ContentRepository {
       viewCount: 0,
       instagramMetrics: null,
     };
-    await this.collection.insertOne({ _id: item.id, ...item });
+    try {
+      await this.collection.insertOne({ _id: item.id, ...item });
+    } catch (error) {
+      if (idempotencyKey && (error as { code?: number }).code === 11000) {
+        const existing = await this.findByIdempotencyKey(idempotencyKey);
+        if (existing) return existing;
+      }
+      throw error;
+    }
     return item;
   }
 

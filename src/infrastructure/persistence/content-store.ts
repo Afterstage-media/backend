@@ -13,6 +13,7 @@ import {
 export interface ContentRepository {
   list(status?: ContentStatus): Promise<ContentItem[]>;
   get(id: string): Promise<ContentItem | undefined>;
+  findByIdempotencyKey(key: string): Promise<ContentItem | undefined>;
   create(input: ContentInput): Promise<ContentItem>;
   update(
     id: string,
@@ -118,9 +119,17 @@ export class ContentStore implements ContentRepository {
     return (await this.read()).contents.find((item) => item.id === id);
   }
 
+  async findByIdempotencyKey(key: string): Promise<ContentItem | undefined> {
+    return (await this.read()).contents.find((item) => item.idempotencyKey === key);
+  }
+
   async create(input: ContentInput): Promise<ContentItem> {
     return this.serialize(async () => {
       const database = await this.read();
+      if (input.idempotencyKey) {
+        const existing = database.contents.find((item) => item.idempotencyKey === input.idempotencyKey);
+        if (existing) return existing;
+      }
       const now = new Date().toISOString();
       const item: ContentItem = {
         ...input,

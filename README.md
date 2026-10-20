@@ -76,7 +76,7 @@ npm run dev
 | `MEDIA_ROOT` | Raíz local autorizada para archivos que se sirven bajo `/media`. |
 | `PUBLIC_MEDIA_BASE_URL` | Base pública alternativa para medios locales. |
 | `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
-| `AI_API_KEY` | Secreto del proveedor OpenAI-compatible; habilita las acciones de generación. Debe configurarse como secreto del servidor, nunca en el cliente, Git o la conexión MCP. |
+| `AI_API_KEY` | Opcional para las herramientas internas de regeneración editorial (`/api/content/:id/generate`); no es necesaria para el MCP, porque el agente genera la nota. Nunca debe configurarse en el cliente, Git o la conexión MCP. |
 | `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
 | `AI_MODEL` | Modelo de redacción. |
 | `META_ACCESS_TOKEN` | Token de Page de larga duración. |
@@ -99,8 +99,6 @@ Para publicar imágenes locales, `PUBLIC_BASE_URL` debe resolver por HTTPS hacia
 Para Atlas, agregá la IP del servidor en Network Access, creá un usuario de base de datos y copiá la URI SRV completa en `MONGODB_URI`. El driver mantiene un único pool por proceso con `maxPoolSize=20`, `maxIdleTimeMS=5 min`, `serverSelectionTimeoutMS=5 s` y `waitQueueTimeoutMS=5 s`, valores conservadores para un servidor editorial de baja concurrencia.
 
 El login se administra en MongoDB. Para crear o rotar un usuario ejecutá `USER_PASSWORD='una-clave-de-12-o-más-caracteres' MONGODB_URI='...' npm run users:upsert -- redaccion editor redaccion@medio.example true`. El backend nunca guarda la contraseña en claro: usa hashes `scrypt`, emite JWT HS256 de corta duración y vuelve a consultar en Mongo el usuario activo y su rol en cada request.
-
-
 El flujo de archivos locales y Cloudflare está detallado en [`documentacion/06-publicacion-local-cloudflare.md`](../documentacion/06-publicacion-local-cloudflare.md). La URL estable se configura con `CLOUDFLARE_TUNNEL_URL`; no se crea un container de Meta hasta que llega la fecha programada.
 
 ## Sitio público conectado
@@ -158,22 +156,21 @@ Configuración remota de ejemplo:
 
 Herramientas remotas:
 
-- `crear_nota_con_ia` — recibe un brief, redacta una nota completa y la guarda como borrador.
+- `crear_nota_con_ia` — conserva el nombre por compatibilidad, pero recibe una nota ya redactada por el agente y la guarda como borrador. El MCP no llama a una IA, no publica, no programa ni envía comunicaciones. Acepta `idempotencyKey` para repetir una solicitud sin crear otro borrador.
 - `listar_notas` — busca notas del workspace conectado y devuelve `{ notes, total, limit }` para mantener un contrato MCP de objeto, incluso sin resultados.
 - `listar_agenda` — consulta eventos, acreditaciones y coberturas con filtros de texto, estado y fecha.
 - `buscar_directorio` — busca entradas del directorio; los emails, teléfonos y contactos sólo se incluyen cuando se solicita y el rol está autorizado.
 - `listar_reemplazos` — consulta búsquedas y, opcionalmente, sus postulaciones.
 - `get_profile` — devuelve la identidad estable, roles y permisos de la cuenta conectada.
 
-La disponibilidad de la IA se expone en `GET /ready` como `ai` y en `GET /api/ops/status` como `ai.configured`, sin devolver nunca la clave. Si es `false`, las consultas de lectura siguen disponibles pero `crear_nota_con_ia` devuelve un error de configuración hasta que se cargue `AI_API_KEY` en el Secret de producción.
+La disponibilidad de la IA interna opcional se expone en `GET /ready` como `ai` y en `GET /api/ops/status` como `ai.configured`, sin devolver nunca la clave. Esa señal sólo corresponde a las herramientas internas de regeneración; el MCP puede guardar notas redactadas por el agente aunque sea `false`.
 
-El backend sí necesita sus secretos de servidor (`MONGODB_URI`, `AI_API_KEY`, `JWT_SECRET`), pero ninguno representa a un usuario del MCP. La conexión de cada usuario se autoriza por OAuth y se vuelve a validar contra MongoDB en cada llamada.
+El backend necesita sus secretos de servidor (`MONGODB_URI`, `JWT_SECRET` y, sólo si se usa la regeneración interna, `AI_API_KEY`), pero ninguno representa a un usuario del MCP. La conexión de cada usuario se autoriza por OAuth y se vuelve a validar contra MongoDB en cada llamada.
 
 Ejemplo de instrucción para un agente:
 
 ```text
-Usá crear_nota_con_ia con este brief: "La banda X presenta su nuevo disco el viernes en Y...".
-Conservá únicamente los datos verificables, marcá con [VERIFICAR] lo que falte y dejá la nota en borrador.
+Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte y usá `crear_nota_con_ia` para guardar el título, la bajada y el cuerpo como borrador. No la publiques ni la programes.
 ```
 
 ## API principal
