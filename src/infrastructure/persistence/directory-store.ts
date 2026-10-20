@@ -9,6 +9,7 @@ export interface DirectoryRepository {
   create(input: DirectoryInput): Promise<DirectoryItem>;
   update(id: string, patch: DirectoryPatch): Promise<DirectoryItem | undefined>;
   remove(id: string): Promise<boolean>;
+  vote(id: string, vote: "reliable" | "needs_review"): Promise<DirectoryItem | undefined>;
 }
 type Database = { entries: DirectoryItem[] };
 const normalizeDirectory = (entry: DirectoryItem): DirectoryItem =>
@@ -18,6 +19,8 @@ const normalizeDirectory = (entry: DirectoryItem): DirectoryItem =>
     lastVerifiedAt: null,
     verifiedBy: null,
     verificationNotes: "",
+    reliableVotes: 0,
+    unreliableVotes: 0,
     ...(entry as unknown as Record<string, unknown>),
   }) as DirectoryItem;
 
@@ -98,6 +101,23 @@ export class DirectoryStore implements DirectoryRepository {
       if (db.entries.length === size) return false;
       await this.write(db);
       return true;
+    });
+  }
+
+  async vote(id: string, vote: "reliable" | "needs_review") {
+    return this.serialize(async () => {
+      const db = await this.read();
+      const index = db.entries.findIndex((entry) => entry.id === id);
+      if (index < 0) return undefined;
+      const current = db.entries[index]!;
+      db.entries[index] = {
+        ...current,
+        reliableVotes: (current.reliableVotes ?? 0) + (vote === "reliable" ? 1 : 0),
+        unreliableVotes: (current.unreliableVotes ?? 0) + (vote === "needs_review" ? 1 : 0),
+        updatedAt: new Date().toISOString(),
+      };
+      await this.write(db);
+      return db.entries[index];
     });
   }
 }

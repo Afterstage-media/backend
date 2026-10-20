@@ -104,6 +104,8 @@ const publicDirectory = (item: DirectoryItem & { distanceKm?: number }) => ({
   status: item.status,
   verificationStatus: item.verificationStatus,
   reliabilityScore: item.reliabilityScore,
+  reliableVotes: item.reliableVotes ?? 0,
+  unreliableVotes: item.unreliableVotes ?? 0,
   lastVerifiedAt: item.lastVerifiedAt,
   updatedAt: item.updatedAt,
 });
@@ -777,6 +779,11 @@ export const createApp = async (
     "/api/directory/:id",
     requireRole("admin", "editor", "press", "directory", "auditor"),
     async (request, response) => response.json(await directory.get(String(request.params.id))),
+  );
+  app.post(
+    "/api/directory/:id/vote",
+    requireRole("admin", "editor", "press", "directory", "auditor"),
+    async (request, response) => response.json(await directory.vote(String(request.params.id), request.body)),
   );
   app.post("/api/directory", requireRole("admin", "editor", "press", "directory"), async (request, response) =>
     response.status(201).json(await directory.create(request.body)),
