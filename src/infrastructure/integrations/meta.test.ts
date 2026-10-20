@@ -44,6 +44,18 @@ test("simula Meta sin credenciales ni requests externos", async () => {
   assert.equal(result.instagram, "dry-run-id");
 });
 
+test("publica solo en el sitio sin exigir credenciales de Meta", async () => {
+  const oldToken = process.env.META_ACCESS_TOKEN;
+  delete process.env.META_ACCESS_TOKEN;
+  try {
+    const result = await new MetaPublisher().publish(item({ channels: ["website"], assets: [] }), false);
+    assert.deepEqual(result, {});
+  } finally {
+    if (oldToken === undefined) delete process.env.META_ACCESS_TOKEN;
+    else process.env.META_ACCESS_TOKEN = oldToken;
+  }
+});
+
 test("valida que Stories y Reels tengan el formato correcto", async () => {
   const publisher = new MetaPublisher();
   await assert.rejects(
