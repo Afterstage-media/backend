@@ -40,6 +40,14 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
       resource_documentation: "https://afterstage.test/politica-editorial",
     });
 
+    const authorizationServerMetadata = await fetch(`${base}/.well-known/oauth-authorization-server`);
+    assert.equal(authorizationServerMetadata.status, 200);
+    assert.equal(
+      ((await authorizationServerMetadata.json()) as Record<string, unknown>)
+        .authorization_response_iss_parameter_supported,
+      true,
+    );
+
     const mcpResponse = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: { "content-type": "application/json" },
