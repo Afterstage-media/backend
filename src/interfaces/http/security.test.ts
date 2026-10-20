@@ -65,7 +65,7 @@ test("acepta la sesión HttpOnly como autenticación del navegador", async () =>
 });
 
 test("escribe auditoría estructurada con actor y metadata", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-audit-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-audit-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const previous = process.env.DATA_DIR;
   process.env.DATA_DIR = directory;
@@ -86,7 +86,7 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     issuer: process.env.JWT_ISSUER,
   };
   process.env.JWT_SECRET = "jwt-test-secret";
-  process.env.JWT_ISSUER = "medio-under";
+  process.env.JWT_ISSUER = "afterstage";
   configureUserDirectory({
     findActiveUser: async (id) =>
       id === "user-1" ? { id, roles: ["editor"], permissions: [], active: true } : undefined,
@@ -97,7 +97,7 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     sub: "user-1",
     roles: ["editor"],
     permissions: [],
-    iss: "medio-under",
+    iss: "afterstage",
     exp: Math.floor(Date.now() / 1000) + 300,
   });
   const sign = (body: string, secret = process.env.JWT_SECRET!) =>
@@ -109,7 +109,7 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     sub: "user-1",
     roles: ["editor"],
     permissions: [],
-    iss: "medio-under",
+    iss: "afterstage",
     exp: Math.floor(Date.now() / 1000) - 60,
   });
   assert.equal(await actorFromJwt(`${header}.${expiredPayload}.${sign(`${header}.${expiredPayload}`)}`), undefined);
@@ -126,7 +126,7 @@ test("autentica contraseñas con scrypt y emite JWT de corta duración", async (
     issuer: process.env.JWT_ISSUER,
   };
   process.env.JWT_SECRET = "login-test-secret";
-  process.env.JWT_ISSUER = "medio-under";
+  process.env.JWT_ISSUER = "afterstage";
   const passwordHash = await hashPassword("una-clave-segura-123");
   assert.equal(await verifyPassword("una-clave-segura-123", passwordHash), true);
   assert.equal(await verifyPassword("otra-clave-123", passwordHash), false);

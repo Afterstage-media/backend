@@ -97,7 +97,7 @@ export const replacementApplicationSchema = z.object({
 });
 
 export const mediaKitSchema = z.object({
-  name: z.string().max(180).default("Medio Under"),
+  name: z.string().max(180).default("afterstage"),
   tagline: z.string().max(300).default("Periodismo musical para la escena que hace."),
   mission: z.string().max(4000).default(""),
   audience: z.string().max(2000).default(""),
