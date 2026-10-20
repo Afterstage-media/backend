@@ -156,7 +156,7 @@ Configuración remota de ejemplo:
 
 Herramientas remotas:
 
-- `crear_nota_con_ia` — conserva el nombre por compatibilidad, pero recibe una nota ya redactada por el agente y la guarda como borrador. El MCP no llama a una IA, no publica, no programa ni envía comunicaciones. Acepta `idempotencyKey` para repetir una solicitud sin crear otro borrador.
+- `crear_nota` — recibe una nota ya redactada por el agente y la guarda como borrador. El MCP no llama a una IA, no publica, no programa ni envía comunicaciones. Acepta `idempotencyKey` para repetir una solicitud sin crear otro borrador.
 - `listar_notas` — busca notas del workspace conectado y devuelve `{ notes, total, limit }` para mantener un contrato MCP de objeto, incluso sin resultados.
 - `listar_agenda` — consulta eventos, acreditaciones y coberturas con filtros de texto, estado y fecha.
 - `buscar_directorio` — busca entradas del directorio; los emails, teléfonos y contactos sólo se incluyen cuando se solicita y el rol está autorizado.
@@ -170,7 +170,7 @@ El backend necesita sus secretos de servidor (`MONGODB_URI`, `JWT_SECRET` y, só
 Ejemplo de instrucción para un agente:
 
 ```text
-Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte y usá `crear_nota_con_ia` para guardar el título, la bajada y el cuerpo como borrador. No la publiques ni la programes.
+Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte y usá `crear_nota` para guardar el título, la bajada y el cuerpo como borrador. No la publiques ni la programes.
 ```
 
 ## API principal
