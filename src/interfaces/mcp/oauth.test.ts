@@ -32,7 +32,12 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
     findActiveUser: async (id: string) => (id === user.id ? user : undefined),
   };
   const resourceUrl = new URL("https://afterstage.ar/mcp");
-  const provider = new McpOAuthProvider({ store: new MemoryMcpOAuthStore(), users, resourceUrl });
+  const provider = new McpOAuthProvider({
+    store: new MemoryMcpOAuthStore(),
+    users,
+    resourceUrl,
+    issuerUrl: new URL("https://afterstage.ar/"),
+  });
   const client = {
     client_id: "codex-client",
     client_id_issued_at: Math.floor(Date.now() / 1000),
@@ -113,4 +118,5 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
   await provider.approveAuthorization(webRequestId, user.id, webApproval as never);
   assert.equal(webApproval.result.redirectStatus, 303);
   assert.equal(new URL(webApproval.result.redirectTo!).origin, "https://chatgpt.com");
+  assert.equal(new URL(webApproval.result.redirectTo!).searchParams.get("iss"), "https://afterstage.ar/");
 });

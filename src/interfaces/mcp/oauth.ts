@@ -334,6 +334,7 @@ type McpOAuthOptions = {
   store: McpOAuthStore;
   users: UserDirectory;
   resourceUrl: URL;
+  issuerUrl: URL;
 };
 
 const scopeLabel = (scope: string) =>
@@ -384,7 +385,7 @@ export class McpOAuthProvider implements OAuthServerProvider {
       .set("Cache-Control", "no-store")
       .type("html")
       .send(
-        `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Afterstage</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:560px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{font-size:42px;letter-spacing:-.06em;margin-top:0}a{color:#171717;font-weight:700}button{background:#171717;color:#fff;border:0;font:inherit;font-weight:700;margin-top:24px;padding:13px 18px;width:100%}small{color:#57534e}code{font-size:.8em}</style><main class="card"><h1>Conectar Afterstage</h1><p><strong>${escapeHtml(client.client_name ?? "Una aplicación")}</strong> quiere trabajar con tu cuenta.</p><ul>${scopeList}</ul><small>El acceso queda limitado a estos permisos y puede revocarse.</small>${sessionBlock}</main></html>`,
+        `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Afterstage</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:560px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{font-size:42px;letter-spacing:-.06em;margin-top:0}a{color:#171717;font-weight:700}button{background:#171717;color:#fff;border:0;font:inherit;font-weight:700;margin-top:24px;padding:13px 18px;width:100%}button:disabled{cursor:wait;opacity:.7}small{color:#57534e}code{font-size:.8em}</style><main class="card"><h1>Conectar Afterstage</h1><p><strong>${escapeHtml(client.client_name ?? "Una aplicación")}</strong> quiere trabajar con tu cuenta.</p><ul>${scopeList}</ul><small>El acceso queda limitado a estos permisos y puede revocarse.</small>${sessionBlock.replace('<form method="post" action="/oauth/approve">', '<form method="post" action="/oauth/approve" onsubmit="const button=this.querySelector(\'button[type=submit]\'); if(button.disabled) return false; button.disabled=true; button.textContent=\'Autorizando…\';">')}</main></html>`,
       );
   }
 
@@ -414,6 +415,7 @@ export class McpOAuthProvider implements OAuthServerProvider {
     const redirect = new URL(approved.redirectUri);
     redirect.searchParams.set("code", code);
     if (approved.state) redirect.searchParams.set("state", approved.state);
+    redirect.searchParams.set("iss", this.options.issuerUrl.href);
     if (redirect.hostname === "127.0.0.1" || redirect.hostname === "localhost") {
       response
         .type("html")
