@@ -13,7 +13,13 @@ import { PressManager } from "../../application/press-manager.js";
 import { directoryKinds, directoryStatuses } from "../../domain/directory/types.js";
 import { eventStatuses, replacementProfiles, replacementStatuses } from "../../domain/press/types.js";
 import { McpOAuthProvider, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
-import { actorFromRequest, type UserDirectory } from "../http/security.js";
+import {
+  actorFromRequest,
+  authenticateUser,
+  issueAccessToken,
+  setAuthCookie,
+  type UserDirectory,
+} from "../http/security.js";
 
 type McpExtra = { authInfo?: { scopes: string[]; extra?: Record<string, unknown> } };
 
@@ -43,6 +49,25 @@ const readNotesRoles = ["admin", "editor", "auditor"] as const;
 const readAgendaRoles = ["admin", "press", "auditor"] as const;
 const readDirectoryRoles = ["admin", "editor", "press", "directory", "auditor"] as const;
 const readReplacementsRoles = ["admin", "press", "auditor"] as const;
+const escapeHtml = (value: string): string =>
+  value.replace(
+    /[&<>"']/g,
+    (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!,
+  );
+
+const oauthReturnPath = (value: unknown, publicUrl: URL): string | undefined => {
+  if (typeof value !== "string" || !value) return undefined;
+  try {
+    const target = new URL(value, publicUrl);
+    if (target.origin !== publicUrl.origin || target.pathname !== "/authorize") return undefined;
+    return `${target.pathname}${target.search}`;
+  } catch {
+    return undefined;
+  }
+};
+
+const renderOAuthLogin = (returnTo: string, errorMessage?: string): string =>
+  `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ingresar a Afterstage</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:560px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{font-size:42px;letter-spacing:-.06em;margin-top:0}label{display:block;font-weight:700;margin:18px 0 6px}input{box-sizing:border-box;border:1px solid #171717;font:inherit;padding:12px;width:100%}button{background:#171717;color:#fff;border:0;font:inherit;font-weight:700;margin-top:24px;padding:13px 18px;width:100%}small{color:#57534e}.error{color:#a11f1f;font-weight:700}</style><main class="card"><h1>Ingresar a Afterstage</h1><p>Iniciá sesión para continuar con la conexión segura.</p>${errorMessage ? `<p class="error">${escapeHtml(errorMessage)}</p>` : ""}<form method="post" action="/oauth/login"><input type="hidden" name="return_to" value="${escapeHtml(returnTo)}"><label for="identifier">Usuario o email</label><input id="identifier" name="identifier" autocomplete="username" required><label for="password">Contraseña</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Ingresar y continuar</button></form><small>La contraseña se envía únicamente a Afterstage mediante HTTPS y no se comparte con el MCP.</small></main></html>`;
 
 export const createRemoteMcpServer = (
   manager: ContentManager,
@@ -254,8 +279,19 @@ export const mountRemoteMcp = (
     expectedResource: resourceUrl,
   });
 
+  app.use(express.urlencoded({ extended: false }));
   app.use("/authorize", async (request, response, next) => {
-    response.locals.afterstageActor = await actorFromRequest(request);
+    const actor = await actorFromRequest(request);
+    if (!actor) {
+      const returnTo = oauthReturnPath(request.originalUrl, publicUrl);
+      if (!returnTo) {
+        response.status(400).type("html").send("<p>La solicitud OAuth no es válida.</p>");
+        return;
+      }
+      response.redirect(303, `/oauth/login?return_to=${encodeURIComponent(returnTo)}`);
+      return;
+    }
+    response.locals.afterstageActor = actor;
     next();
   });
   app.use(
@@ -269,7 +305,45 @@ export const mountRemoteMcp = (
       scopesSupported: [...mcpScopes],
     }),
   );
-  app.use(express.urlencoded({ extended: false }));
+  app.get("/oauth/login", (request, response) => {
+    const returnTo = oauthReturnPath(request.query.return_to, publicUrl);
+    if (!returnTo) {
+      response.status(400).type("html").send("<p>El retorno de autenticación no es válido.</p>");
+      return;
+    }
+    response.set("Cache-Control", "no-store").type("html").send(renderOAuthLogin(returnTo));
+  });
+  app.post("/oauth/login", async (request, response, next) => {
+    try {
+      const input = z
+        .object({
+          return_to: z.string().min(1).max(4000),
+          identifier: z.string().min(1).max(180),
+          password: z.string().min(1).max(200),
+        })
+        .parse(request.body);
+      const returnTo = oauthReturnPath(input.return_to, publicUrl);
+      if (!returnTo) {
+        response.status(400).type("html").send("<p>El retorno de autenticación no es válido.</p>");
+        return;
+      }
+      const user = await authenticateUser(input.identifier, input.password, users);
+      if (!user) {
+        response
+          .status(401)
+          .set("Cache-Control", "no-store")
+          .type("html")
+          .send(renderOAuthLogin(returnTo, "Las credenciales de Afterstage no son válidas."));
+        return;
+      }
+      const accessToken = issueAccessToken(user);
+      response.set("Cache-Control", "no-store");
+      setAuthCookie(response, accessToken);
+      response.redirect(303, returnTo);
+    } catch (error) {
+      next(error);
+    }
+  });
   app.post("/oauth/approve", async (request, response, next) => {
     try {
       const input = z
