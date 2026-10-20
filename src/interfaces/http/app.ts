@@ -11,6 +11,7 @@ import { PressManager } from "../../application/press-manager.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { EventsFeed } from "../../infrastructure/integrations/events-feed.js";
 import {
+  audit,
   auditMiddleware,
   authenticateUser,
   configureUserDirectory,
@@ -21,6 +22,9 @@ import {
   requirePermission,
   hasPermission,
   securityHeaders,
+  type ManagedUser,
+  type Permission,
+  type Role,
   type UserDirectory,
 } from "./security.js";
 import { schedulerStatus } from "../../application/ops.js";
@@ -109,6 +113,20 @@ const parsePublicLimit = (value: unknown, fallback = 50, maximum = 100): number 
   if (!Number.isSafeInteger(parsed) || parsed < 1) return fallback;
   return Math.min(parsed, maximum);
 };
+
+const managedRoles = ["admin", "editor", "press", "directory", "community", "auditor", "social"] as const;
+const managedPermissions = ["instagram:read", "instagram:metrics", "instagram:publish"] as const;
+const managedUserResponse = (user: ManagedUser) => ({
+  id: user.id,
+  username: user.username ?? "",
+  email: user.email ?? "",
+  roles: user.roles,
+  permissions: user.permissions,
+  active: user.active !== false,
+  createdAt: user.createdAt ?? null,
+  updatedAt: user.updatedAt ?? null,
+  lastLoginAt: user.lastLoginAt ?? null,
+});
 
 const includeDemoData = () => process.env.PUBLIC_INCLUDE_DEMO_DATA === "true";
 const isDemoContent = (item: Awaited<ReturnType<ContentManager["required"]>>) =>
@@ -285,6 +303,150 @@ export const createApp = async (
       }
       throw error;
     }
+  });
+  app.get("/api/admin/users", requireRole("admin"), async (_request, response) => {
+    if (!users?.listUsers) {
+      response.status(503).json({ error: "La gestión de usuarios no está configurada" });
+      return;
+    }
+    response.json({ users: (await users.listUsers()).map(managedUserResponse) });
+  });
+  app.post("/api/admin/users", requireRole("admin"), requireSecureTransport, async (request, response) => {
+    if (!users?.createUser) {
+      response.status(503).json({ error: "La gestión de usuarios no está configurada" });
+      return;
+    }
+    const input = z
+      .object({
+        username: z
+          .string()
+          .trim()
+          .min(3)
+          .max(80)
+          .regex(/^[a-zA-Z0-9._-]+$/),
+        email: z.string().trim().toLowerCase().email().max(180).or(z.literal("")),
+        roles: z.array(z.enum(managedRoles)).min(1).max(managedRoles.length),
+        permissions: z.array(z.enum(managedPermissions)).max(managedPermissions.length),
+        active: z.boolean().default(true),
+        keyId: z.string().length(16),
+        passwordCiphertext: z.string().min(1).max(4096),
+      })
+      .parse(request.body);
+    let password: string;
+    try {
+      password = decryptAuthSecret(input.passwordCiphertext, input.keyId);
+    } catch {
+      response.status(400).json({ error: "Credencial inválida" });
+      return;
+    }
+    if (password.length < 12) {
+      response.status(400).json({ error: "La contraseña debe tener al menos 12 caracteres" });
+      return;
+    }
+    let user: ManagedUser;
+    try {
+      user = await users.createUser({
+        id: randomUUID(),
+        username: input.username.toLowerCase(),
+        email: input.email,
+        passwordHash: await hashPassword(password),
+        roles: input.roles as Role[],
+        permissions: input.permissions as Permission[],
+        active: input.active,
+      });
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        response.status(409).json({ error: "Ya existe un usuario con ese nombre o email" });
+        return;
+      }
+      throw error;
+    }
+    await audit(request, "admin_user_created", { userId: user.id, roles: user.roles });
+    response.status(201).json({ user: managedUserResponse(user) });
+  });
+  app.patch("/api/admin/users/:id", requireRole("admin"), requireSecureTransport, async (request, response) => {
+    if (!users?.listUsers || !users.updateUser) {
+      response.status(503).json({ error: "La gestión de usuarios no está configurada" });
+      return;
+    }
+    const input = z
+      .object({
+        username: z
+          .string()
+          .trim()
+          .min(3)
+          .max(80)
+          .regex(/^[a-zA-Z0-9._-]+$/)
+          .optional(),
+        email: z.string().trim().toLowerCase().email().max(180).or(z.literal("")).optional(),
+        roles: z.array(z.enum(managedRoles)).min(1).max(managedRoles.length).optional(),
+        permissions: z.array(z.enum(managedPermissions)).max(managedPermissions.length).optional(),
+        active: z.boolean().optional(),
+        keyId: z.string().length(16).optional(),
+        passwordCiphertext: z.string().min(1).max(4096).optional(),
+      })
+      .refine((value) => Object.keys(value).some((key) => key !== "keyId"), {
+        message: "No hay cambios para guardar",
+      })
+      .parse(request.body);
+    const allUsers = await users.listUsers();
+    const current = allUsers.find((user) => user.id === String(request.params.id));
+    if (!current) {
+      response.status(404).json({ error: "Usuario no encontrado" });
+      return;
+    }
+    const actor = (request as typeof request & { actor?: { id: string } }).actor;
+    const nextRoles = input.roles ?? current.roles;
+    const nextActive = input.active ?? current.active !== false;
+    if (actor?.id === current.id && (!nextActive || !nextRoles.includes("admin"))) {
+      response.status(400).json({ error: "No podés quitarte el último acceso de administrador" });
+      return;
+    }
+    if (current.roles.includes("admin") && current.active !== false && (!nextActive || !nextRoles.includes("admin"))) {
+      const remainingAdmins = allUsers.some(
+        (user) => user.id !== current.id && user.active !== false && user.roles.includes("admin"),
+      );
+      if (!remainingAdmins) {
+        response.status(400).json({ error: "Debe quedar al menos un administrador activo" });
+        return;
+      }
+    }
+    let passwordHash: string | undefined;
+    if (input.passwordCiphertext) {
+      if (!input.keyId) {
+        response.status(400).json({ error: "Falta la clave de cifrado" });
+        return;
+      }
+      try {
+        passwordHash = await hashPassword(decryptAuthSecret(input.passwordCiphertext, input.keyId));
+      } catch {
+        response.status(400).json({ error: "Credencial inválida" });
+        return;
+      }
+    }
+    let updated: ManagedUser | undefined;
+    try {
+      updated = await users.updateUser(current.id, {
+        ...(input.username ? { username: input.username.toLowerCase() } : {}),
+        ...(input.email !== undefined ? { email: input.email } : {}),
+        ...(input.roles ? { roles: input.roles as Role[] } : {}),
+        ...(input.permissions ? { permissions: input.permissions as Permission[] } : {}),
+        ...(input.active !== undefined ? { active: input.active } : {}),
+        ...(passwordHash ? { passwordHash } : {}),
+      });
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        response.status(409).json({ error: "Ya existe un usuario con ese nombre o email" });
+        return;
+      }
+      throw error;
+    }
+    if (!updated) {
+      response.status(404).json({ error: "Usuario no encontrado" });
+      return;
+    }
+    await audit(request, "admin_user_updated", { userId: updated.id, fields: Object.keys(input) });
+    response.json({ user: managedUserResponse(updated) });
   });
   app.get("/api/public/press-kit", async (_request, response) => {
     const snapshot = await press.snapshot();

@@ -9,10 +9,32 @@ export type Permission = (typeof permissionNames)[number];
 export type Actor = { id: string; roles: Role[]; permissions: Permission[] };
 
 export type ActiveUser = { id: string; roles: Role[]; permissions: Permission[]; active?: boolean };
+export type ManagedUser = ActiveUser & {
+  username?: string;
+  email?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  lastLoginAt?: string;
+};
+export type ManagedUserInput = {
+  id: string;
+  username: string;
+  email: string;
+  passwordHash: string;
+  roles: Role[];
+  permissions: Permission[];
+  active: boolean;
+};
 export type UserDirectory = {
   findActiveUser: (id: string) => Promise<ActiveUser | undefined>;
   findByIdentifier?: (identifier: string) => Promise<(ActiveUser & { passwordHash?: string }) | undefined>;
   createCollaborator?: (email: string, passwordHash: string) => Promise<ActiveUser>;
+  listUsers?: () => Promise<ManagedUser[]>;
+  createUser?: (input: ManagedUserInput) => Promise<ManagedUser>;
+  updateUser?: (
+    id: string,
+    patch: Partial<Omit<ManagedUserInput, "id" | "passwordHash">> & { passwordHash?: string },
+  ) => Promise<ManagedUser | undefined>;
 };
 const passwordCost = 16384;
 const passwordBlockSize = 8;
