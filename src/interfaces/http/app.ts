@@ -189,7 +189,7 @@ export const createApp = async (
   app.use(express.json({ limit: "2mb" }));
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
-    if (publicUrl) mountRemoteMcp(app, manager, mcpOAuthStore, users, new URL(publicUrl));
+    if (publicUrl) mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl));
   }
   app.use(
     "/media",

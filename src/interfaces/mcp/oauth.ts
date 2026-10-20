@@ -14,11 +14,19 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import type { UserDirectory } from "../http/security.js";
+import type { Role, UserDirectory } from "../http/security.js";
 import { authenticateUser } from "../http/security.js";
 
-export const mcpScopes = ["notes:read", "notes:write"] as const;
+export const mcpScopes = ["notes:read", "notes:write", "agenda:read", "directory:read", "replacements:read"] as const;
 export type McpScope = (typeof mcpScopes)[number];
+
+export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
+  "notes:read": ["admin", "editor", "auditor"],
+  "notes:write": ["admin", "editor"],
+  "agenda:read": ["admin", "press", "auditor"],
+  "directory:read": ["admin", "editor", "press", "directory", "auditor"],
+  "replacements:read": ["admin", "press", "auditor"],
+};
 
 type PendingAuthorization = {
   id: string;
@@ -303,7 +311,14 @@ type McpOAuthOptions = {
   resourceUrl: URL;
 };
 
-const scopeLabel = (scope: string) => (scope === "notes:write" ? "Crear y modificar notas" : "Leer notas");
+const scopeLabel = (scope: string) =>
+  ({
+    "notes:read": "Leer notas",
+    "notes:write": "Crear y modificar notas",
+    "agenda:read": "Leer agenda y coberturas",
+    "directory:read": "Leer directorio editorial",
+    "replacements:read": "Leer búsquedas de reemplazo",
+  })[scope] ?? scope;
 
 export class McpOAuthProvider implements OAuthServerProvider {
   readonly clientsStore = {
@@ -323,7 +338,7 @@ export class McpOAuthProvider implements OAuthServerProvider {
     }
     const unsupported = params.scopes?.filter((scope) => !mcpScopes.includes(scope as McpScope)) ?? [];
     if (unsupported.length) throw new InvalidScopeError(`Scopes no soportados: ${unsupported.join(", ")}`);
-    const scopes = params.scopes?.length ? params.scopes : ["notes:read", "notes:write"];
+    const scopes = params.scopes?.length ? params.scopes : [...mcpScopes];
     const requestId = await this.store.createPendingAuthorization({
       clientId: client.client_id,
       redirectUri: params.redirectUri,
@@ -353,9 +368,11 @@ export class McpOAuthProvider implements OAuthServerProvider {
     if (!request) throw new InvalidGrantError("La solicitud OAuth expiró o ya fue utilizada");
     const user = await authenticateUser(identifier, password, this.options.users);
     if (!user) throw new AccessDeniedError("Las credenciales de Afterstage no son válidas");
-    if (request.scopes.includes("notes:write") && !user.roles.some((role) => role === "admin" || role === "editor")) {
-      throw new AccessDeniedError("Tu usuario no tiene permiso para crear notas");
-    }
+    const deniedScope = request.scopes.find((scope) => {
+      const allowedRoles = mcpScopeRoles[scope as McpScope];
+      return !allowedRoles?.some((role) => user.roles.includes(role));
+    });
+    if (deniedScope) throw new AccessDeniedError(`Tu usuario no tiene permiso para el scope ${deniedScope}`);
     const consumed = await this.store.consumePendingAuthorization(requestId);
     if (!consumed) throw new InvalidGrantError("La solicitud OAuth ya fue utilizada");
     const code = await this.store.createAuthorizationCode({
@@ -421,6 +438,11 @@ export class McpOAuthProvider implements OAuthServerProvider {
     if (!consumed) throw new InvalidGrantError("El refresh token ya fue utilizado");
     const user = await this.options.users.findActiveUser(stored.userId);
     if (!user || user.active === false) throw new InvalidGrantError("El usuario ya no está activo");
+    const deniedScope = stored.scopes.find((scope) => {
+      const allowedRoles = mcpScopeRoles[scope as McpScope];
+      return !allowedRoles?.some((role) => user.roles.includes(role));
+    });
+    if (deniedScope) throw new InvalidGrantError(`El usuario ya no tiene permiso para el scope ${deniedScope}`);
     return this.issueTokens(client.client_id, user.id, granted, stored.resource);
   }
 
