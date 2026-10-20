@@ -8,4 +8,16 @@ on:
 
 jobs:
   quality:
-    uses: medio-under/ci-cd/.github/workflows/reusable-backend.yml@main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run build
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=moderate

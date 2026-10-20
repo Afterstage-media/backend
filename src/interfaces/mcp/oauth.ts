@@ -14,11 +14,28 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import type { UserDirectory } from "../http/security.js";
-import { authenticateUser } from "../http/security.js";
+import type { Actor, Role, UserDirectory } from "../http/security.js";
 
-export const mcpScopes = ["notes:read", "notes:write"] as const;
+export const mcpScopes = [
+  "notes:read",
+  "notes:write",
+  "agenda:read",
+  "agenda:write",
+  "directory:read",
+  "directory:write",
+  "replacements:read",
+] as const;
 export type McpScope = (typeof mcpScopes)[number];
+
+export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
+  "notes:read": ["admin", "editor", "press", "auditor"],
+  "notes:write": ["admin", "editor"],
+  "agenda:read": ["admin", "press", "auditor"],
+  "agenda:write": ["admin", "press"],
+  "directory:read": ["admin", "editor", "press", "directory", "auditor"],
+  "directory:write": ["admin", "editor", "press", "directory"],
+  "replacements:read": ["admin", "press", "auditor"],
+};
 
 type PendingAuthorization = {
   id: string;
@@ -29,6 +46,8 @@ type PendingAuthorization = {
   scopes: string[];
   resource?: string;
   expiresAt: number;
+  approvedUserId?: string;
+  approvedAt?: number;
 };
 
 type AuthorizationCode = PendingAuthorization & {
@@ -38,10 +57,12 @@ type AuthorizationCode = PendingAuthorization & {
 
 type AccessToken = {
   tokenHash: string;
+  grantId?: string;
   clientId: string;
   userId: string;
   scopes: string[];
   resource?: string;
+  issuedAt?: number;
   expiresAt: number;
   revoked?: boolean;
 };
@@ -50,11 +71,21 @@ type RefreshToken = AccessToken & { tokenHash: string };
 
 type OAuthDocument = Record<string, unknown> & { _id: string };
 
+export type McpAccessGrant = {
+  id: string;
+  clientId: string;
+  userId: string;
+  scopes: string[];
+  issuedAt?: number;
+  expiresAt: number;
+};
+
 export interface McpOAuthStore {
   getClient(clientId: string): Promise<OAuthClientInformationFull | undefined>;
   registerClient(client: OAuthClientInformationFull): Promise<OAuthClientInformationFull>;
   createPendingAuthorization(input: Omit<PendingAuthorization, "id">): Promise<string>;
   getPendingAuthorization(id: string): Promise<PendingAuthorization | undefined>;
+  approvePendingAuthorization(id: string, userId: string): Promise<PendingAuthorization | undefined>;
   consumePendingAuthorization(id: string): Promise<PendingAuthorization | undefined>;
   createAuthorizationCode(input: Omit<AuthorizationCode, "id" | "codeHash">): Promise<string>;
   getAuthorizationCode(code: string): Promise<AuthorizationCode | undefined>;
@@ -65,6 +96,8 @@ export interface McpOAuthStore {
   getRefreshToken(token: string): Promise<RefreshToken | undefined>;
   consumeRefreshToken(token: string): Promise<RefreshToken | undefined>;
   revokeToken(token: string): Promise<void>;
+  listAccessGrants(userId: string): Promise<McpAccessGrant[]>;
+  revokeAccessGrant(userId: string, grantId: string): Promise<boolean>;
 }
 
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("base64url");
@@ -120,6 +153,21 @@ export class MongoMcpOAuthStore implements McpOAuthStore {
 
   async getPendingAuthorization(id: string): Promise<PendingAuthorization | undefined> {
     const document = await this.pending.findOne({ _id: id, expiresAt: { $gt: now() } });
+    if (!document) return undefined;
+    const { _id: _ignored, ...pending } = document;
+    return { id, ...(pending as Omit<PendingAuthorization, "id">) };
+  }
+
+  async approvePendingAuthorization(id: string, userId: string): Promise<PendingAuthorization | undefined> {
+    const document = await this.pending.findOneAndUpdate(
+      {
+        _id: id,
+        expiresAt: { $gt: now() },
+        $or: [{ approvedUserId: { $exists: false } }, { approvedUserId: userId }],
+      },
+      { $set: { approvedUserId: userId, approvedAt: now() } },
+      { returnDocument: "after" },
+    );
     if (!document) return undefined;
     const { _id: _ignored, ...pending } = document;
     return { id, ...(pending as Omit<PendingAuthorization, "id">) };
@@ -219,6 +267,29 @@ export class MongoMcpOAuthStore implements McpOAuthStore {
       this.refreshTokens.updateOne({ _id: hash }, { $set: { revoked: true } }),
     ]);
   }
+
+  async listAccessGrants(userId: string): Promise<McpAccessGrant[]> {
+    const documents = await this.refreshTokens
+      .find({ userId, revoked: { $ne: true }, expiresAt: { $gt: now() }, grantId: { $exists: true } })
+      .sort({ issuedAt: -1 })
+      .toArray();
+    return documents.map((document) => ({
+      id: String(document.grantId),
+      clientId: String(document.clientId),
+      userId,
+      scopes: Array.isArray(document.scopes) ? document.scopes.map(String) : [],
+      ...(typeof document.issuedAt === "number" ? { issuedAt: document.issuedAt } : {}),
+      expiresAt: Number(document.expiresAt),
+    }));
+  }
+
+  async revokeAccessGrant(userId: string, grantId: string): Promise<boolean> {
+    const [access, refresh] = await Promise.all([
+      this.accessTokens.updateMany({ userId, grantId }, { $set: { revoked: true } }),
+      this.refreshTokens.updateMany({ userId, grantId }, { $set: { revoked: true } }),
+    ]);
+    return access.matchedCount > 0 || refresh.matchedCount > 0;
+  }
 }
 
 export class MemoryMcpOAuthStore implements McpOAuthStore {
@@ -243,6 +314,14 @@ export class MemoryMcpOAuthStore implements McpOAuthStore {
   async getPendingAuthorization(id: string) {
     const value = this.pending.get(id);
     return value && value.expiresAt > now() ? value : undefined;
+  }
+  async approvePendingAuthorization(id: string, userId: string) {
+    const value = this.pending.get(id);
+    if (!value || value.expiresAt <= now()) return undefined;
+    if (value.approvedUserId && value.approvedUserId !== userId) return undefined;
+    value.approvedUserId = userId;
+    value.approvedAt = now();
+    return value;
   }
   async consumePendingAuthorization(id: string) {
     const value = this.pending.get(id);
@@ -295,15 +374,50 @@ export class MemoryMcpOAuthStore implements McpOAuthStore {
     const refresh = this.refreshTokens.get(hash);
     if (refresh) refresh.revoked = true;
   }
+
+  async listAccessGrants(userId: string): Promise<McpAccessGrant[]> {
+    return [...this.refreshTokens.values()]
+      .filter((value) => value.userId === userId && value.grantId && value.expiresAt > now() && !value.revoked)
+      .sort((left, right) => (right.issuedAt ?? 0) - (left.issuedAt ?? 0))
+      .map((value) => ({
+        id: value.grantId!,
+        clientId: value.clientId,
+        userId: value.userId,
+        scopes: [...value.scopes],
+        ...(value.issuedAt !== undefined ? { issuedAt: value.issuedAt } : {}),
+        expiresAt: value.expiresAt,
+      }));
+  }
+
+  async revokeAccessGrant(userId: string, grantId: string): Promise<boolean> {
+    let found = false;
+    for (const value of [...this.accessTokens.values(), ...this.refreshTokens.values()]) {
+      if (value.userId === userId && value.grantId === grantId) {
+        value.revoked = true;
+        found = true;
+      }
+    }
+    return found;
+  }
 }
 
 type McpOAuthOptions = {
   store: McpOAuthStore;
   users: UserDirectory;
   resourceUrl: URL;
+  issuerUrl: URL;
 };
 
-const scopeLabel = (scope: string) => (scope === "notes:write" ? "Crear y modificar notas" : "Leer notas");
+const scopeLabel = (scope: string) =>
+  ({
+    "notes:read": "Leer notas",
+    "notes:write": "Crear y modificar notas",
+    "agenda:read": "Leer agenda y coberturas",
+    "agenda:write": "Crear y gestionar agenda",
+    "directory:read": "Leer directorio editorial",
+    "directory:write": "Crear y modificar directorio editorial",
+    "replacements:read": "Leer búsquedas de reemplazo",
+  })[scope] ?? scope;
 
 export class McpOAuthProvider implements OAuthServerProvider {
   readonly clientsStore = {
@@ -323,7 +437,7 @@ export class McpOAuthProvider implements OAuthServerProvider {
     }
     const unsupported = params.scopes?.filter((scope) => !mcpScopes.includes(scope as McpScope)) ?? [];
     if (unsupported.length) throw new InvalidScopeError(`Scopes no soportados: ${unsupported.join(", ")}`);
-    const scopes = params.scopes?.length ? params.scopes : ["notes:read", "notes:write"];
+    const scopes = params.scopes?.length ? params.scopes : [...mcpScopes];
     const requestId = await this.store.createPendingAuthorization({
       clientId: client.client_id,
       redirectUri: params.redirectUri,
@@ -336,42 +450,59 @@ export class McpOAuthProvider implements OAuthServerProvider {
     const scopeList = scopes
       .map((scope) => `<li>${escapeHtml(scopeLabel(scope))} <code>${escapeHtml(scope)}</code></li>`)
       .join("");
+    const sessionActor = response.locals.afterstageActor as Actor | undefined;
+    const sessionBlock = sessionActor
+      ? `<p>Sesión iniciada en Afterstage. La contraseña no se comparte con esta conexión.</p><form method="post" action="/oauth/approve"><input type="hidden" name="request_id" value="${escapeHtml(requestId)}"><button type="submit">Autorizar conexión</button></form>`
+      : `<p>Para continuar, iniciá sesión en Afterstage en otra pestaña y luego volvé a esta pantalla.</p><p><a href="/colaborador" target="_blank" rel="noreferrer">Abrir Afterstage e iniciar sesión</a></p><form method="post" action="/oauth/approve"><input type="hidden" name="request_id" value="${escapeHtml(requestId)}"><button type="submit">Ya inicié sesión, continuar</button></form>`;
     response
+      .set("Cache-Control", "no-store")
       .type("html")
       .send(
-        `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Afterstage</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:560px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{font-size:42px;letter-spacing:-.06em;margin-top:0}label{display:block;font-weight:700;margin:18px 0 6px}input{box-sizing:border-box;border:1px solid #171717;font:inherit;padding:12px;width:100%}button{background:#171717;color:#fff;border:0;font:inherit;font-weight:700;margin-top:24px;padding:13px 18px;width:100%}small{color:#57534e}code{font-size:.8em}</style><main class="card"><h1>Conectar Afterstage</h1><p><strong>${escapeHtml(client.client_name ?? "Una aplicación")}</strong> quiere trabajar con tu cuenta.</p><ul>${scopeList}</ul><small>El acceso queda limitado a estos permisos y puede revocarse.</small><form method="post" action="/oauth/approve"><input type="hidden" name="request_id" value="${escapeHtml(requestId)}"><label for="identifier">Usuario o email</label><input id="identifier" name="identifier" autocomplete="username" required><label for="password">Contraseña</label><input id="password" name="password" type="password" autocomplete="current-password" required><button type="submit">Autorizar conexión</button></form></main></html>`,
+        `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conectar Afterstage</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:560px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{font-size:42px;letter-spacing:-.06em;margin-top:0}a{color:#171717;font-weight:700}button{background:#171717;color:#fff;border:0;font:inherit;font-weight:700;margin-top:24px;padding:13px 18px;width:100%}button:disabled{cursor:wait;opacity:.7}small{color:#57534e}code{font-size:.8em}</style><main class="card"><h1>Conectar Afterstage</h1><p><strong>${escapeHtml(client.client_name ?? "Una aplicación")}</strong> quiere trabajar con tu cuenta.</p><ul>${scopeList}</ul><small>El acceso queda limitado a estos permisos y puede revocarse.</small>${sessionBlock.replace('<form method="post" action="/oauth/approve">', '<form method="post" action="/oauth/approve" onsubmit="const button=this.querySelector(\'button[type=submit]\'); if(button.disabled) return false; button.disabled=true; button.textContent=\'Autorizando…\';">')}</main></html>`,
       );
   }
 
-  async approveAuthorization(
-    requestId: string,
-    identifier: string,
-    password: string,
-    response: Response,
-  ): Promise<void> {
+  async approveAuthorization(requestId: string, userId: string, response: Response): Promise<void> {
+    response.set("Cache-Control", "no-store");
     const request = await this.store.getPendingAuthorization(requestId);
     if (!request) throw new InvalidGrantError("La solicitud OAuth expiró o ya fue utilizada");
-    const user = await authenticateUser(identifier, password, this.options.users);
-    if (!user) throw new AccessDeniedError("Las credenciales de Afterstage no son válidas");
-    if (request.scopes.includes("notes:write") && !user.roles.some((role) => role === "admin" || role === "editor")) {
-      throw new AccessDeniedError("Tu usuario no tiene permiso para crear notas");
-    }
-    const consumed = await this.store.consumePendingAuthorization(requestId);
-    if (!consumed) throw new InvalidGrantError("La solicitud OAuth ya fue utilizada");
+    const user = await this.options.users.findActiveUser(userId);
+    if (!user || user.active === false) throw new AccessDeniedError("La sesión de Afterstage no es válida");
+    const deniedScope = request.scopes.find((scope) => {
+      const allowedRoles = mcpScopeRoles[scope as McpScope];
+      return !allowedRoles?.some((role) => user.roles.includes(role));
+    });
+    if (deniedScope) throw new AccessDeniedError(`Tu usuario no tiene permiso para el scope ${deniedScope}`);
+    const approved = await this.store.approvePendingAuthorization(requestId, user.id);
+    if (!approved) throw new InvalidGrantError("La solicitud OAuth expiró o fue autorizada por otra cuenta");
     const code = await this.store.createAuthorizationCode({
-      clientId: consumed.clientId,
-      redirectUri: consumed.redirectUri,
-      ...(consumed.state ? { state: consumed.state } : {}),
-      codeChallenge: consumed.codeChallenge,
-      scopes: consumed.scopes,
-      ...(consumed.resource ? { resource: consumed.resource } : {}),
-      expiresAt: consumed.expiresAt,
+      clientId: approved.clientId,
+      redirectUri: approved.redirectUri,
+      ...(approved.state ? { state: approved.state } : {}),
+      codeChallenge: approved.codeChallenge,
+      scopes: approved.scopes,
+      ...(approved.resource ? { resource: approved.resource } : {}),
+      expiresAt: approved.expiresAt,
       userId: user.id,
     });
-    const redirect = new URL(consumed.redirectUri);
+    const redirect = new URL(approved.redirectUri);
     redirect.searchParams.set("code", code);
-    if (consumed.state) redirect.searchParams.set("state", consumed.state);
-    response.redirect(302, redirect.href);
+    if (approved.state) redirect.searchParams.set("state", approved.state);
+    redirect.searchParams.set("iss", this.options.issuerUrl.href);
+    if (redirect.hostname === "127.0.0.1" || redirect.hostname === "localhost") {
+      response
+        .type("html")
+        .send(
+          `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Afterstage autorizado</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:720px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{margin-top:0}textarea{box-sizing:border-box;width:100%;min-height:120px;border:1px solid #171717;padding:12px;font:13px ui-monospace,monospace}a{display:inline-block;background:#171717;color:#fff;text-decoration:none;padding:13px 18px;margin-top:16px}small{color:#57534e}</style><main class="card"><h1>Afterstage autorizado</h1><p>Copiá esta URL completa y pegala en el prompt de Codex para terminar la conexión:</p><textarea readonly>${escapeHtml(redirect.href)}</textarea><p><a href="${escapeHtml(redirect.href)}">Abrir retorno local</a></p><small>El código es temporal y se puede usar una sola vez.</small></main></html>`,
+        );
+      return;
+    }
+    response
+      .status(200)
+      .type("html")
+      .send(
+        `<!doctype html><html lang="es"><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${escapeHtml(redirect.href)}"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Afterstage autorizado</title><style>body{font:16px system-ui;background:#f4f0e8;color:#171717;margin:0;padding:32px}.card{background:#fff;border:2px solid #171717;max-width:720px;margin:8vh auto;padding:32px;box-shadow:8px 8px #c7f36a}h1{margin-top:0}a{display:inline-block;background:#171717;color:#fff;text-decoration:none;padding:13px 18px;margin-top:16px}small{color:#57534e}</style><main class="card"><h1>Afterstage autorizado</h1><p>Redirigiendo a ChatGPT para completar la conexión…</p><p><a href="${escapeHtml(redirect.href)}">Continuar a ChatGPT</a></p><small>El código es temporal y se puede usar una sola vez.</small></main></html>`,
+      );
   }
 
   async challengeForAuthorizationCode(_client: OAuthClientInformationFull, authorizationCode: string): Promise<string> {
@@ -413,7 +544,12 @@ export class McpOAuthProvider implements OAuthServerProvider {
     if (!consumed) throw new InvalidGrantError("El refresh token ya fue utilizado");
     const user = await this.options.users.findActiveUser(stored.userId);
     if (!user || user.active === false) throw new InvalidGrantError("El usuario ya no está activo");
-    return this.issueTokens(client.client_id, user.id, granted, stored.resource);
+    const deniedScope = stored.scopes.find((scope) => {
+      const allowedRoles = mcpScopeRoles[scope as McpScope];
+      return !allowedRoles?.some((role) => user.roles.includes(role));
+    });
+    if (deniedScope) throw new InvalidGrantError(`El usuario ya no tiene permiso para el scope ${deniedScope}`);
+    return this.issueTokens(client.client_id, user.id, granted, stored.resource, stored.grantId);
   }
 
   async verifyAccessToken(token: string): Promise<AuthInfo> {
@@ -440,21 +576,27 @@ export class McpOAuthProvider implements OAuthServerProvider {
     userId: string,
     scopes: string[],
     resource?: string,
+    grantId: string = randomUUID(),
   ): Promise<OAuthTokens> {
     const expiresIn = 3600;
+    const issuedAt = now();
     const accessToken = await this.store.createAccessToken({
+      grantId,
       clientId,
       userId,
       scopes,
       ...(resource ? { resource } : {}),
-      expiresAt: now() + expiresIn * 1000,
+      issuedAt,
+      expiresAt: issuedAt + expiresIn * 1000,
     });
     const refreshToken = await this.store.createRefreshToken({
+      grantId,
       clientId,
       userId,
       scopes,
       ...(resource ? { resource } : {}),
-      expiresAt: now() + 30 * 24 * 60 * 60_000,
+      issuedAt,
+      expiresAt: issuedAt + 30 * 24 * 60 * 60_000,
     });
     return {
       access_token: accessToken,

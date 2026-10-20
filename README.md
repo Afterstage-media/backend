@@ -1,10 +1,10 @@
-# Gestor editorial y de redes de Medio Under
+# Gestor editorial y de redes de afterstage
 
 Backend Node.js desacoplado para gestionar el ciclo completo de una pieza editorial: idea, nota, material visual, copys, aprobación, programación y publicación. La interfaz React/Vite vive en `../frontend` y consume esta API.
 
 ## Norte del producto
 
-Medio Under busca convertirse en un medio reconocido para acceder a pases de prensa en eventos y recitales. El gestor debe ayudar a demostrar trabajo periodístico real: archivo de coberturas, notas consistentes, fotos correctamente acreditadas, métricas y seguimiento de contactos. La automatización de redes es el último tramo de ese proceso, no un sustituto de la edición ni de la relación con productoras y salas.
+afterstage busca convertirse en un medio reconocido para acceder a pases de prensa en eventos y recitales. El gestor debe ayudar a demostrar trabajo periodístico real: archivo de coberturas, notas consistentes, fotos correctamente acreditadas, métricas y seguimiento de contactos. La automatización de redes es el último tramo de ese proceso, no un sustituto de la edición ni de la relación con productoras y salas.
 
 El dominio de prensa ya incorpora:
 
@@ -69,14 +69,14 @@ npm run dev
 | Variable | Uso |
 | --- | --- |
 | `MONGODB_URI` | URI obligatoria de MongoDB Atlas. |
-| `MONGODB_DB` | Base de datos, por defecto `medio_under`. |
+| `MONGODB_DB` | Base de datos, por defecto `afterstage`. |
 | `PUBLIC_BASE_URL` | Origen HTTPS público desde el que Meta descargará imágenes y Mercado Pago volverá al checkout. |
 | `MERCADOPAGO_ACCESS_TOKEN` | Token privado para crear preferencias y validar pagos desde el webhook. |
 | `MONETIZATION_PRODUCTS_JSON` | Catálogo opcional configurable en JSON; si se omite se usa el catálogo inicial de monetización. |
 | `MEDIA_ROOT` | Raíz local autorizada para archivos que se sirven bajo `/media`. |
 | `PUBLIC_MEDIA_BASE_URL` | Base pública alternativa para medios locales. |
 | `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
-| `AI_API_KEY` | Habilita las acciones de generación. |
+| `AI_API_KEY` | Opcional para las herramientas internas de regeneración editorial (`/api/content/:id/generate`); no es necesaria para el MCP, porque el agente genera la nota. Nunca debe configurarse en el cliente, Git o la conexión MCP. |
 | `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
 | `AI_MODEL` | Modelo de redacción. |
 | `META_ACCESS_TOKEN` | Token de Page de larga duración. |
@@ -99,8 +99,6 @@ Para publicar imágenes locales, `PUBLIC_BASE_URL` debe resolver por HTTPS hacia
 Para Atlas, agregá la IP del servidor en Network Access, creá un usuario de base de datos y copiá la URI SRV completa en `MONGODB_URI`. El driver mantiene un único pool por proceso con `maxPoolSize=20`, `maxIdleTimeMS=5 min`, `serverSelectionTimeoutMS=5 s` y `waitQueueTimeoutMS=5 s`, valores conservadores para un servidor editorial de baja concurrencia.
 
 El login se administra en MongoDB. Para crear o rotar un usuario ejecutá `USER_PASSWORD='una-clave-de-12-o-más-caracteres' MONGODB_URI='...' npm run users:upsert -- redaccion editor redaccion@medio.example true`. El backend nunca guarda la contraseña en claro: usa hashes `scrypt`, emite JWT HS256 de corta duración y vuelve a consultar en Mongo el usuario activo y su rol en cada request.
-
-
 El flujo de archivos locales y Cloudflare está detallado en [`documentacion/06-publicacion-local-cloudflare.md`](../documentacion/06-publicacion-local-cloudflare.md). La URL estable se configura con `CLOUDFLARE_TUNNEL_URL`; no se crea un container de Meta hasta que llega la fecha programada.
 
 ## Sitio público conectado
@@ -126,7 +124,7 @@ Los correos se envían con el nombre configurado en el dossier (`mediaKit.name`)
 
 ## Seguridad y operación
 
-Las rutas privadas aceptan únicamente `Authorization: Bearer <JWT>`. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
+Las rutas privadas aceptan `Authorization: Bearer <JWT>` o la sesión de navegador `HttpOnly` emitida por el login. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
 
 Para un backup local/Docker: `DATA_DIR=./data UPLOAD_DIR=./uploads ./scripts/backup.sh`. En Atlas, complementar con `mongodump` programado y retención en almacenamiento externo.
 
@@ -137,7 +135,7 @@ El MCP se publica como `https://afterstage.ar/mcp`. El cliente descubre los meta
 - `/.well-known/oauth-protected-resource/mcp`
 - `/.well-known/oauth-authorization-server`
 
-La primera vez que una cuenta usa una herramienta, el cliente abre la pantalla de conexión de Afterstage. El usuario inicia sesión y autoriza scopes. El servidor emite un access token MCP de corta duración y un refresh token; ambos quedan asociados al usuario, cliente y recurso. No se copia ningún JWT de usuario a `.env`, Git ni configuración del agente.
+La primera vez que una cuenta usa una herramienta, el cliente abre la pantalla de conexión de Afterstage. El usuario inicia sesión en Afterstage y autoriza scopes. El login deja una cookie `HttpOnly`, `Secure` y `SameSite=Lax`; la pantalla de consentimiento sólo envía el `request_id`, nunca usuario ni contraseña. El servidor emite un access token MCP de corta duración y un refresh token; ambos quedan asociados al usuario, cliente y recurso. No se copia ningún JWT de usuario a `.env`, Git ni configuración del agente.
 
 Scopes disponibles:
 
@@ -149,7 +147,7 @@ Configuración remota de ejemplo:
 ```json
 {
   "mcpServers": {
-    "medio-under": {
+    "afterstage": {
       "url": "https://afterstage.ar/mcp"
     }
   }
@@ -158,17 +156,21 @@ Configuración remota de ejemplo:
 
 Herramientas remotas:
 
-- `crear_nota_con_ia` — recibe un brief, redacta una nota completa y la guarda como borrador.
-- `listar_notas` — busca notas del workspace conectado.
+- `crear_nota` — recibe una nota ya redactada por el agente y la guarda como borrador. El MCP no llama a una IA, no publica, no programa ni envía comunicaciones. Acepta `idempotencyKey` para repetir una solicitud sin crear otro borrador.
+- `listar_notas` — busca notas del workspace conectado y devuelve `{ notes, total, limit }` para mantener un contrato MCP de objeto, incluso sin resultados.
+- `listar_agenda` — consulta eventos, acreditaciones y coberturas con filtros de texto, estado y fecha.
+- `buscar_directorio` — busca entradas del directorio; los emails, teléfonos y contactos sólo se incluyen cuando se solicita y el rol está autorizado.
+- `listar_reemplazos` — consulta búsquedas y, opcionalmente, sus postulaciones.
 - `get_profile` — devuelve la identidad estable, roles y permisos de la cuenta conectada.
 
-El backend sí necesita sus secretos de servidor (`MONGODB_URI`, `AI_API_KEY`, `JWT_SECRET`), pero ninguno representa a un usuario del MCP. La conexión de cada usuario se autoriza por OAuth y se vuelve a validar contra MongoDB en cada llamada.
+La disponibilidad de la IA interna opcional se expone en `GET /ready` como `ai` y en `GET /api/ops/status` como `ai.configured`, sin devolver nunca la clave. Esa señal sólo corresponde a las herramientas internas de regeneración; el MCP puede guardar notas redactadas por el agente aunque sea `false`.
+
+El backend necesita sus secretos de servidor (`MONGODB_URI`, `JWT_SECRET` y, sólo si se usa la regeneración interna, `AI_API_KEY`), pero ninguno representa a un usuario del MCP. La conexión de cada usuario se autoriza por OAuth y se vuelve a validar contra MongoDB en cada llamada.
 
 Ejemplo de instrucción para un agente:
 
 ```text
-Usá crear_nota_con_ia con este brief: "La banda X presenta su nuevo disco el viernes en Y...".
-Conservá únicamente los datos verificables, marcá con [VERIFICAR] lo que falte y dejá la nota en borrador.
+Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte y usá `crear_nota` para guardar el título, la bajada y el cuerpo como borrador. No la publiques ni la programes.
 ```
 
 ## API principal
@@ -198,14 +200,14 @@ Conservá únicamente los datos verificables, marcá con [VERIFICAR] lo que falt
 - `GET/PATCH /api/press/media-kit`
 - `POST /api/press/accreditations/:id/send` — SMTP; recibe `dryRun: true` por defecto
 - `GET /health`
-- `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, y devuelve un JWT de acceso.
+- `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, devuelve un JWT de acceso y establece la sesión de navegador segura.
 - `GET /api/auth/me` — devuelve la identidad, roles y permisos del JWT actual.
 
 El detector de duplicados bloquea al guardar coincidencias fuertes (HTTP 409), pero permite consultar coincidencias preliminares con un umbral más amplio para que edición o IA decidan si continuar.
 
 Los listados públicos de contenido, eventos, directorio y reemplazos aplican un límite seguro por request (default 50, máximo 100). El backend devuelve sólo ese máximo efectivo; la paginación/cursor queda como siguiente evolución si el volumen editorial lo requiere.
 
-Las rutas `/api/*` requieren un JWT emitido por el login; los roles y permisos se validan contra MongoDB en cada request.
+Las rutas `/api/*` requieren el JWT emitido por el login o la sesión de navegador segura; los roles y permisos se validan contra MongoDB en cada request.
 
 ## Verificación
 

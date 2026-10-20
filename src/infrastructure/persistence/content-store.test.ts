@@ -7,7 +7,7 @@ import { ContentStore } from "./content-store.js";
 import { contentInputSchema } from "../../domain/content/types.js";
 
 test("crea, persiste y actualiza una nota", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const store = new ContentStore(directory);
   const created = await store.create(contentInputSchema.parse({ title: "Una fecha bajo tierra" }));
@@ -24,7 +24,7 @@ test("crea, persiste y actualiza una nota", async (context) => {
 });
 
 test("serializa escrituras concurrentes sin perder contenido", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const stores = [new ContentStore(directory), new ContentStore(directory)];
   await Promise.all(

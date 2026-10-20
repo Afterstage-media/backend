@@ -6,11 +6,14 @@ import os from "node:os";
 import { createHmac } from "node:crypto";
 import {
   actorFromJwt,
+  actorFromRequest,
+  authCookieName,
   audit,
   authenticateUser,
   configureUserDirectory,
   hashPassword,
   issueAccessToken,
+  setAuthCookie,
   verifyPassword,
   type ActiveUser,
 } from "./security.js";
@@ -38,8 +41,31 @@ test("acepta únicamente JWT firmados y revalidados contra Mongo", async () => {
   else process.env.JWT_SECRET = previous;
 });
 
+test("acepta la sesión HttpOnly como autenticación del navegador", async () => {
+  const previous = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "cookie-test-secret";
+  const user: ActiveUser = { id: "editor-cookie", roles: ["editor"], permissions: [], active: true };
+  configureUserDirectory({ findActiveUser: async (id) => (id === user.id ? user : undefined) });
+  const token = issueAccessToken(user);
+  let setCookie = "";
+  setAuthCookie({ setHeader: (_name: string, value: string) => (setCookie = value) } as any, token);
+  assert.match(setCookie, new RegExp(`${authCookieName}=`));
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /Secure/);
+  assert.match(setCookie, /SameSite=Lax/);
+  const cookie = setCookie.split(";")[0]!;
+  assert.deepEqual(await actorFromRequest(request({ cookie })), {
+    id: user.id,
+    roles: ["editor"],
+    permissions: [],
+  });
+  configureUserDirectory(undefined);
+  if (previous === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = previous;
+});
+
 test("escribe auditoría estructurada con actor y metadata", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-audit-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-audit-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const previous = process.env.DATA_DIR;
   process.env.DATA_DIR = directory;
@@ -60,7 +86,7 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     issuer: process.env.JWT_ISSUER,
   };
   process.env.JWT_SECRET = "jwt-test-secret";
-  process.env.JWT_ISSUER = "medio-under";
+  process.env.JWT_ISSUER = "afterstage";
   configureUserDirectory({
     findActiveUser: async (id) =>
       id === "user-1" ? { id, roles: ["editor"], permissions: [], active: true } : undefined,
@@ -71,7 +97,7 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     sub: "user-1",
     roles: ["editor"],
     permissions: [],
-    iss: "medio-under",
+    iss: "afterstage",
     exp: Math.floor(Date.now() / 1000) + 300,
   });
   const sign = (body: string, secret = process.env.JWT_SECRET!) =>
@@ -83,7 +109,7 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     sub: "user-1",
     roles: ["editor"],
     permissions: [],
-    iss: "medio-under",
+    iss: "afterstage",
     exp: Math.floor(Date.now() / 1000) - 60,
   });
   assert.equal(await actorFromJwt(`${header}.${expiredPayload}.${sign(`${header}.${expiredPayload}`)}`), undefined);
@@ -100,7 +126,7 @@ test("autentica contraseñas con scrypt y emite JWT de corta duración", async (
     issuer: process.env.JWT_ISSUER,
   };
   process.env.JWT_SECRET = "login-test-secret";
-  process.env.JWT_ISSUER = "medio-under";
+  process.env.JWT_ISSUER = "afterstage";
   const passwordHash = await hashPassword("una-clave-segura-123");
   assert.equal(await verifyPassword("una-clave-segura-123", passwordHash), true);
   assert.equal(await verifyPassword("otra-clave-123", passwordHash), false);

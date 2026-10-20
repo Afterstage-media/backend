@@ -7,6 +7,6 @@ DATA_DIR="${DATA_DIR:-./data}"
 UPLOAD_DIR="${UPLOAD_DIR:-./uploads}"
 [ -d "$DATA_DIR" ] && cp -a "$DATA_DIR" "$ROOT/$STAMP/data" || true
 [ -d "$UPLOAD_DIR" ] && cp -a "$UPLOAD_DIR" "$ROOT/$STAMP/uploads" || true
-tar -czf "$ROOT/medio-under-$STAMP.tar.gz" -C "$ROOT/$STAMP" .
+tar -czf "$ROOT/afterstage-$STAMP.tar.gz" -C "$ROOT/$STAMP" .
 rm -rf "$ROOT/$STAMP"
-echo "Backup creado en $ROOT/medio-under-$STAMP.tar.gz"
+echo "Backup creado en $ROOT/afterstage-$STAMP.tar.gz"

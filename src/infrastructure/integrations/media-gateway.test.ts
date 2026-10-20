@@ -6,7 +6,7 @@ import os from "node:os";
 import { MediaGateway } from "./media-gateway.js";
 
 test("resuelve medios locales con URL pública y bloquea path traversal", async (context) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "medio-under-media-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "afterstage-media-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   await writeFile(path.join(root, "foto.jpg"), "foto");
   const oldRoot = process.env.MEDIA_ROOT;

@@ -48,23 +48,26 @@ export const contentInputSchema = z.object({
   seoDescription: z.string().max(320).default(""),
   canonicalUrl: z.string().url().or(z.literal("")).default(""),
   featured: z.boolean().default(false),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
 export const contentPatchSchema = contentInputSchema.partial();
 
-export const aiNoteInputSchema = z.object({
-  brief: z.string().trim().min(10).max(8000),
-  title: z.string().trim().min(1).max(180).optional(),
+export const agentNoteInputSchema = z.object({
+  title: z.string().trim().min(1).max(180),
   summary: z.string().max(600).default(""),
+  body: z.string().trim().min(1).max(50_000),
+  instagramCopy: z.string().max(2_200).default(""),
+  facebookCopy: z.string().default(""),
   channels: z.array(z.enum(channels)).default(["website", "instagram"]),
   tags: z.array(z.string().max(80)).default([]),
   source: z.string().max(500).default(""),
-  instructions: z.string().max(2000).default(""),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
 export type ContentInput = z.infer<typeof contentInputSchema>;
 export type ContentPatch = z.infer<typeof contentPatchSchema>;
-export type AiNoteInput = z.infer<typeof aiNoteInputSchema>;
+export type AgentNoteInput = z.infer<typeof agentNoteInputSchema>;
 export type ContentStatus = (typeof contentStatuses)[number];
 export type Channel = (typeof channels)[number];
 

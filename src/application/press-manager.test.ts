@@ -7,7 +7,7 @@ import { PressManager } from "./press-manager.js";
 import { PressStore } from "../infrastructure/persistence/press-store.js";
 
 test("gestiona evento, contacto, acreditación y cobertura vinculados", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-press-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-press-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new PressManager(new PressStore(directory));
   const contact = await manager.createContact({
@@ -24,7 +24,7 @@ test("gestiona evento, contacto, acreditación y cobertura vinculados", async (c
   const request = await manager.createAccreditation({
     eventId: event.id,
     contactId: contact.id,
-    subject: "Acreditación Medio Under",
+    subject: "Acreditación afterstage",
   });
   await manager.updateAccreditation(request.id, { status: "sent" });
   const simulatedMail = await manager.sendAccreditation(request.id, true);
@@ -47,7 +47,7 @@ test("gestiona evento, contacto, acreditación y cobertura vinculados", async (c
 });
 
 test("genera el correo con identidad, reply-to y plantilla del medio", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-mail-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-mail-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   let sent: Record<string, unknown> | undefined;
   const mailer = {
@@ -58,7 +58,7 @@ test("genera el correo con identidad, reply-to y plantilla del medio", async (co
   };
   const manager = new PressManager(new PressStore(directory), mailer as never);
   await manager.updateMediaKit({
-    name: "Medio Under",
+    name: "afterstage",
     email: "redaccion@medio.test",
     tagline: "Periodismo musical",
   });
@@ -79,7 +79,7 @@ test("genera el correo con identidad, reply-to y plantilla del medio", async (co
   const result = await manager.sendAccreditation(request.id, false);
   assert.equal(result.messageId, "mail-1");
   assert.equal(sent?.to, "prensa@evento.test");
-  assert.equal(sent?.fromName, "Medio Under");
+  assert.equal(sent?.fromName, "afterstage");
   assert.equal(sent?.replyTo, "redaccion@medio.test");
   assert.match(String(sent?.text), /Las Perlas/);
   assert.match(String(sent?.html), /<p>/);
@@ -87,7 +87,7 @@ test("genera el correo con identidad, reply-to y plantilla del medio", async (co
 });
 
 test("envía follow-ups vencidos y limpia su fecha para no duplicarlos", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-followup-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-followup-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   let count = 0;
   const mailer = {
@@ -119,7 +119,7 @@ test("envía follow-ups vencidos y limpia su fecha para no duplicarlos", async (
 });
 
 test("impide referencias inexistentes y borrado de contactos vinculados", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-refs-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-refs-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new PressManager(new PressStore(directory));
   await assert.rejects(
@@ -141,7 +141,7 @@ test("impide referencias inexistentes y borrado de contactos vinculados", async 
 });
 
 test("gestiona búsqueda de reemplazo, postulación, asignación y aviso al medio", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-replacement-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-replacement-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   let sent: Record<string, unknown> | undefined;
   const manager = new PressManager(new PressStore(directory), {
@@ -150,7 +150,7 @@ test("gestiona búsqueda de reemplazo, postulación, asignación y aviso al medi
       return { dryRun: true };
     },
   } as never);
-  await manager.updateMediaKit({ name: "Medio Under", email: "redaccion@medio.test" });
+  await manager.updateMediaKit({ name: "afterstage", email: "redaccion@medio.test" });
   const event = await manager.createEvent({
     name: "Festival Under",
     city: "Córdoba",
@@ -197,11 +197,11 @@ test("gestiona búsqueda de reemplazo, postulación, asignación y aviso al medi
   const assigned = await manager.assignReplacementApplication(application.id, true);
   assert.equal(assigned.searchId, search.id);
   assert.equal((await manager.snapshot()).replacementSearches[0]?.status, "assigned");
-  assert.equal(sent?.fromName, "Medio Under");
+  assert.equal(sent?.fromName, "afterstage");
 });
 
 test("el modo simulación no cambia el estado ni requiere SMTP", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-dry-mail-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-dry-mail-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new PressManager(new PressStore(directory));
   const contact = await manager.createContact({
@@ -220,7 +220,7 @@ test("el modo simulación no cambia el estado ni requiere SMTP", async (context)
 });
 
 test("valida estados de acreditación y enlaces de coberturas", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-press-validation-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-press-validation-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new PressManager(new PressStore(directory));
   const event = await manager.createEvent({ name: "Evento" });

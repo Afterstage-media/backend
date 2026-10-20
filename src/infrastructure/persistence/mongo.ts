@@ -50,6 +50,7 @@ export class MongoContentStore implements ContentRepository {
       this.collection.createIndex({ status: 1, updatedAt: -1 }),
       this.collection.createIndex({ slug: 1 }, { unique: true }),
       this.collection.createIndex({ scheduledAt: 1, status: 1 }),
+      this.collection.createIndex({ idempotencyKey: 1 }, { unique: true, sparse: true }),
     ]);
   }
 
@@ -71,10 +72,21 @@ export class MongoContentStore implements ContentRepository {
     return document ? this.fromDocument(document) : undefined;
   }
 
+  async findByIdempotencyKey(key: string): Promise<ContentItem | undefined> {
+    const document = await this.collection.findOne({ idempotencyKey: key });
+    return document ? this.fromDocument(document) : undefined;
+  }
+
   async create(input: ContentInput): Promise<ContentItem> {
+    if (input.idempotencyKey) {
+      const existing = await this.findByIdempotencyKey(input.idempotencyKey);
+      if (existing) return existing;
+    }
+    const { idempotencyKey, ...inputWithoutIdempotencyKey } = input;
     const now = timestamps();
     const item: ContentItem = {
-      ...input,
+      ...inputWithoutIdempotencyKey,
+      ...(idempotencyKey ? { idempotencyKey } : {}),
       id: randomUUID(),
       slug: input.slug || slugify(input.title),
       createdAt: now,
@@ -89,7 +101,15 @@ export class MongoContentStore implements ContentRepository {
       viewCount: 0,
       instagramMetrics: null,
     };
-    await this.collection.insertOne({ _id: item.id, ...item });
+    try {
+      await this.collection.insertOne({ _id: item.id, ...item });
+    } catch (error) {
+      if (idempotencyKey && (error as { code?: number }).code === 11000) {
+        const existing = await this.findByIdempotencyKey(idempotencyKey);
+        if (existing) return existing;
+      }
+      throw error;
+    }
     return item;
   }
 
@@ -459,6 +479,8 @@ export class MongoDirectoryStore implements DirectoryRepository {
       lastVerifiedAt: null,
       verifiedBy: null,
       verificationNotes: "",
+      reliableVotes: 0,
+      unreliableVotes: 0,
       ...(item as unknown as Record<string, unknown>),
     } as DirectoryItem;
   }
@@ -488,6 +510,21 @@ export class MongoDirectoryStore implements DirectoryRepository {
   async remove(id: string) {
     return (await this.collection.deleteOne({ _id: id })).deletedCount === 1;
   }
+
+  async vote(id: string, vote: "reliable" | "needs_review") {
+    const result = await this.collection.findOneAndUpdate(
+      { _id: id },
+      {
+        $inc: {
+          reliableVotes: vote === "reliable" ? 1 : 0,
+          unreliableVotes: vote === "needs_review" ? 1 : 0,
+        },
+        $set: { updatedAt: new Date().toISOString() },
+      } as never,
+      { returnDocument: "after" },
+    );
+    return result ? this.normalize(this.from(result)) : undefined;
+  }
 }
 
 export type MongoPersistence = {
@@ -514,7 +551,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     waitQueueTimeoutMS: 30_000,
   });
   await client.connect();
-  const db = client.db(process.env.MONGODB_DB ?? "medio_under");
+  const db = client.db(process.env.MONGODB_DB ?? "afterstage");
   const content = new MongoContentStore(db.collection<MongoRecord>("contents"));
   const press = new MongoPressStore(db);
   const users = new MongoUserDirectory(db.collection<MongoRecord>("users"));

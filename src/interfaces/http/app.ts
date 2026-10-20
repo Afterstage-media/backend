@@ -15,11 +15,15 @@ import {
   auditMiddleware,
   authenticateUser,
   configureUserDirectory,
+  decryptAuthSecret,
+  getAuthEncryptionPublicKey,
   issueAccessToken,
+  setAuthCookie,
   hashPassword,
   RateLimiter,
   requireRole,
   requirePermission,
+  requireSecureTransport,
   hasPermission,
   securityHeaders,
   type ManagedUser,
@@ -104,6 +108,8 @@ const publicDirectory = (item: DirectoryItem & { distanceKm?: number }) => ({
   status: item.status,
   verificationStatus: item.verificationStatus,
   reliabilityScore: item.reliabilityScore,
+  reliableVotes: item.reliableVotes ?? 0,
+  unreliableVotes: item.unreliableVotes ?? 0,
   lastVerifiedAt: item.lastVerifiedAt,
   updatedAt: item.updatedAt,
 });
@@ -147,7 +153,7 @@ const renderArticle = (item: Awaited<ReturnType<ContentManager["required"]>>): s
   const canonical = item.canonicalUrl || `${process.env.PUBLIC_BASE_URL ?? ""}/notas/${encodeURIComponent(item.slug)}`;
   const author = item.author ? `<span>Por ${escapeHtml(item.author)}</span>` : "";
   const credit = item.photographer ? `<span>Foto: ${escapeHtml(item.photographer)}</span>` : "";
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(item.seoTitle || item.title)} — Medio Under</title><meta name="description" content="${escapeHtml(description)}"><link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:title" content="${escapeHtml(item.title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:type" content="article">${item.assets[0] ? `<meta property="og:image" content="${escapeHtml(item.assets[0].url)}">` : ""}<style>body{background:#f4f0e8;color:#171717;font:18px/1.65 system-ui;margin:0}.wrap{margin:auto;max-width:820px;padding:40px 22px 90px}a{color:inherit}h1{font-size:clamp(48px,8vw,92px);letter-spacing:-.07em;line-height:.92;margin:60px 0 25px}.summary{color:#57534e;font-size:22px}.hero-image{border:2px solid #171717;display:block;margin:45px 0;max-height:620px;object-fit:cover;width:100%}.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}.body{max-width:680px}.tags{border-top:1px solid #aaa;margin-top:50px;padding-top:18px}.credit{font-size:14px;color:#57534e}.share-bar{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.share-button{background:#171717;border:1px solid #171717;color:#fff;cursor:pointer;padding:12px 17px;font:inherit}.share-button.secondary{background:transparent;color:#171717}</style></head><body><main class="wrap"><a href="/">← Medio Under</a><article><h1>${escapeHtml(item.title)}</h1><p class="summary">${escapeHtml(item.summary)}</p><p class="meta">${author}${credit}<span>Publicado ${new Date(item.publishedAt ?? item.updatedAt).toLocaleDateString("es-AR")}</span></p><div class="share-bar"><button class="share-button" data-share="${escapeHtml(item.title)}" data-share-url="${escapeHtml(canonical)}">Compartir desde el celular</button><button class="share-button secondary" data-share-instagram data-share-url="${escapeHtml(canonical)}">Compartir en Instagram</button></div>${image}<div class="body">${paragraphs}</div><p class="tags">${item.tags.map((tag) => `#${escapeHtml(tag)}`).join(" · ")}</p><p class="credit">Fuente: ${escapeHtml(item.source || "Medio Under")}</p></article></main><script src="/share.js"></script></body></html>`;
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(item.seoTitle || item.title)} — afterstage</title><meta name="description" content="${escapeHtml(description)}"><link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:title" content="${escapeHtml(item.title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:type" content="article">${item.assets[0] ? `<meta property="og:image" content="${escapeHtml(item.assets[0].url)}">` : ""}<style>body{background:#f4f0e8;color:#171717;font:18px/1.65 system-ui;margin:0}.wrap{margin:auto;max-width:820px;padding:40px 22px 90px}a{color:inherit}h1{font-size:clamp(48px,8vw,92px);letter-spacing:-.07em;line-height:.92;margin:60px 0 25px}.summary{color:#57534e;font-size:22px}.hero-image{border:2px solid #171717;display:block;margin:45px 0;max-height:620px;object-fit:cover;width:100%}.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}.body{max-width:680px}.tags{border-top:1px solid #aaa;margin-top:50px;padding-top:18px}.credit{font-size:14px;color:#57534e}.share-bar{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.share-button{background:#171717;border:1px solid #171717;color:#fff;cursor:pointer;padding:12px 17px;font:inherit}.share-button.secondary{background:transparent;color:#171717}</style></head><body><main class="wrap"><a href="/">← afterstage</a><article><h1>${escapeHtml(item.title)}</h1><p class="summary">${escapeHtml(item.summary)}</p><p class="meta">${author}${credit}<span>Publicado ${new Date(item.publishedAt ?? item.updatedAt).toLocaleDateString("es-AR")}</span></p><div class="share-bar"><button class="share-button" data-share="${escapeHtml(item.title)}" data-share-url="${escapeHtml(canonical)}">Compartir desde el celular</button><button class="share-button secondary" data-share-instagram data-share-url="${escapeHtml(canonical)}">Compartir en Instagram</button></div>${image}<div class="body">${paragraphs}</div><p class="tags">${item.tags.map((tag) => `#${escapeHtml(tag)}`).join(" · ")}</p><p class="credit">Fuente: ${escapeHtml(item.source || "afterstage")}</p></article></main><script src="/share.js"></script></body></html>`;
 };
 
 const renderPressKit = (snapshot: Awaited<ReturnType<PressManager["snapshot"]>>): string => {
@@ -207,7 +213,7 @@ export const createApp = async (
   app.use(express.json({ limit: "2mb" }));
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
-    if (publicUrl) mountRemoteMcp(app, manager, mcpOAuthStore, users, new URL(publicUrl));
+    if (publicUrl) mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl));
   }
   app.use(
     "/media",
@@ -224,7 +230,7 @@ export const createApp = async (
   app.get("/health", (_request, response) =>
     response.json({
       status: "ok",
-      service: "medio-under-social-manager",
+      service: "afterstage-social-manager",
       startedAt,
       now: new Date().toISOString(),
     }),
@@ -233,6 +239,7 @@ export const createApp = async (
     response.json({
       status: "ready",
       mongo: Boolean(process.env.MONGODB_URI),
+      ai: Boolean(process.env.AI_API_KEY),
       smtp: Boolean(process.env.SMTP_HOST),
       meta: Boolean(process.env.META_ACCESS_TOKEN),
     }),
@@ -248,6 +255,11 @@ export const createApp = async (
         mongoConfigured: Boolean(process.env.MONGODB_URI),
         dataDir: process.env.DATA_DIR ?? "data",
       },
+      ai: {
+        configured: Boolean(process.env.AI_API_KEY),
+        baseUrl: process.env.AI_BASE_URL ?? "https://api.openai.com/v1",
+        model: process.env.AI_MODEL ?? "gpt-5-mini",
+      },
     }),
   );
   app.get(
@@ -255,22 +267,36 @@ export const createApp = async (
     requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
     (request, response) => response.json({ user: (request as typeof request & { actor?: unknown }).actor }),
   );
+  app.get("/api/auth/public-key", (_request, response) => response.json(getAuthEncryptionPublicKey()));
   const loginRateLimit = new RateLimiter(10, 60_000).middleware;
-  app.post("/api/auth/login", loginRateLimit, async (request, response) => {
+  app.post("/api/auth/login", loginRateLimit, requireSecureTransport, async (request, response) => {
     if (!process.env.JWT_SECRET) {
       response.status(503).json({ error: "El login no está configurado" });
       return;
     }
     const input = z
-      .object({ identifier: z.string().min(1).max(180), password: z.string().min(1).max(200) })
+      .object({
+        identifier: z.string().min(1).max(180),
+        keyId: z.string().length(16),
+        passwordCiphertext: z.string().min(1).max(4096),
+      })
       .parse(request.body);
-    const user = await authenticateUser(input.identifier, input.password);
+    let password: string;
+    try {
+      password = decryptAuthSecret(input.passwordCiphertext, input.keyId);
+    } catch {
+      response.status(400).json({ error: "Credencial inválida" });
+      return;
+    }
+    const user = await authenticateUser(input.identifier, password);
     if (!user) {
       response.status(401).json({ error: "Credenciales inválidas" });
       return;
     }
+    const accessToken = issueAccessToken(user);
+    setAuthCookie(response, accessToken);
     response.json({
-      accessToken: issueAccessToken(user),
+      accessToken,
       user: {
         id: user.id,
         roles: user.roles,
@@ -278,22 +304,36 @@ export const createApp = async (
       },
     });
   });
-  app.post("/api/auth/register", loginRateLimit, async (request, response) => {
+  app.post("/api/auth/register", loginRateLimit, requireSecureTransport, async (request, response) => {
+    const input = z
+      .object({
+        email: z.string().trim().toLowerCase().email().max(180),
+        keyId: z.string().length(16),
+        passwordCiphertext: z.string().min(1).max(4096),
+      })
+      .parse(request.body);
     if (!process.env.JWT_SECRET || !users?.createCollaborator) {
       response.status(503).json({ error: "El registro no está configurado" });
       return;
     }
-    const input = z
-      .object({
-        email: z.string().trim().toLowerCase().email().max(180),
-        password: z.string().min(12).max(200),
-      })
-      .parse(request.body);
-    const passwordHash = await hashPassword(input.password);
+    let password: string;
+    try {
+      password = decryptAuthSecret(input.passwordCiphertext, input.keyId);
+    } catch {
+      response.status(400).json({ error: "Credencial inválida" });
+      return;
+    }
+    if (password.length < 12) {
+      response.status(400).json({ error: "La contraseña debe tener al menos 12 caracteres" });
+      return;
+    }
+    const passwordHash = await hashPassword(password);
     try {
       const user = await users.createCollaborator(input.email, passwordHash);
+      const accessToken = issueAccessToken(user);
+      setAuthCookie(response, accessToken);
       response.status(201).json({
-        accessToken: issueAccessToken(user),
+        accessToken,
         user: { id: user.id, roles: user.roles, permissions: user.permissions },
       });
     } catch (error) {
@@ -699,7 +739,7 @@ export const createApp = async (
     response
       .type("application/rss+xml")
       .send(
-        `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Medio Under</title><link>${base}</link><description>Periodismo musical para la escena que hace.</description>${xml}</channel></rss>`,
+        `<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>afterstage</title><link>${base}</link><description>Periodismo musical para la escena que hace.</description>${xml}</channel></rss>`,
       );
   });
   app.get("/sitemap.xml", async (_request, response) => {
@@ -724,6 +764,55 @@ export const createApp = async (
     response.type("html").send(renderPressKit(await press.snapshot())),
   );
   app.use("/api", requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"));
+  app.get(
+    "/api/account/ai-access",
+    requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
+    async (request, response) => {
+      if (!mcpOAuthStore) {
+        response.status(503).json({ error: "La gestión de accesos de IA no está configurada" });
+        return;
+      }
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      const grants = await mcpOAuthStore.listAccessGrants(actor.id);
+      response.json(
+        await Promise.all(
+          grants.map(async (grant) => {
+            const client = await mcpOAuthStore.getClient(grant.clientId);
+            return {
+              id: grant.id,
+              clientId: grant.clientId,
+              application: client?.client_name ?? grant.clientId,
+              scopes: grant.scopes,
+              issuedAt: grant.issuedAt ?? null,
+              expiresAt: grant.expiresAt,
+            };
+          }),
+        ),
+      );
+    },
+  );
+  app.delete(
+    "/api/account/ai-access/:grantId",
+    requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
+    async (request, response) => {
+      if (!mcpOAuthStore) {
+        response.status(503).json({ error: "La gestión de accesos de IA no está configurada" });
+        return;
+      }
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      const grantId = z.string().uuid().parse(request.params.grantId);
+      const revoked = await mcpOAuthStore.revokeAccessGrant(actor.id, grantId);
+      response.status(revoked ? 204 : 404).end();
+    },
+  );
   app.get("/api/monetization/promotions", requireRole("admin", "editor"), async (request, response) => {
     const status =
       typeof request.query.status === "string" && monetizationStatuses.includes(request.query.status as never)
@@ -761,7 +850,14 @@ export const createApp = async (
     response.status(201).json(await manager.create(request.body)),
   );
   app.post("/api/content/with-ai", requireRole("admin", "editor"), async (request, response) =>
-    response.status(201).json(await manager.createNoteWithAi(request.body)),
+    response
+      .status(201)
+      .json(
+        await manager.createNoteWithAi(
+          request.body,
+          (request as typeof request & { actor?: import("./security.js").Actor }).actor?.id ?? "http",
+        ),
+      ),
   );
   app.patch("/api/content/:id", requireRole("admin", "editor"), async (request, response) =>
     response.json(await manager.update(String(request.params.id), request.body)),
@@ -845,6 +941,11 @@ export const createApp = async (
     "/api/directory/:id",
     requireRole("admin", "editor", "press", "directory", "auditor"),
     async (request, response) => response.json(await directory.get(String(request.params.id))),
+  );
+  app.post(
+    "/api/directory/:id/vote",
+    requireRole("admin", "editor", "press", "directory", "auditor"),
+    async (request, response) => response.json(await directory.vote(String(request.params.id), request.body)),
   );
   app.post("/api/directory", requireRole("admin", "editor", "press", "directory"), async (request, response) =>
     response.status(201).json(await directory.create(request.body)),

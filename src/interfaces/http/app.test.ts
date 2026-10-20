@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { constants, publicEncrypt } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -10,9 +11,7 @@ import { PressManager } from "../../application/press-manager.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
-import { AiWriter } from "../../infrastructure/integrations/ai.js";
-import { MetaPublisher } from "../../infrastructure/integrations/meta.js";
-import { configureUserDirectory, issueAccessToken, type ActiveUser } from "./security.js";
+import { configureUserDirectory, getAuthEncryptionPublicKey, issueAccessToken, type ActiveUser } from "./security.js";
 
 const testUsers: Record<string, ActiveUser> = {
   admin: {
@@ -45,8 +44,73 @@ const withServer = async (
   }
 };
 
+test("rechaza login y registro sin HTTPS y no acepta contraseñas en claro", async (context) => {
+  const previous = { nodeEnv: process.env.NODE_ENV, trustProxy: process.env.TRUST_PROXY };
+  process.env.NODE_ENV = "production";
+  process.env.TRUST_PROXY = "true";
+  context.after(() => {
+    if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous.nodeEnv;
+    if (previous.trustProxy === undefined) delete process.env.TRUST_PROXY;
+    else process.env.TRUST_PROXY = previous.trustProxy;
+  });
+
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-secure-auth-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const app = await createApp(
+    new ContentManager(new ContentStore(directory)),
+    new PressManager(new PressStore(directory)),
+  );
+  const encryptionKey = getAuthEncryptionPublicKey();
+  const passwordCiphertext = publicEncrypt(
+    {
+      key: Buffer.from(encryptionKey.publicKey, "base64url"),
+      format: "der",
+      type: "spki",
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    Buffer.from("no-se-envia"),
+  ).toString("base64url");
+  await withServer(app, async (base) => {
+    for (const route of ["login", "register"]) {
+      const insecure = await fetch(`${base}/api/auth/${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier: "redaccion",
+          email: "redaccion@example.com",
+          passwordCiphertext,
+          keyId: encryptionKey.keyId,
+        }),
+      });
+      assert.equal(insecure.status, 400);
+      assert.match((await insecure.json()).error, /HTTPS/);
+
+      const cleartext = await fetch(`${base}/api/auth/${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+        body: JSON.stringify({ identifier: "redaccion", email: "redaccion@example.com", password: "no-se-envia" }),
+      });
+      assert.equal(cleartext.status, 400);
+
+      const encrypted = await fetch(`${base}/api/auth/${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+        body: JSON.stringify({
+          identifier: "redaccion",
+          email: "redaccion@example.com",
+          passwordCiphertext,
+          keyId: encryptionKey.keyId,
+        }),
+      });
+      assert.notEqual(encrypted.status, 400);
+    }
+  });
+});
+
 test("expone health, readiness y feed editorial público", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-public-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-public-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const item = await manager.create({
@@ -109,7 +173,7 @@ test("expone health, readiness y feed editorial público", async (context) => {
 });
 
 test("no publica fixtures demo en las superficies públicas", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-demo-filter-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-demo-filter-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const demo = await manager.create({
@@ -137,7 +201,7 @@ test("no publica fixtures demo en las superficies públicas", async (context) =>
 });
 
 test("combina eventos editoriales con fuentes RSS externas", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-events-feed-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-events-feed-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const press = new PressManager(new PressStore(directory));
@@ -167,7 +231,7 @@ test("combina eventos editoriales con fuentes RSS externas", async (context) => 
 });
 
 test("expone el catálogo público sin contactos privados y protege el directorio completo", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-directory-api-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-directory-api-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const directoryManager = new DirectoryManager(new DirectoryStore(directory));
@@ -213,7 +277,7 @@ test("expone el catálogo público sin contactos privados y protege el directori
 });
 
 test("aplica roles, token bearer y rate limit", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-auth-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-auth-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const previousRate = process.env.RATE_LIMIT;
   process.env.RATE_LIMIT = "20";
@@ -283,7 +347,7 @@ test("aplica roles, token bearer y rate limit", async (context) => {
 });
 
 test("rechaza payloads inválidos y protege rutas privadas de prensa", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-validation-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-validation-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const app = await createApp(
     new ContentManager(new ContentStore(directory)),
@@ -308,7 +372,7 @@ test("rechaza payloads inválidos y protege rutas privadas de prensa", async (co
 });
 
 test("permite buscar reemplazo para una cobertura cuando el fotógrafo o notero no puede asistir", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-replacement-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-replacement-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const app = await createApp(manager, new PressManager(new PressStore(directory)));
@@ -338,7 +402,7 @@ test("permite buscar reemplazo para una cobertura cuando el fotógrafo o notero 
 });
 
 test("expone y protege las métricas de Instagram", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-instagram-metrics-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-instagram-metrics-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const item = await manager.create({ title: "Post con métricas", channels: ["instagram"] });
@@ -375,7 +439,7 @@ test("expone y protege las métricas de Instagram", async (context) => {
 });
 
 test("limita Instagram por permiso aunque el usuario tenga rol editorial", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-instagram-permissions-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-instagram-permissions-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const app = await createApp(
     new ContentManager(new ContentStore(directory)),
@@ -396,7 +460,7 @@ test("limita Instagram por permiso aunque el usuario tenga rol editorial", async
 });
 
 test("permite previsualizar duplicados y rechaza guardar una coincidencia fuerte", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-duplicates-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-duplicates-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   await manager.create({ title: "Festival repetido", body: "Cobertura completa del festival." });
@@ -418,18 +482,10 @@ test("permite previsualizar duplicados y rechaza guardar una coincidencia fuerte
   });
 });
 
-test("crea una nota con IA desde el endpoint autenticado del backend", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-ai-api-"));
+test("guarda una nota redactada por el agente desde el endpoint autenticado", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-ai-api-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
-  const ai = {
-    generate: async () => ({
-      title: "Nota generada por API",
-      summary: "Bajada",
-      body: "Cuerpo redactado",
-      tags: ["api"],
-    }),
-  } as unknown as AiWriter;
-  const manager = new ContentManager(new ContentStore(directory), ai, {} as MetaPublisher);
+  const manager = new ContentManager(new ContentStore(directory));
   const app = await createApp(manager, new PressManager(new PressStore(directory)));
 
   await withServer(app, async (base) => {
@@ -439,11 +495,16 @@ test("crea una nota con IA desde el endpoint autenticado del backend", async (co
         Authorization: `Bearer ${testTokens.editor}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ brief: "La banda presenta una fecha nueva en la ciudad." }),
+      body: JSON.stringify({
+        title: "Nota generada por el agente",
+        summary: "Bajada",
+        body: "La banda presenta una fecha nueva en la ciudad.",
+        tags: ["api"],
+      }),
     });
     assert.equal(response.status, 201);
     const note = await response.json();
-    assert.equal(note.title, "Nota generada por API");
+    assert.equal(note.title, "Nota generada por el agente");
     assert.equal(note.status, "draft");
     assert.equal((await manager.required(note.id)).status, "draft");
   });
