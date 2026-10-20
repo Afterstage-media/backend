@@ -509,7 +509,7 @@ export const createRemoteMcpServer = (
   );
 
   server.registerTool(
-    "crear_nota_con_ia",
+    "crear_nota",
     {
       title: "Guardar nota redactada por el agente",
       description:

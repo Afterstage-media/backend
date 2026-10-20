@@ -82,7 +82,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "actualizar_nota",
         "cambiar_estado_nota",
         "crear_contacto",
-        "crear_nota_con_ia",
+        "crear_nota",
         "crear_evento",
         "buscar_directorio",
         "consultar_borradores",
@@ -162,7 +162,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     );
 
     const draft = await client.callTool({
-      name: "crear_nota_con_ia",
+      name: "crear_nota",
       arguments: {
         title: "La banda de prueba presenta una canción nueva",
         summary: "Una novedad de la escena local.",
@@ -200,7 +200,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal(canonicalUpdate.isError, undefined);
     assert.equal((canonicalUpdate.structuredContent as { body: string }).body, "Contenido corregido por el editor.");
     const replay = await client.callTool({
-      name: "crear_nota_con_ia",
+      name: "crear_nota",
       arguments: {
         title: "La banda de prueba presenta una canción nueva",
         summary: "Una novedad de la escena local.",
