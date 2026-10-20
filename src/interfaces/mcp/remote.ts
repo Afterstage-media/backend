@@ -254,7 +254,7 @@ export const mountRemoteMcp = (
     expectedResource: resourceUrl,
   });
 
-  app.use("/oauth/authorize", async (request, response, next) => {
+  app.use("/authorize", async (request, response, next) => {
     response.locals.afterstageActor = await actorFromRequest(request);
     next();
   });
