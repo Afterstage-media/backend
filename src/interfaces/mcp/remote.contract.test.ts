@@ -21,7 +21,7 @@ const authInfo = (roles: string[]) => ({
 });
 
 test("expone contratos de salida como objetos y aplica filtros, límites y roles MCP", async (context) => {
-  const directoryPath = await mkdtemp(path.join(os.tmpdir(), "medio-under-mcp-contract-"));
+  const directoryPath = await mkdtemp(path.join(os.tmpdir(), "afterstage-mcp-contract-"));
   context.after(() => rm(directoryPath, { recursive: true, force: true }));
 
   const manager = new ContentManager(new ContentStore(directoryPath));

@@ -8,4 +8,4 @@ on:
 
 jobs:
   quality:
-    uses: medio-under/ci-cd/.github/workflows/reusable-backend.yml@main
+    uses: afterstage/ci-cd/.github/workflows/reusable-backend.yml@main

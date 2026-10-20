@@ -28,7 +28,7 @@ const passwordHash = `scrypt$16384$8$1$${salt}$${Buffer.from(derived).toString("
 const client = new MongoClient(uri);
 try {
   await client.connect();
-  const collection = client.db(process.env.MONGODB_DB ?? "medio_under").collection("users");
+  const collection = client.db(process.env.MONGODB_DB ?? "afterstage").collection("users");
   await collection.updateOne(
     { _id: id },
     {

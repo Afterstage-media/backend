@@ -1,10 +1,10 @@
-# Gestor editorial y de redes de Medio Under
+# Gestor editorial y de redes de afterstage
 
 Backend Node.js desacoplado para gestionar el ciclo completo de una pieza editorial: idea, nota, material visual, copys, aprobación, programación y publicación. La interfaz React/Vite vive en `../frontend` y consume esta API.
 
 ## Norte del producto
 
-Medio Under busca convertirse en un medio reconocido para acceder a pases de prensa en eventos y recitales. El gestor debe ayudar a demostrar trabajo periodístico real: archivo de coberturas, notas consistentes, fotos correctamente acreditadas, métricas y seguimiento de contactos. La automatización de redes es el último tramo de ese proceso, no un sustituto de la edición ni de la relación con productoras y salas.
+afterstage busca convertirse en un medio reconocido para acceder a pases de prensa en eventos y recitales. El gestor debe ayudar a demostrar trabajo periodístico real: archivo de coberturas, notas consistentes, fotos correctamente acreditadas, métricas y seguimiento de contactos. La automatización de redes es el último tramo de ese proceso, no un sustituto de la edición ni de la relación con productoras y salas.
 
 El dominio de prensa ya incorpora:
 
@@ -69,7 +69,7 @@ npm run dev
 | Variable | Uso |
 | --- | --- |
 | `MONGODB_URI` | URI obligatoria de MongoDB Atlas. |
-| `MONGODB_DB` | Base de datos, por defecto `medio_under`. |
+| `MONGODB_DB` | Base de datos, por defecto `afterstage`. |
 | `PUBLIC_BASE_URL` | Origen HTTPS público desde el que Meta descargará imágenes y Mercado Pago volverá al checkout. |
 | `MERCADOPAGO_ACCESS_TOKEN` | Token privado para crear preferencias y validar pagos desde el webhook. |
 | `MONETIZATION_PRODUCTS_JSON` | Catálogo opcional configurable en JSON; si se omite se usa el catálogo inicial de monetización. |
@@ -147,7 +147,7 @@ Configuración remota de ejemplo:
 ```json
 {
   "mcpServers": {
-    "medio-under": {
+    "afterstage": {
       "url": "https://afterstage.ar/mcp"
     }
   }

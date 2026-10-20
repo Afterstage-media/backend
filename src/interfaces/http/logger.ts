@@ -2,7 +2,7 @@ export const log = (level: "info" | "warn" | "error", message: string, metadata:
   const entry = {
     at: new Date().toISOString(),
     level,
-    service: "medio-under-social-manager",
+    service: "afterstage-social-manager",
     message,
     ...metadata,
   };

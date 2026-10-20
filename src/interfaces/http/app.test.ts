@@ -44,7 +44,7 @@ const withServer = async (
 };
 
 test("expone health, readiness y feed editorial público", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-public-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-public-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const item = await manager.create({
@@ -107,7 +107,7 @@ test("expone health, readiness y feed editorial público", async (context) => {
 });
 
 test("no publica fixtures demo en las superficies públicas", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-demo-filter-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-demo-filter-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const demo = await manager.create({
@@ -135,7 +135,7 @@ test("no publica fixtures demo en las superficies públicas", async (context) =>
 });
 
 test("combina eventos editoriales con fuentes RSS externas", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-events-feed-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-events-feed-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const press = new PressManager(new PressStore(directory));
@@ -165,7 +165,7 @@ test("combina eventos editoriales con fuentes RSS externas", async (context) => 
 });
 
 test("expone el catálogo público sin contactos privados y protege el directorio completo", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-directory-api-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-directory-api-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const directoryManager = new DirectoryManager(new DirectoryStore(directory));
@@ -211,7 +211,7 @@ test("expone el catálogo público sin contactos privados y protege el directori
 });
 
 test("aplica roles, token bearer y rate limit", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-auth-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-auth-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const previousRate = process.env.RATE_LIMIT;
   process.env.RATE_LIMIT = "20";
@@ -281,7 +281,7 @@ test("aplica roles, token bearer y rate limit", async (context) => {
 });
 
 test("rechaza payloads inválidos y protege rutas privadas de prensa", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-validation-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-validation-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const app = await createApp(
     new ContentManager(new ContentStore(directory)),
@@ -306,7 +306,7 @@ test("rechaza payloads inválidos y protege rutas privadas de prensa", async (co
 });
 
 test("permite buscar reemplazo para una cobertura cuando el fotógrafo o notero no puede asistir", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-replacement-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-replacement-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const app = await createApp(manager, new PressManager(new PressStore(directory)));
@@ -336,7 +336,7 @@ test("permite buscar reemplazo para una cobertura cuando el fotógrafo o notero 
 });
 
 test("expone y protege las métricas de Instagram", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-instagram-metrics-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-instagram-metrics-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const item = await manager.create({ title: "Post con métricas", channels: ["instagram"] });
@@ -373,7 +373,7 @@ test("expone y protege las métricas de Instagram", async (context) => {
 });
 
 test("limita Instagram por permiso aunque el usuario tenga rol editorial", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-instagram-permissions-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-instagram-permissions-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const app = await createApp(
     new ContentManager(new ContentStore(directory)),
@@ -394,7 +394,7 @@ test("limita Instagram por permiso aunque el usuario tenga rol editorial", async
 });
 
 test("permite previsualizar duplicados y rechaza guardar una coincidencia fuerte", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-app-duplicates-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-duplicates-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   await manager.create({ title: "Festival repetido", body: "Cobertura completa del festival." });
@@ -417,7 +417,7 @@ test("permite previsualizar duplicados y rechaza guardar una coincidencia fuerte
 });
 
 test("guarda una nota redactada por el agente desde el endpoint autenticado", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-ai-api-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-ai-api-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   const app = await createApp(manager, new PressManager(new PressStore(directory)));

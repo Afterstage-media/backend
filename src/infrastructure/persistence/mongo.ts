@@ -488,7 +488,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     waitQueueTimeoutMS: 30_000,
   });
   await client.connect();
-  const db = client.db(process.env.MONGODB_DB ?? "medio_under");
+  const db = client.db(process.env.MONGODB_DB ?? "afterstage");
   const content = new MongoContentStore(db.collection<MongoRecord>("contents"));
   const press = new MongoPressStore(db);
   const users = new MongoUserDirectory(db.collection<MongoRecord>("users"));

@@ -9,7 +9,7 @@ import { MetaPublisher } from "../infrastructure/integrations/meta.js";
 import { ContentStore } from "../infrastructure/persistence/content-store.js";
 
 test("la simulación no altera el estado editorial", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(
     new ContentStore(directory),
@@ -39,7 +39,7 @@ test("la simulación no altera el estado editorial", async (context) => {
 });
 
 test("reclama una publicación para evitar duplicados concurrentes", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-claim-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-claim-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const publisher = {
     publish: async () => {
@@ -61,7 +61,7 @@ test("reclama una publicación para evitar duplicados concurrentes", async (cont
 });
 
 test("rechaza crear contenidos en estados internos y programar sin fecha", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-validation-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-validation-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   await assert.rejects(() => manager.create({ title: "Interno", status: "published" }), /comenzar como idea/);
@@ -72,7 +72,7 @@ test("rechaza crear contenidos en estados internos y programar sin fecha", async
 });
 
 test("detecta duplicados exactos y notas muy similares, pero permite contenido distinto", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-duplicates-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-duplicates-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   await manager.create({
@@ -97,7 +97,7 @@ test("detecta duplicados exactos y notas muy similares, pero permite contenido d
 });
 
 test("actualiza y agrega métricas de Instagram por publicación", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-instagram-metrics-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-instagram-metrics-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const publisher = {
     getInstagramMetrics: async () => ({
@@ -124,7 +124,7 @@ test("actualiza y agrega métricas de Instagram por publicación", async (contex
 });
 
 test("guarda resultado de IA sin permitir que cambie el estado", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-ai-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-ai-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const ai = {
     generate: async () => ({
@@ -143,7 +143,7 @@ test("guarda resultado de IA sin permitir que cambie el estado", async (context)
 });
 
 test("guarda una nota redactada por el agente como borrador sin publicarla", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-ai-note-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-ai-note-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
 
@@ -160,7 +160,7 @@ test("guarda una nota redactada por el agente como borrador sin publicarla", asy
 });
 
 test("busca contexto editorial por título, cuerpo, etiquetas y fuente", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-search-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-search-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new ContentManager(new ContentStore(directory));
   await manager.create({
@@ -180,7 +180,7 @@ test("busca contexto editorial por título, cuerpo, etiquetas y fuente", async (
 });
 
 test("marca fallo permanente y no reintenta errores de permisos", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-failure-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-failure-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const publisher = {
     publish: async () => {
@@ -201,7 +201,7 @@ test("marca fallo permanente y no reintenta errores de permisos", async (context
 });
 
 test("publica canales y persiste ids remotos, slug web y container", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-success-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-success-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   let savedContainer = "";
   const publisher = {
@@ -227,7 +227,7 @@ test("publica canales y persiste ids remotos, slug web y container", async (cont
 });
 
 test("programa reintento para errores transitorios", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-retry-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-retry-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const publisher = {
     publish: async () => {

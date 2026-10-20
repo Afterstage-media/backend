@@ -7,7 +7,7 @@ import { DirectoryManager } from "./directory-manager.js";
 import { DirectoryStore } from "../infrastructure/persistence/directory-store.js";
 
 test("crea, busca, actualiza y elimina entradas del directorio con contactos", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-directory-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-directory-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new DirectoryManager(new DirectoryStore(directory));
   const band = await manager.create({
@@ -27,7 +27,7 @@ test("crea, busca, actualiza y elimina entradas del directorio con contactos", a
 });
 
 test("verifica entradas y calcula fiabilidad según el estado", async (context) => {
-  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-directory-verification-"));
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-directory-verification-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new DirectoryManager(new DirectoryStore(directory));
   const item = await manager.create({ kind: "venue", name: "Sala Verificable" });

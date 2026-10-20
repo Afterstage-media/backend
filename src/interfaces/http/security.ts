@@ -85,7 +85,7 @@ export const authenticateUser = async (
   if (!user?.passwordHash) {
     await derivePassword(
       password,
-      "medio-under-login-dummy-salt",
+      "afterstage-login-dummy-salt",
       passwordCost,
       passwordBlockSize,
       passwordParallelization,

@@ -38,7 +38,7 @@ export class PressMailer {
     const result = await this.getTransporter().sendMail({
       from,
       ...payload,
-      headers: { "X-Mailer": "Medio Under Press Desk" },
+      headers: { "X-Mailer": "afterstage Press Desk" },
     });
     return { messageId: result.messageId, dryRun: false };
   }
