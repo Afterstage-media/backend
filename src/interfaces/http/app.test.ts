@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { constants, publicEncrypt } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -10,7 +11,7 @@ import { PressManager } from "../../application/press-manager.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
-import { configureUserDirectory, issueAccessToken, type ActiveUser } from "./security.js";
+import { configureUserDirectory, getAuthEncryptionPublicKey, issueAccessToken, type ActiveUser } from "./security.js";
 
 const testUsers: Record<string, ActiveUser> = {
   admin: {
@@ -42,6 +43,71 @@ const withServer = async (
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 };
+
+test("rechaza login y registro sin HTTPS y no acepta contraseñas en claro", async (context) => {
+  const previous = { nodeEnv: process.env.NODE_ENV, trustProxy: process.env.TRUST_PROXY };
+  process.env.NODE_ENV = "production";
+  process.env.TRUST_PROXY = "true";
+  context.after(() => {
+    if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous.nodeEnv;
+    if (previous.trustProxy === undefined) delete process.env.TRUST_PROXY;
+    else process.env.TRUST_PROXY = previous.trustProxy;
+  });
+
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-secure-auth-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const app = await createApp(
+    new ContentManager(new ContentStore(directory)),
+    new PressManager(new PressStore(directory)),
+  );
+  const encryptionKey = getAuthEncryptionPublicKey();
+  const passwordCiphertext = publicEncrypt(
+    {
+      key: Buffer.from(encryptionKey.publicKey, "base64url"),
+      format: "der",
+      type: "spki",
+      padding: constants.RSA_PKCS1_OAEP_PADDING,
+      oaepHash: "sha256",
+    },
+    Buffer.from("no-se-envia"),
+  ).toString("base64url");
+  await withServer(app, async (base) => {
+    for (const route of ["login", "register"]) {
+      const insecure = await fetch(`${base}/api/auth/${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier: "redaccion",
+          email: "redaccion@example.com",
+          passwordCiphertext,
+          keyId: encryptionKey.keyId,
+        }),
+      });
+      assert.equal(insecure.status, 400);
+      assert.match((await insecure.json()).error, /HTTPS/);
+
+      const cleartext = await fetch(`${base}/api/auth/${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+        body: JSON.stringify({ identifier: "redaccion", email: "redaccion@example.com", password: "no-se-envia" }),
+      });
+      assert.equal(cleartext.status, 400);
+
+      const encrypted = await fetch(`${base}/api/auth/${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+        body: JSON.stringify({
+          identifier: "redaccion",
+          email: "redaccion@example.com",
+          passwordCiphertext,
+          keyId: encryptionKey.keyId,
+        }),
+      });
+      assert.notEqual(encrypted.status, 400);
+    }
+  });
+});
 
 test("expone health, readiness y feed editorial público", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-public-"));

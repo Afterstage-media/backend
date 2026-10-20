@@ -1,6 +1,15 @@
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
-import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import {
+  constants,
+  createHash,
+  createHmac,
+  generateKeyPairSync,
+  privateDecrypt,
+  randomBytes,
+  scrypt as scryptCallback,
+  timingSafeEqual,
+} from "node:crypto";
 import type { Request, RequestHandler, Response } from "express";
 
 export type Role = "admin" | "editor" | "press" | "directory" | "community" | "auditor" | "social";
@@ -29,6 +38,29 @@ const derivePassword = (password: string, salt: string, cost: number, blockSize:
     );
   });
 let userDirectory: UserDirectory | undefined;
+
+const authEncryptionKeys = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  publicKeyEncoding: { type: "spki", format: "der" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+});
+const authEncryptionPublicKey = authEncryptionKeys.publicKey.toString("base64url");
+const authEncryptionKeyId = createHash("sha256").update(authEncryptionPublicKey).digest("hex").slice(0, 16);
+
+export const getAuthEncryptionPublicKey = () => ({
+  keyId: authEncryptionKeyId,
+  publicKey: authEncryptionPublicKey,
+});
+
+export const decryptAuthSecret = (ciphertext: string, keyId: string): string => {
+  if (keyId !== authEncryptionKeyId) throw new Error("Clave de cifrado inválida");
+  const plaintext = privateDecrypt(
+    { key: authEncryptionKeys.privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
+    Buffer.from(ciphertext, "base64url"),
+  ).toString("utf8");
+  if (!plaintext || plaintext.length > 200) throw new Error("Credencial inválida");
+  return plaintext;
+};
 
 export const configureUserDirectory = (directory?: UserDirectory) => {
   userDirectory = directory;
@@ -292,5 +324,13 @@ export const securityHeaders: RequestHandler = (request, response, next) => {
   );
   if (process.env.NODE_ENV === "production" && request.secure)
     response.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+};
+
+export const requireSecureTransport: RequestHandler = (request, response, next) => {
+  if (process.env.NODE_ENV === "production" && !request.secure) {
+    response.status(400).json({ error: "Esta operación requiere una conexión HTTPS" });
+    return;
+  }
   next();
 };

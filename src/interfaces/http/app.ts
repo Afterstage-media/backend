@@ -14,12 +14,15 @@ import {
   auditMiddleware,
   authenticateUser,
   configureUserDirectory,
+  decryptAuthSecret,
+  getAuthEncryptionPublicKey,
   issueAccessToken,
   setAuthCookie,
   hashPassword,
   RateLimiter,
   requireRole,
   requirePermission,
+  requireSecureTransport,
   hasPermission,
   securityHeaders,
   type UserDirectory,
@@ -244,16 +247,28 @@ export const createApp = async (
     requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
     (request, response) => response.json({ user: (request as typeof request & { actor?: unknown }).actor }),
   );
+  app.get("/api/auth/public-key", (_request, response) => response.json(getAuthEncryptionPublicKey()));
   const loginRateLimit = new RateLimiter(10, 60_000).middleware;
-  app.post("/api/auth/login", loginRateLimit, async (request, response) => {
+  app.post("/api/auth/login", loginRateLimit, requireSecureTransport, async (request, response) => {
     if (!process.env.JWT_SECRET) {
       response.status(503).json({ error: "El login no está configurado" });
       return;
     }
     const input = z
-      .object({ identifier: z.string().min(1).max(180), password: z.string().min(1).max(200) })
+      .object({
+        identifier: z.string().min(1).max(180),
+        keyId: z.string().length(16),
+        passwordCiphertext: z.string().min(1).max(4096),
+      })
       .parse(request.body);
-    const user = await authenticateUser(input.identifier, input.password);
+    let password: string;
+    try {
+      password = decryptAuthSecret(input.passwordCiphertext, input.keyId);
+    } catch {
+      response.status(400).json({ error: "Credencial inválida" });
+      return;
+    }
+    const user = await authenticateUser(input.identifier, password);
     if (!user) {
       response.status(401).json({ error: "Credenciales inválidas" });
       return;
@@ -269,18 +284,30 @@ export const createApp = async (
       },
     });
   });
-  app.post("/api/auth/register", loginRateLimit, async (request, response) => {
+  app.post("/api/auth/register", loginRateLimit, requireSecureTransport, async (request, response) => {
+    const input = z
+      .object({
+        email: z.string().trim().toLowerCase().email().max(180),
+        keyId: z.string().length(16),
+        passwordCiphertext: z.string().min(1).max(4096),
+      })
+      .parse(request.body);
     if (!process.env.JWT_SECRET || !users?.createCollaborator) {
       response.status(503).json({ error: "El registro no está configurado" });
       return;
     }
-    const input = z
-      .object({
-        email: z.string().trim().toLowerCase().email().max(180),
-        password: z.string().min(12).max(200),
-      })
-      .parse(request.body);
-    const passwordHash = await hashPassword(input.password);
+    let password: string;
+    try {
+      password = decryptAuthSecret(input.passwordCiphertext, input.keyId);
+    } catch {
+      response.status(400).json({ error: "Credencial inválida" });
+      return;
+    }
+    if (password.length < 12) {
+      response.status(400).json({ error: "La contraseña debe tener al menos 12 caracteres" });
+      return;
+    }
+    const passwordHash = await hashPassword(password);
     try {
       const user = await users.createCollaborator(input.email, passwordHash);
       const accessToken = issueAccessToken(user);
