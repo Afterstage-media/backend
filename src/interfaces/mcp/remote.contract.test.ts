@@ -16,7 +16,7 @@ import { createRemoteMcpServer } from "./remote.js";
 const authInfo = (roles: string[]) => ({
   token: "test-token",
   clientId: "test-client",
-  scopes: ["notes:read", "notes:write", "agenda:read", "directory:read", "replacements:read"],
+  scopes: ["notes:read", "notes:write", "agenda:read", "agenda:write", "directory:read", "replacements:read"],
   extra: { userId: "editor-1", roles, permissions: [] },
 });
 
@@ -28,7 +28,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
   const press = new PressManager(new PressStore(directoryPath));
   const directory = new DirectoryManager(new DirectoryStore(directoryPath));
 
-  await manager.create({ title: "Primera nota", body: "Contenido verificable" });
+  const firstNote = await manager.create({ title: "Primera nota", body: "Contenido verificable" });
   await manager.create({ title: "Segunda nota", body: "Otro contenido verificable" });
   await press.createEvent({
     name: "Festival de prueba",
@@ -71,14 +71,20 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.deepEqual(
       tools.tools.map((tool) => tool.name).sort(),
       [
+        "actualizar_nota",
+        "cambiar_estado_nota",
         "crear_nota_con_ia",
+        "crear_evento",
         "buscar_directorio",
         "consultar_borradores",
+        "gestionar_acreditacion",
         "get_profile",
         "listar_agenda",
         "listar_notas",
         "listar_reemplazos",
         "modificar_nota",
+        "obtener_estadisticas",
+        "obtener_nota",
       ].sort(),
     );
     const notes = await client.callTool({ name: "listar_notas", arguments: { limit: 1 } });
@@ -98,6 +104,10 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     };
     assert.equal(draftsResult.total, 1);
     assert.equal(draftsResult.notes[0]?.title, "Primera nota");
+
+    const fullNote = await client.callTool({ name: "obtener_nota", arguments: { id: firstNote.id } });
+    assert.equal(fullNote.isError, undefined);
+    assert.equal((fullNote.structuredContent as { body: string }).body, "Contenido verificable");
 
     const directoryWithoutContacts = await client.callTool({
       name: "buscar_directorio",
@@ -150,6 +160,12 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal(modifiedResult.status, "draft");
     assert.equal(modifiedResult.title, "La banda de prueba presenta una canción nueva — actualización");
     assert.equal(modifiedResult.updatedBy, "editor-1");
+    const canonicalUpdate = await client.callTool({
+      name: "actualizar_nota",
+      arguments: { id: draftResult.id, body: "Contenido corregido por el editor." },
+    });
+    assert.equal(canonicalUpdate.isError, undefined);
+    assert.equal((canonicalUpdate.structuredContent as { body: string }).body, "Contenido corregido por el editor.");
     const replay = await client.callTool({
       name: "crear_nota_con_ia",
       arguments: {
@@ -170,6 +186,49 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const agendaResult = agenda.structuredContent as { events: unknown[]; total: number };
     assert.equal(agendaResult.total, 1);
     assert.equal(agendaResult.events.length, 1);
+
+    const createdEvent = await client.callTool({
+      name: "crear_evento",
+      arguments: {
+        name: "Fecha creada por MCP",
+        artist: "Artista de prueba",
+        city: "CABA",
+        startsAt: "2026-12-05T20:00:00.000Z",
+      },
+    });
+    assert.equal(createdEvent.isError, undefined);
+    const createdEventResult = createdEvent.structuredContent as { id: string; createdBy: string };
+    assert.equal(createdEventResult.createdBy, "editor-1");
+
+    const contact = await press.createContact({ name: "Producción MCP", email: "produccion@example.com" });
+    const accreditation = await client.callTool({
+      name: "gestionar_acreditacion",
+      arguments: {
+        action: "crear",
+        eventId: createdEventResult.id,
+        contactId: contact.id,
+        subject: "Acreditación MCP",
+      },
+    });
+    assert.equal(accreditation.isError, undefined);
+    const accreditationResult = accreditation.structuredContent as { id: string; managedBy: string };
+    assert.equal(accreditationResult.managedBy, "editor-1");
+
+    const updatedAccreditation = await client.callTool({
+      name: "gestionar_acreditacion",
+      arguments: { action: "actualizar", id: accreditationResult.id, status: "sent" },
+    });
+    assert.equal(updatedAccreditation.isError, undefined);
+
+    const stats = await client.callTool({ name: "obtener_estadisticas", arguments: {} });
+    assert.equal(stats.isError, undefined);
+    const statistics = stats.structuredContent as {
+      publications: { total: number };
+      agenda: { events: number; accreditations: number };
+    };
+    assert.equal(statistics.publications.total, 0);
+    assert.equal(statistics.agenda.events, 2);
+    assert.equal(statistics.agenda.accreditations, 1);
 
     const replacements = await client.callTool({
       name: "listar_reemplazos",
@@ -192,6 +251,12 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal(invalidDateRange.isError, true);
 
     currentAuth = authInfo(["editor"]);
+    const stateChange = await client.callTool({
+      name: "cambiar_estado_nota",
+      arguments: { id: firstNote.id, status: "review" },
+    });
+    assert.equal(stateChange.isError, undefined);
+    assert.equal((stateChange.structuredContent as { status: string }).status, "review");
     const forbiddenAgenda = await client.callTool({ name: "listar_agenda", arguments: {} });
     assert.equal(forbiddenAgenda.isError, true);
     const forbiddenReplacements = await client.callTool({ name: "listar_reemplazos", arguments: {} });

@@ -15,7 +15,14 @@ import { channels, contentStatuses, type ContentItem } from "../../domain/conten
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
 import { directoryKinds, directoryStatuses } from "../../domain/directory/types.js";
-import { eventStatuses, replacementProfiles, replacementStatuses } from "../../domain/press/types.js";
+import {
+  accreditationStatuses,
+  accreditationSchema,
+  eventSchema,
+  eventStatuses,
+  replacementProfiles,
+  replacementStatuses,
+} from "../../domain/press/types.js";
 import { McpOAuthProvider, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
 import {
   actorFromRequest,
@@ -67,6 +74,34 @@ const noteMutationOutputSchema = z
     updatedBy: z.string(),
   })
   .passthrough();
+const noteOutputSchema = z.object({ id: z.string(), status: z.enum(contentStatuses) }).passthrough();
+const noteUpdateFields = {
+  type: z.enum(["article", "post", "carousel", "reel", "story"]).optional(),
+  title: z.string().trim().min(1).max(180).optional(),
+  summary: z.string().max(600).optional(),
+  body: z.string().optional(),
+  instagramCopy: z.string().max(2200).optional(),
+  facebookCopy: z.string().optional(),
+  tags: z.array(z.string().max(80)).optional(),
+  channels: z.array(z.enum(channels)).optional(),
+  scheduledAt: z.string().datetime().nullable().optional(),
+  notes: z.string().optional(),
+  author: z.string().max(180).optional(),
+  photographer: z.string().max(180).optional(),
+  source: z.string().max(500).optional(),
+  seoTitle: z.string().max(180).optional(),
+  seoDescription: z.string().max(320).optional(),
+  canonicalUrl: z.string().url().or(z.literal("")).optional(),
+  featured: z.boolean().optional(),
+};
+const eventOutputSchema = z.object({ id: z.string(), createdBy: z.string() }).passthrough();
+const accreditationOutputSchema = z.object({ id: z.string(), managedBy: z.string() }).passthrough();
+const statisticsOutputSchema = z
+  .object({
+    publications: z.record(z.string(), z.unknown()),
+    agenda: z.record(z.string(), z.unknown()),
+  })
+  .passthrough();
 const agendaOutputSchema = z.object({
   events: z.array(z.unknown()),
   accreditations: z.array(z.unknown()),
@@ -86,7 +121,7 @@ const replacementsOutputSchema = z.object({
   limit: z.number().int().positive(),
 });
 
-const readNotesRoles = ["admin", "editor", "auditor"] as const;
+const readNotesRoles = ["admin", "editor", "press", "auditor"] as const;
 const readAgendaRoles = ["admin", "press", "auditor"] as const;
 const readDirectoryRoles = ["admin", "editor", "press", "directory", "auditor"] as const;
 const readReplacementsRoles = ["admin", "press", "auditor"] as const;
@@ -133,6 +168,22 @@ export const createRemoteMcpServer = (
   );
 
   server.registerTool(
+    "obtener_nota",
+    {
+      title: "Obtener nota",
+      description: "Recupera el contenido completo de una nota editorial específica por su ID.",
+      inputSchema: { id: z.string().trim().min(1).max(180) },
+      outputSchema: noteOutputSchema,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      return textResult(publicNote(await manager.required(id)));
+    },
+  );
+
+  server.registerTool(
     "listar_notas",
     {
       title: "Listar notas",
@@ -171,6 +222,51 @@ export const createRemoteMcpServer = (
       authFromExtra(extra, "notes:read", readNotesRoles);
       const candidates = await manager.search(query, "draft");
       return textResult({ notes: candidates.slice(0, limit).map(publicNote), total: candidates.length, limit });
+    },
+  );
+
+  server.registerTool(
+    "obtener_estadisticas",
+    {
+      title: "Obtener estadísticas",
+      description: "Resume el rendimiento de publicaciones y coberturas de la agenda editorial.",
+      inputSchema: {},
+      outputSchema: statisticsOutputSchema,
+      annotations: { readOnlyHint: true },
+      _meta: {
+        securitySchemes: [{ type: "oauth2", scopes: ["notes:read", "agenda:read"] }],
+      },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      authFromExtra(extra, "agenda:read", readAgendaRoles);
+      const [published, instagram, pressSnapshot] = await Promise.all([
+        manager.store.list("published"),
+        manager.instagramMetrics(),
+        press.snapshot(),
+      ]);
+      const coverageReach = pressSnapshot.coverages.reduce((total, coverage) => total + coverage.reach, 0);
+      return textResult({
+        publications: {
+          total: published.length,
+          website: published.filter((item) => item.channels.includes("website")).length,
+          instagramPublished: published.filter((item) => item.remoteIds.instagram).length,
+          facebook: published.filter((item) => item.remoteIds.facebook).length,
+          views: published.reduce((total, item) => total + (item.viewCount ?? 0), 0),
+          instagramMetrics: instagram,
+        },
+        agenda: {
+          events: pressSnapshot.events.length,
+          coveredEvents: pressSnapshot.events.filter((event) => event.status === "covered").length,
+          accreditations: pressSnapshot.accreditations.length,
+          acceptedAccreditations: pressSnapshot.accreditations.filter((item) =>
+            ["accepted", "attended", "coverage_sent"].includes(item.status),
+          ).length,
+          responses: pressSnapshot.accreditations.filter((item) => item.response.trim()).length,
+          coverages: pressSnapshot.coverages.length,
+          coverageReach,
+        },
+      });
     },
   );
 
@@ -224,6 +320,59 @@ export const createRemoteMcpServer = (
         total: candidates.length,
         limit,
       });
+    },
+  );
+
+  server.registerTool(
+    "crear_evento",
+    {
+      title: "Crear evento",
+      description: "Agrega un recital, fecha o encuentro a la agenda editorial de Afterstage.",
+      inputSchema: eventSchema.shape,
+      outputSchema: eventOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async (input, extra) => {
+      const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      const event = await press.createEvent(input);
+      return textResult({ ...event, createdBy: actor.userId });
+    },
+  );
+
+  server.registerTool(
+    "gestionar_acreditacion",
+    {
+      title: "Gestionar acreditación",
+      description:
+        "Registra o actualiza una solicitud de acreditación de prensa. No envía correos automáticamente; el envío queda bajo una acción separada.",
+      inputSchema: {
+        action: z.enum(["crear", "actualizar"]).default("crear"),
+        id: z.string().uuid().optional(),
+        eventId: z.string().uuid().optional(),
+        contactId: z.string().uuid().nullable().optional(),
+        subject: z.string().min(1).max(220).optional(),
+        message: z.string().max(10000).optional(),
+        status: z.enum(accreditationStatuses).optional(),
+        sentAt: z.string().datetime().nullable().optional(),
+        followUpAt: z.string().datetime().nullable().optional(),
+        response: z.string().max(4000).optional(),
+        deliverables: z.string().max(2000).optional(),
+      },
+      outputSchema: accreditationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ action, id, ...input }, extra) => {
+      const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      const patch = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+      if (action === "crear") {
+        const accreditation = await press.createAccreditation(accreditationSchema.parse(patch));
+        return textResult({ ...accreditation, managedBy: actor.userId });
+      }
+      if (!id) throw new Error("Falta el ID de la solicitud de acreditación");
+      const accreditation = await press.updateAccreditation(id, patch);
+      return textResult({ ...accreditation, managedBy: actor.userId });
     },
   );
 
@@ -365,23 +514,7 @@ export const createRemoteMcpServer = (
         "Actualiza el contenido editorial de una nota existente. Requiere el ID de la nota y solo modifica los campos enviados; no publica ni cambia estados internos del flujo.",
       inputSchema: {
         id: z.string().trim().min(1).max(180),
-        type: z.enum(["article", "post", "carousel", "reel", "story"]).optional(),
-        title: z.string().trim().min(1).max(180).optional(),
-        summary: z.string().max(600).optional(),
-        body: z.string().optional(),
-        instagramCopy: z.string().max(2200).optional(),
-        facebookCopy: z.string().optional(),
-        tags: z.array(z.string().max(80)).optional(),
-        channels: z.array(z.enum(channels)).optional(),
-        scheduledAt: z.string().datetime().nullable().optional(),
-        notes: z.string().optional(),
-        author: z.string().max(180).optional(),
-        photographer: z.string().max(180).optional(),
-        source: z.string().max(500).optional(),
-        seoTitle: z.string().max(180).optional(),
-        seoDescription: z.string().max(320).optional(),
-        canonicalUrl: z.string().url().or(z.literal("")).optional(),
-        featured: z.boolean().optional(),
+        ...noteUpdateFields,
       },
       outputSchema: noteMutationOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: true },
@@ -391,6 +524,48 @@ export const createRemoteMcpServer = (
       const actor = authFromExtra(extra, "notes:write");
       if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para modificar la nota");
       const note = await manager.update(id, patch);
+      return textResult({ ...publicNote(note), updatedBy: actor.userId });
+    },
+  );
+
+  server.registerTool(
+    "actualizar_nota",
+    {
+      title: "Actualizar nota",
+      description:
+        "Nombre canónico para actualizar una nota existente. Modifica solo los campos enviados; no publica ni cambia estados internos del flujo.",
+      inputSchema: {
+        id: z.string().trim().min(1).max(180),
+        ...noteUpdateFields,
+      },
+      outputSchema: noteMutationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ id, ...patch }, extra) => {
+      const actor = authFromExtra(extra, "notes:write");
+      if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para actualizar la nota");
+      const note = await manager.update(id, patch);
+      return textResult({ ...publicNote(note), updatedBy: actor.userId });
+    },
+  );
+
+  server.registerTool(
+    "cambiar_estado_nota",
+    {
+      title: "Cambiar estado de nota",
+      description: "Avanza una nota por el flujo editorial validando las transiciones permitidas.",
+      inputSchema: {
+        id: z.string().trim().min(1).max(180),
+        status: z.enum(["idea", "draft", "review", "approved", "scheduled"]),
+      },
+      outputSchema: noteMutationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ id, status }, extra) => {
+      const actor = authFromExtra(extra, "notes:write");
+      const note = await manager.update(id, { status });
       return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
   );

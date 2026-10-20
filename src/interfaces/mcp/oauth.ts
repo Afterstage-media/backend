@@ -16,13 +16,21 @@ import type {
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import type { Actor, Role, UserDirectory } from "../http/security.js";
 
-export const mcpScopes = ["notes:read", "notes:write", "agenda:read", "directory:read", "replacements:read"] as const;
+export const mcpScopes = [
+  "notes:read",
+  "notes:write",
+  "agenda:read",
+  "agenda:write",
+  "directory:read",
+  "replacements:read",
+] as const;
 export type McpScope = (typeof mcpScopes)[number];
 
 export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
-  "notes:read": ["admin", "editor", "auditor"],
+  "notes:read": ["admin", "editor", "press", "auditor"],
   "notes:write": ["admin", "editor"],
   "agenda:read": ["admin", "press", "auditor"],
+  "agenda:write": ["admin", "press"],
   "directory:read": ["admin", "editor", "press", "directory", "auditor"],
   "replacements:read": ["admin", "press", "auditor"],
 };
