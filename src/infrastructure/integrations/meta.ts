@@ -106,6 +106,7 @@ export class MetaPublisher {
     const needsRemoteMedia = item.channels.includes("instagram") || item.channels.includes("facebook");
     const prepared = needsRemoteMedia ? await this.media.resolveAssets(item) : item;
     if (needsRemoteMedia) await this.media.validateAssets(prepared);
+    if (!needsRemoteMedia) return {};
 
     const token = requireEnv("META_ACCESS_TOKEN");
     const result: MetaResult = {};
