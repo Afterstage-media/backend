@@ -1,6 +1,7 @@
 import {
   directoryInputSchema,
   directoryVerificationSchema,
+  directoryVoteSchema,
   socialLinksPatchSchema,
   type DirectoryItem,
 } from "../domain/directory/types.js";
@@ -43,6 +44,8 @@ export class DirectoryManager {
     delete patch.lastVerifiedAt;
     delete patch.verifiedBy;
     delete patch.verificationNotes;
+    delete patch.reliableVotes;
+    delete patch.unreliableVotes;
     if (input && typeof input === "object" && !Array.isArray(input) && "socials" in input) {
       patch.socials = socialLinksPatchSchema.parse((input as { socials: unknown }).socials) as typeof patch.socials;
     }
@@ -73,6 +76,14 @@ export class DirectoryManager {
       verifiedBy: actorId,
       verificationNotes: verification.notes,
     });
+    if (!updated) throw new Error("Entrada del directorio no encontrada");
+    return updated;
+  }
+
+  async vote(id: string, input: unknown): Promise<DirectoryItem> {
+    await this.get(id);
+    const { vote } = directoryVoteSchema.parse(input);
+    const updated = await this.store.vote(id, vote);
     if (!updated) throw new Error("Entrada del directorio no encontrada");
     return updated;
   }

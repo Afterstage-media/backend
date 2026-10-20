@@ -45,3 +45,20 @@ test("verifica entradas y calcula fiabilidad según el estado", async (context) 
   assert.equal(stale.reliabilityScore, 50);
   assert.equal(stale.verificationNotes, "");
 });
+
+test("registra votos comunitarios sin alterar la verificación editorial", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "medio-under-directory-votes-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new DirectoryManager(new DirectoryStore(directory));
+  const item = await manager.create({ kind: "media", name: "Medio Confiable" });
+
+  const voted = await manager.vote(item.id, { vote: "reliable" });
+  assert.equal(voted.reliableVotes, 1);
+  assert.equal(voted.unreliableVotes, 0);
+  assert.equal(voted.verificationStatus, "unverified");
+
+  const flagged = await manager.vote(item.id, { vote: "needs_review" });
+  assert.equal(flagged.reliableVotes, 1);
+  assert.equal(flagged.unreliableVotes, 1);
+  assert.equal(flagged.reliabilityScore, 0);
+});

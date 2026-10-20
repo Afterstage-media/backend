@@ -433,6 +433,8 @@ export class MongoDirectoryStore implements DirectoryRepository {
       lastVerifiedAt: null,
       verifiedBy: null,
       verificationNotes: "",
+      reliableVotes: 0,
+      unreliableVotes: 0,
       ...(item as unknown as Record<string, unknown>),
     } as DirectoryItem;
   }
@@ -461,6 +463,21 @@ export class MongoDirectoryStore implements DirectoryRepository {
   }
   async remove(id: string) {
     return (await this.collection.deleteOne({ _id: id })).deletedCount === 1;
+  }
+
+  async vote(id: string, vote: "reliable" | "needs_review") {
+    const result = await this.collection.findOneAndUpdate(
+      { _id: id },
+      {
+        $inc: {
+          reliableVotes: vote === "reliable" ? 1 : 0,
+          unreliableVotes: vote === "needs_review" ? 1 : 0,
+        },
+        $set: { updatedAt: new Date().toISOString() },
+      } as never,
+      { returnDocument: "after" },
+    );
+    return result ? this.normalize(this.from(result)) : undefined;
   }
 }
 

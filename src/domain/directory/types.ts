@@ -14,6 +14,9 @@ export const directoryKinds = [
 ] as const;
 export const directoryStatuses = ["active", "archived"] as const;
 export const directoryVerificationStatuses = ["unverified", "verified", "stale", "incorrect"] as const;
+export const directoryVoteSchema = z.object({
+  vote: z.enum(["reliable", "needs_review"]),
+});
 const optionalUrl = z.string().url().or(z.literal("")).default("");
 
 export const socialLinksSchema = z.object({
@@ -63,6 +66,8 @@ export const directoryInputSchema = z.object({
   lastVerifiedAt: z.string().datetime().nullable().default(null),
   verifiedBy: z.string().max(180).nullable().default(null),
   verificationNotes: z.string().max(2000).default(""),
+  reliableVotes: z.number().int().min(0).default(0),
+  unreliableVotes: z.number().int().min(0).default(0),
 });
 export const directoryPatchSchema = directoryInputSchema.partial();
 export type DirectoryInput = z.infer<typeof directoryInputSchema>;
@@ -79,3 +84,4 @@ export const directoryVerificationSchema = z.object({
   notes: z.string().max(2000).default(""),
 });
 export type DirectoryVerification = z.infer<typeof directoryVerificationSchema>;
+export type DirectoryVote = z.infer<typeof directoryVoteSchema>;
