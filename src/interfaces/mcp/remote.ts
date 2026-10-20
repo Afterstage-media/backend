@@ -282,7 +282,7 @@ export const mountRemoteMcp = (
           .status(400)
           .type("html")
           .send(
-            `<p>No se pudo autorizar la conexión.</p><p>La solicitud pudo haber expirado o ya haber sido utilizada. Volvé a iniciar la conexión desde Codex.</p>`,
+            `<p>No se pudo autorizar la conexión.</p><p>La solicitud pudo haber expirado o ya haber sido utilizada. Volvé a iniciar la conexión desde la aplicación que la solicitó.</p>`,
           );
         return;
       }
