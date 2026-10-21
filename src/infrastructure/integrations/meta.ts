@@ -194,7 +194,7 @@ export class MetaPublisher {
         `${accountId}/media`,
         {
           image_url: images[0]!,
-          ...(item.type === "story" ? { media_type: "STORIES" } : {}),
+          media_type: item.type === "story" ? "STORIES" : "IMAGE",
           caption: item.instagramCopy || item.summary || item.title,
           access_token: token,
         },
