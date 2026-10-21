@@ -815,7 +815,11 @@ export const mountRemoteMcp = (
         serviceDocumentationUrl: new URL("/politica-editorial", publicUrl),
         scopesSupported: [...mcpScopes],
       }),
-      authorization_response_iss_parameter_supported: true,
+      // The authorization flow currently guarantees `iss` on successful
+      // approvals, but not on every possible OAuth error response. Do not
+      // advertise RFC 9207 issuer identification until that guarantee is
+      // complete; ChatGPT will use the callback-specific redirect instead.
+      authorization_response_iss_parameter_supported: false,
     });
   });
   app.use(
