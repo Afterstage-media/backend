@@ -36,6 +36,7 @@ import { MongoMonetizationStore } from "./monetization-store.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
 import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
 import { createInstagramConnectionStore, type MongoInstagramConnectionStore } from "./instagram-connections.js";
+import { MongoEditorialVoiceStore } from "./editorial-voice-mongo.js";
 import { MetaPublisher } from "../integrations/meta.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
@@ -538,6 +539,7 @@ export type MongoPersistence = {
   monetization: MongoMonetizationStore;
   mcpOAuth: MongoMcpOAuthStore;
   instagramConnections: MongoInstagramConnectionStore;
+  editorialVoice: MongoEditorialVoiceStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -562,6 +564,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
   const mcpOAuth = new MongoMcpOAuthStore(db);
   const instagramConnections = createInstagramConnectionStore(db);
+  const editorialVoice = new MongoEditorialVoiceStore(db.collection("editorial_voices"));
   await Promise.all([
     content.init(),
     press.init(),
@@ -570,8 +573,9 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     monetization.init(),
     mcpOAuth.init(),
     instagramConnections.init(),
+    editorialVoice.init(),
   ]);
-  return { client, content, press, users, directory, monetization, mcpOAuth, instagramConnections };
+  return { client, content, press, users, directory, monetization, mcpOAuth, instagramConnections, editorialVoice };
 };
 
 export const createManagers = async () => {
@@ -589,5 +593,6 @@ export const createManagers = async () => {
     monetization: new MonetizationManager(persistence?.monetization),
     mcpOAuth: persistence?.mcpOAuth,
     instagramConnections: persistence?.instagramConnections,
+    editorialVoice: persistence?.editorialVoice,
   };
 };

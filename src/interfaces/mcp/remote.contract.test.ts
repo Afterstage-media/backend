@@ -25,6 +25,8 @@ const authInfo = (roles: string[]) => ({
     "directory:read",
     "directory:write",
     "replacements:read",
+    "voice:read",
+    "voice:write",
   ],
   extra: { userId: "editor-1", roles, permissions: [] },
 });
@@ -104,6 +106,8 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "actualizar_contacto",
         "obtener_estadisticas",
         "obtener_nota",
+        "obtener_voz_notero",
+        "actualizar_voz_notero",
       ].sort(),
     );
     const notes = await client.callTool({ name: "listar_notas", arguments: { limit: 1 } });
@@ -127,6 +131,29 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const fullNote = await client.callTool({ name: "obtener_nota", arguments: { id: firstNote.id } });
     assert.equal(fullNote.isError, undefined);
     assert.equal((fullNote.structuredContent as { body: string }).body, "Contenido verificable");
+
+    const voiceBefore = await client.callTool({ name: "obtener_voz_notero", arguments: {} });
+    assert.equal(voiceBefore.isError, undefined);
+    assert.equal((voiceBefore.structuredContent as { configured: boolean }).configured, false);
+
+    const voiceAfter = await client.callTool({
+      name: "actualizar_voz_notero",
+      arguments: {
+        guide: "Escribí con tono cercano, preciso y sin exageraciones.",
+        examples: ["Usá frases cortas y priorizá datos concretos."],
+      },
+    });
+    assert.equal(voiceAfter.isError, undefined);
+    const savedVoice = voiceAfter.structuredContent as {
+      configured: boolean;
+      guide: string;
+      examples: string[];
+      revision: number;
+    };
+    assert.equal(savedVoice.configured, true);
+    assert.equal(savedVoice.guide, "Escribí con tono cercano, preciso y sin exageraciones.");
+    assert.deepEqual(savedVoice.examples, ["Usá frases cortas y priorizá datos concretos."]);
+    assert.equal(savedVoice.revision, 1);
 
     const directoryWithoutContacts = await client.callTool({
       name: "buscar_directorio",
@@ -374,6 +401,8 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
         "listar_notas",
         "modificar_nota",
         "obtener_nota",
+        "obtener_voz_notero",
+        "actualizar_voz_notero",
       ].sort(),
     );
     const forbidden = await client.callTool({ name: "crear_evento", arguments: { name: "No debe existir" } });
