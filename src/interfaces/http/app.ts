@@ -39,6 +39,12 @@ import { MonetizationManager } from "../../application/monetization-manager.js";
 import { monetizationStatuses } from "../../domain/monetization/types.js";
 import { mountRemoteMcp } from "../mcp/remote.js";
 import type { McpOAuthStore } from "../mcp/oauth.js";
+import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
+import {
+  exchangeInstagramCode,
+  instagramAuthorizationUrl,
+  readInstagramOAuthState,
+} from "../../infrastructure/integrations/instagram-oauth.js";
 
 const escapeHtml = (value: string): string =>
   value.replace(
@@ -172,6 +178,7 @@ export const createApp = async (
   directory = new DirectoryManager(),
   monetization = new MonetizationManager(),
   mcpOAuthStore?: McpOAuthStore,
+  instagramConnections?: InstagramConnectionStore,
 ) => {
   const app = express();
   if (users) configureUserDirectory(users);
@@ -241,7 +248,12 @@ export const createApp = async (
       mongo: Boolean(process.env.MONGODB_URI),
       ai: Boolean(process.env.AI_API_KEY),
       smtp: Boolean(process.env.SMTP_HOST),
-      meta: Boolean(process.env.META_ACCESS_TOKEN),
+      meta: Boolean(
+        process.env.META_ACCESS_TOKEN ||
+        (process.env.META_INSTAGRAM_APP_ID &&
+          process.env.META_INSTAGRAM_APP_SECRET &&
+          process.env.META_TOKEN_ENCRYPTION_KEY),
+      ),
     }),
   );
   app.get("/api/ops/status", requireRole("admin"), (_request, response) =>
@@ -763,7 +775,76 @@ export const createApp = async (
   app.get("/press-kit", async (_request, response) =>
     response.type("html").send(renderPressKit(await press.snapshot())),
   );
+
+  app.get("/api/integrations/instagram/callback", requireSecureTransport, async (request, response) => {
+    const code = typeof request.query.code === "string" ? request.query.code : "";
+    const state = typeof request.query.state === "string" ? request.query.state : "";
+    const error = typeof request.query.error === "string" ? request.query.error : "";
+    if (error) {
+      response.status(400).send("La autorización de Instagram fue cancelada.");
+      return;
+    }
+    if (!code || !state) {
+      response.status(400).send("Faltan datos de autorización de Instagram.");
+      return;
+    }
+    try {
+      const oauthState = readInstagramOAuthState(state);
+      if (!instagramConnections) {
+        response.status(503).send("La conexión con Instagram no está configurada en Afterstage.");
+        return;
+      }
+      const connection = await exchangeInstagramCode(code);
+      await instagramConnections.upsert({ ...connection, connectedByUserId: oauthState.actorId });
+      const destination = `${(process.env.PUBLIC_BASE_URL ?? "/").replace(/\/$/, "")}/admin?instagram=connected`;
+      response.redirect(destination || "/admin?instagram=connected");
+    } catch (oauthError) {
+      log("error", "instagram_oauth_failed", {
+        error: oauthError instanceof Error ? oauthError.message : String(oauthError),
+      });
+      response.status(400).send("No se pudo conectar Instagram. Revisá la configuración de Meta e intentá nuevamente.");
+    }
+  });
+
   app.use("/api", requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"));
+  app.get("/api/integrations/instagram", requirePermission("instagram:read"), async (_request, response) => {
+    if (!instagramConnections) {
+      response.status(503).json({ error: "La conexión con Instagram no está configurada" });
+      return;
+    }
+    response.json({ connections: await instagramConnections.list() });
+  });
+  app.get(
+    "/api/integrations/instagram/connect",
+    requireRole("admin", "social"),
+    requireSecureTransport,
+    (request, response) => {
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!instagramConnections) {
+        response.status(503).json({ error: "La conexión con Instagram no está configurada" });
+        return;
+      }
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      response.redirect(instagramAuthorizationUrl(actor.id));
+    },
+  );
+  app.delete(
+    "/api/integrations/instagram/:accountId",
+    requireRole("admin", "social"),
+    requireSecureTransport,
+    async (request, response) => {
+      if (!instagramConnections) {
+        response.status(503).json({ error: "La conexión con Instagram no está configurada" });
+        return;
+      }
+      const accountId = z.string().regex(/^\d+$/).parse(request.params.accountId);
+      const removed = await instagramConnections.remove(accountId);
+      response.status(removed ? 204 : 404).end();
+    },
+  );
   app.get(
     "/api/account/ai-access",
     requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),

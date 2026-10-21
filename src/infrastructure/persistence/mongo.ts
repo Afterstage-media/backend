@@ -35,6 +35,8 @@ import type { ActiveUser, ManagedUser, ManagedUserInput, UserDirectory } from ".
 import { MongoMonetizationStore } from "./monetization-store.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
 import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
+import { createInstagramConnectionStore, type MongoInstagramConnectionStore } from "./instagram-connections.js";
+import { MetaPublisher } from "../integrations/meta.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -535,6 +537,7 @@ export type MongoPersistence = {
   directory: MongoDirectoryStore;
   monetization: MongoMonetizationStore;
   mcpOAuth: MongoMcpOAuthStore;
+  instagramConnections: MongoInstagramConnectionStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -558,6 +561,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const directory = new MongoDirectoryStore(db.collection<MongoRecord>("directory"));
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
   const mcpOAuth = new MongoMcpOAuthStore(db);
+  const instagramConnections = createInstagramConnectionStore(db);
   await Promise.all([
     content.init(),
     press.init(),
@@ -565,19 +569,25 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     directory.init(),
     monetization.init(),
     mcpOAuth.init(),
+    instagramConnections.init(),
   ]);
-  return { client, content, press, users, directory, monetization, mcpOAuth };
+  return { client, content, press, users, directory, monetization, mcpOAuth, instagramConnections };
 };
 
 export const createManagers = async () => {
   const persistence = await createMongoPersistence();
   return {
     persistence,
-    manager: new ContentManager(persistence?.content),
+    manager: new ContentManager(
+      persistence?.content,
+      undefined,
+      new MetaPublisher(undefined, persistence?.instagramConnections),
+    ),
     press: new PressManager(persistence?.press),
     users: persistence?.users,
     directory: new DirectoryManager(persistence?.directory),
     monetization: new MonetizationManager(persistence?.monetization),
     mcpOAuth: persistence?.mcpOAuth,
+    instagramConnections: persistence?.instagramConnections,
   };
 };
