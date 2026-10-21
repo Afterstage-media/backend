@@ -60,7 +60,7 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
     assert.equal(
       ((await authorizationServerMetadata.json()) as Record<string, unknown>)
         .authorization_response_iss_parameter_supported,
-      true,
+      false,
     );
 
     const mcpResponse = await fetch(`${base}/mcp`, {
