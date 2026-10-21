@@ -10,6 +10,13 @@ type MetaResult = {
 
 type GraphHost = "facebook" | "instagram";
 
+const instagramCaption = (item: ContentItem): string => {
+  if (item.instagramCopy.trim()) return item.instagramCopy;
+  const completeNote = [item.title, item.summary, item.body].filter(Boolean).join("\n\n");
+  if (completeNote.length <= 2_200) return completeNote;
+  return `${completeNote.slice(0, 2_197).trimEnd()}…`;
+};
+
 const graphUrl = (path: string, host: GraphHost = "facebook") => {
   const version = process.env.META_API_VERSION ?? "v24.0";
   const base = host === "instagram" ? "https://graph.instagram.com" : "https://graph.facebook.com";
@@ -183,7 +190,7 @@ export class MetaPublisher {
         {
           media_type: item.type === "story" ? "STORIES" : "REELS",
           video_url: videos[0].url,
-          caption: item.instagramCopy || item.summary || item.title,
+          caption: instagramCaption(item),
           access_token: token,
         },
         host,
@@ -195,7 +202,7 @@ export class MetaPublisher {
         {
           image_url: images[0]!,
           media_type: item.type === "story" ? "STORIES" : "IMAGE",
-          caption: item.instagramCopy || item.summary || item.title,
+          caption: instagramCaption(item),
           access_token: token,
         },
         host,
@@ -220,7 +227,7 @@ export class MetaPublisher {
         {
           media_type: "CAROUSEL",
           children: children.join(","),
-          caption: item.instagramCopy || item.summary || item.title,
+          caption: instagramCaption(item),
           access_token: token,
         },
         host,
