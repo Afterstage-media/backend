@@ -40,6 +40,7 @@ import { monetizationStatuses } from "../../domain/monetization/types.js";
 import { mountRemoteMcp } from "../mcp/remote.js";
 import type { McpOAuthStore } from "../mcp/oauth.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
+import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
 import {
   exchangeInstagramCode,
   instagramAuthorizationUrl,
@@ -179,6 +180,7 @@ export const createApp = async (
   monetization = new MonetizationManager(),
   mcpOAuthStore?: McpOAuthStore,
   instagramConnections?: InstagramConnectionStore,
+  editorialVoice?: EditorialVoiceRepository,
 ) => {
   const app = express();
   if (users) configureUserDirectory(users);
@@ -220,7 +222,8 @@ export const createApp = async (
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "32mb" }));
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
-    if (publicUrl) mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl));
+    if (publicUrl)
+      mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl), editorialVoice);
   }
   app.use(
     "/media",
