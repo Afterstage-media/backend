@@ -11,6 +11,7 @@ import { PressManager } from "../../application/press-manager.js";
 import { ContentStore } from "../../infrastructure/persistence/content-store.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
+import { MediaAssetStore } from "../../infrastructure/persistence/media-assets.js";
 import { createRemoteMcpServer } from "./remote.js";
 
 const authInfo = (roles: string[]) => ({
@@ -30,9 +31,16 @@ const authInfo = (roles: string[]) => ({
 
 test("expone contratos de salida como objetos y aplica filtros, límites y roles MCP", async (context) => {
   const directoryPath = await mkdtemp(path.join(os.tmpdir(), "afterstage-mcp-contract-"));
+  const mediaPath = await mkdtemp(path.join(os.tmpdir(), "afterstage-mcp-contract-media-"));
   context.after(() => rm(directoryPath, { recursive: true, force: true }));
+  context.after(() => rm(mediaPath, { recursive: true, force: true }));
 
-  const manager = new ContentManager(new ContentStore(directoryPath));
+  const manager = new ContentManager(
+    new ContentStore(directoryPath),
+    undefined,
+    undefined,
+    new MediaAssetStore(mediaPath, "https://afterstage.test"),
+  );
   const press = new PressManager(new PressStore(directoryPath));
   const directory = new DirectoryManager(new DirectoryStore(directoryPath));
 
@@ -80,6 +88,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       tools.tools.map((tool) => tool.name).sort(),
       [
         "actualizar_nota",
+        "agregar_imagenes_nota",
         "cambiar_estado_nota",
         "crear_contacto",
         "crear_nota",
@@ -174,6 +183,40 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const draftResult = draft.structuredContent as { id: string; status: string; idempotencyKey?: string };
     assert.equal(draftResult.status, "draft");
     assert.equal("idempotencyKey" in draftResult, false);
+    const imageNote = await client.callTool({
+      name: "crear_nota",
+      arguments: {
+        title: "Nota MCP con imagen adjunta",
+        body: "Contenido de prueba con imagen.",
+        images: [
+          {
+            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            mimeType: "image/png",
+          },
+        ],
+      },
+    });
+    assert.equal(imageNote.isError, undefined);
+    const imageNoteResult = imageNote.structuredContent as {
+      id: string;
+      assets: Array<{ url: string; localPath: string }>;
+    };
+    assert.equal(imageNoteResult.assets.length, 1);
+    assert.match(imageNoteResult.assets[0]!.url, /^https:\/\/afterstage\.test\/media\//);
+    const addedImage = await client.callTool({
+      name: "agregar_imagenes_nota",
+      arguments: {
+        id: imageNoteResult.id,
+        images: [
+          {
+            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            mimeType: "image/png",
+          },
+        ],
+      },
+    });
+    assert.equal(addedImage.isError, undefined);
+    assert.equal((addedImage.structuredContent as { assets: unknown[] }).assets.length, 2);
     const modified = await client.callTool({
       name: "modificar_nota",
       arguments: {
@@ -321,6 +364,7 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
       [
         "actualizar_contacto",
         "actualizar_nota",
+        "agregar_imagenes_nota",
         "buscar_directorio",
         "cambiar_estado_nota",
         "consultar_borradores",
