@@ -815,11 +815,21 @@ export const mountRemoteMcp = (
         serviceDocumentationUrl: new URL("/politica-editorial", publicUrl),
         scopesSupported: [...mcpScopes],
       }),
+      issuer: publicUrl.origin,
       // The authorization flow currently guarantees `iss` on successful
       // approvals, but not on every possible OAuth error response. Do not
       // advertise RFC 9207 issuer identification until that guarantee is
       // complete; ChatGPT will use the callback-specific redirect instead.
       authorization_response_iss_parameter_supported: false,
+    });
+  });
+  app.get("/.well-known/oauth-protected-resource/mcp", (_request, response) => {
+    response.json({
+      resource: resourceUrl.href,
+      authorization_servers: [publicUrl.origin],
+      scopes_supported: [...mcpScopes],
+      resource_name: "Afterstage",
+      resource_documentation: new URL("/politica-editorial", publicUrl).href,
     });
   });
   app.use(
@@ -838,7 +848,7 @@ export const mountRemoteMcp = (
   app.get("/.well-known/oauth-protected-resource", (_request, response) => {
     response.json({
       resource: resourceUrl.href,
-      authorization_servers: [publicUrl.href],
+      authorization_servers: [publicUrl.origin],
       scopes_supported: [...mcpScopes],
       resource_name: "Afterstage",
       resource_documentation: new URL("/politica-editorial", publicUrl).href,

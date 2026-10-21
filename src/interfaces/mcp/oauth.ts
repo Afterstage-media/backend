@@ -494,7 +494,7 @@ export class McpOAuthProvider implements OAuthServerProvider {
     const redirect = new URL(approved.redirectUri);
     redirect.searchParams.set("code", code);
     if (approved.state) redirect.searchParams.set("state", approved.state);
-    redirect.searchParams.set("iss", this.options.issuerUrl.href);
+    redirect.searchParams.set("iss", this.options.issuerUrl.origin);
     if (redirect.hostname === "127.0.0.1" || redirect.hostname === "localhost") {
       response
         .type("html")
