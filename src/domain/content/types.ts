@@ -14,6 +14,14 @@ export const contentStatuses = [
 export const contentTypes = ["article", "post", "carousel", "reel", "story"] as const;
 export const channels = ["website", "instagram", "facebook"] as const;
 
+export const imageInputSchema = z.object({
+  base64: z.string().trim().min(1).max(30_000_000),
+  mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]).optional(),
+  filename: z.string().trim().max(255).optional(),
+  altText: z.string().max(500).default(""),
+  credit: z.string().max(500).default(""),
+});
+
 export const assetSchema = z.object({
   id: z.string(),
   url: z
@@ -62,12 +70,14 @@ export const agentNoteInputSchema = z.object({
   channels: z.array(z.enum(channels)).default(["website", "instagram"]),
   tags: z.array(z.string().max(80)).default([]),
   source: z.string().max(500).default(""),
+  images: z.array(imageInputSchema).max(10).default([]),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
 });
 
 export type ContentInput = z.infer<typeof contentInputSchema>;
 export type ContentPatch = z.infer<typeof contentPatchSchema>;
 export type AgentNoteInput = z.infer<typeof agentNoteInputSchema>;
+export type ImageInput = z.infer<typeof imageInputSchema>;
 export type ContentStatus = (typeof contentStatuses)[number];
 export type Channel = (typeof channels)[number];
 

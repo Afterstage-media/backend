@@ -89,6 +89,7 @@ npm run dev
 | `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
 | `JWT_ACCESS_TTL_SECONDS` | Duración del access token emitido por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
 | `MCP_PUBLIC_URL` | URL pública HTTPS del recurso MCP y su Authorization Server; por defecto usa `PUBLIC_BASE_URL`. |
+| `JSON_BODY_LIMIT` | Límite del cuerpo JSON para notas con imágenes base64; por defecto `32mb`. |
 | `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
 | `EVENTS_RSS_URLS` | URLs RSS/Atom públicas separadas por coma. Sus eventos se combinan con la agenda editorial, con caché de 5 minutos. |
 
@@ -157,6 +158,7 @@ Configuración remota de ejemplo:
 Herramientas remotas:
 
 - `crear_nota` — recibe una nota ya redactada por el agente y la guarda como borrador. El MCP no llama a una IA, no publica, no programa ni envía comunicaciones. Acepta `idempotencyKey` para repetir una solicitud sin crear otro borrador.
+- `agregar_imagenes_nota` — adjunta imágenes a una nota existente sin publicarla. Cada imagen se envía como `base64` o data URL y puede incluir `mimeType`, `filename`, `altText` y `credit`. Se aceptan hasta 10 imágenes por operación; cada archivo decodificado puede pesar hasta 20 MB. El binario se guarda en `MEDIA_ROOT` y MongoDB conserva únicamente sus metadatos y URL pública.
 - `listar_notas` — busca notas del workspace conectado y devuelve `{ notes, total, limit }` para mantener un contrato MCP de objeto, incluso sin resultados.
 - `listar_agenda` — consulta eventos, acreditaciones y coberturas con filtros de texto, estado y fecha.
 - `buscar_directorio` — busca entradas del directorio; los emails, teléfonos y contactos sólo se incluyen cuando se solicita y el rol está autorizado.
@@ -172,6 +174,8 @@ Ejemplo de instrucción para un agente:
 ```text
 Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte y usá `crear_nota` para guardar el título, la bajada y el cuerpo como borrador. No la publiques ni la programes.
 ```
+
+Para incluir una imagen en `crear_nota`, el agente puede enviar una entrada como `{ "base64": "data:image/jpeg;base64,...", "altText": "...", "credit": "..." }`. También puede usar base64 sin prefijo y declarar `mimeType`. El servidor valida el MIME contra la firma real del archivo antes de escribirlo.
 
 ## API principal
 

@@ -14,7 +14,7 @@ import {
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
-import { channels, contentStatuses, type ContentItem } from "../../domain/content/types.js";
+import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
 import {
@@ -149,6 +149,7 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   actualizar_contacto: ["directory:write"],
   listar_reemplazos: ["replacements:read"],
   crear_nota: ["notes:write"],
+  agregar_imagenes_nota: ["notes:write"],
   modificar_nota: ["notes:write"],
   actualizar_nota: ["notes:write"],
   cambiar_estado_nota: ["notes:write"],
@@ -572,6 +573,11 @@ export const createRemoteMcpServer = (
         channels: z.array(z.enum(channels)).default(["website", "instagram"]),
         tags: z.array(z.string().max(80)).default([]),
         source: z.string().max(500).default(""),
+        images: z
+          .array(imageInputSchema)
+          .max(10)
+          .default([])
+          .describe("Imágenes para guardar junto con la nota. Enviá cada archivo como base64 o data URL."),
         idempotencyKey: z
           .string()
           .trim()
@@ -594,6 +600,27 @@ export const createRemoteMcpServer = (
       const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const note = await manager.createAgentNote(input, actor.userId);
       return textResult({ ...publicNote(note), createdBy: actor.userId });
+    },
+  );
+
+  registerTool(
+    "agregar_imagenes_nota",
+    {
+      title: "Agregar imágenes a una nota",
+      description:
+        "Adjunta una o más imágenes en base64 a una nota existente. Las imágenes se guardan en el almacenamiento de medios de Afterstage y se agregan al borrador sin publicar automáticamente.",
+      inputSchema: {
+        id: z.string().trim().min(1).max(180),
+        images: z.array(imageInputSchema).min(1).max(10),
+      },
+      outputSchema: noteMutationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ id, images }, extra) => {
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
+      const note = await manager.addImages(id, images);
+      return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
   );
 

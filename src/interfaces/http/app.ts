@@ -217,7 +217,7 @@ export const createApp = async (
   app.use(new RateLimiter().middleware);
   app.use(auditMiddleware);
   app.use(cors({ origin: origins.length ? origins : false }));
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "32mb" }));
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
     if (publicUrl) mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl));

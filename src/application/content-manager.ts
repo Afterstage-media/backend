@@ -4,6 +4,7 @@ import { ContentStore, type ContentRepository } from "../infrastructure/persiste
 import {
   contentInputSchema,
   agentNoteInputSchema,
+  imageInputSchema,
   type AgentNoteInput,
   type ContentInput,
   type ContentItem,
@@ -13,6 +14,7 @@ import {
 import { parsePatch } from "../domain/parse-patch.js";
 import { assertTransition } from "../domain/content/workflow.js";
 import { detectDuplicates, type DuplicateMatch } from "../domain/content/duplicate-detector.js";
+import { MediaAssetStore } from "../infrastructure/persistence/media-assets.js";
 
 export class DuplicateContentError extends Error {
   constructor(readonly matches: DuplicateMatch[]) {
@@ -26,6 +28,7 @@ export class ContentManager {
     readonly store: ContentRepository = new ContentStore(),
     private readonly ai = new AiWriter(),
     private readonly publisher = new MetaPublisher(),
+    private readonly media = new MediaAssetStore(),
   ) {}
 
   async create(input: unknown): Promise<ContentItem> {
@@ -51,19 +54,47 @@ export class ContentManager {
   async createAgentNote(input: unknown, idempotencyScope = "global"): Promise<ContentItem> {
     const parsed = agentNoteInputSchema.parse(input) as AgentNoteInput;
     const idempotencyKey = parsed.idempotencyKey ? `${idempotencyScope}:${parsed.idempotencyKey}` : undefined;
-    return this.create({
-      type: "article",
-      title: parsed.title,
-      summary: parsed.summary,
-      body: parsed.body,
-      instagramCopy: parsed.instagramCopy,
-      facebookCopy: parsed.facebookCopy,
-      status: "draft",
-      channels: parsed.channels,
-      tags: parsed.tags,
-      source: parsed.source,
-      idempotencyKey,
-    });
+    if (idempotencyKey) {
+      const existing = await this.store.findByIdempotencyKey(idempotencyKey);
+      if (existing) return existing;
+    }
+    const assets = await this.media.createImages(parsed.images);
+    try {
+      const created = await this.create({
+        type: "article",
+        title: parsed.title,
+        summary: parsed.summary,
+        body: parsed.body,
+        instagramCopy: parsed.instagramCopy,
+        facebookCopy: parsed.facebookCopy,
+        status: "draft",
+        channels: parsed.channels,
+        tags: parsed.tags,
+        source: parsed.source,
+        assets,
+        idempotencyKey,
+      });
+      const storedAssetIds = new Set(created.assets.map((asset) => asset.id));
+      if (assets.some((asset) => !storedAssetIds.has(asset.id))) await this.media.remove(assets);
+      return created;
+    } catch (error) {
+      await this.media.remove(assets);
+      throw error;
+    }
+  }
+
+  async addImages(id: string, input: unknown): Promise<ContentItem> {
+    const current = await this.required(id);
+    const images = imageInputSchema.array().min(1).max(10).parse(input);
+    const assets = await this.media.createImages(images);
+    try {
+      const updated = await this.store.update(id, { assets: [...current.assets, ...assets] });
+      if (!updated) throw new Error("Contenido no encontrado");
+      return updated;
+    } catch (error) {
+      await this.media.remove(assets);
+      throw error;
+    }
   }
 
   /** Compatibility name for existing HTTP callers; generation happens in the agent, not here. */
