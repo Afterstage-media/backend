@@ -4,8 +4,9 @@ import { log } from "../interfaces/http/logger.js";
 import { schedulerRun } from "../application/ops.js";
 
 const port = Number(process.env.PORT ?? 8787);
-const { persistence, manager, press, users, directory, monetization, mcpOAuth } = await createManagers();
-const app = await createApp(manager, press, undefined, users, directory, monetization, mcpOAuth);
+const { persistence, manager, press, users, directory, monetization, mcpOAuth, instagramConnections } =
+  await createManagers();
+const app = await createApp(manager, press, undefined, users, directory, monetization, mcpOAuth, instagramConnections);
 
 app.listen(port, () => log("info", "server_started", { port }));
 
