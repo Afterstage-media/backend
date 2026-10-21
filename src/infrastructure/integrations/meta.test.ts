@@ -78,6 +78,49 @@ test("exige medio para Instagram y credenciales para publicación real", async (
   else process.env.META_ACCESS_TOKEN = oldToken;
 });
 
+test("publica título, bajada y cuerpo completo cuando no hay copy manual", async () => {
+  const previous = {
+    token: process.env.META_ACCESS_TOKEN,
+    account: process.env.META_INSTAGRAM_ACCOUNT_ID,
+    fetch: globalThis.fetch,
+  };
+  process.env.META_ACCESS_TOKEN = "token";
+  process.env.META_INSTAGRAM_ACCOUNT_ID = "account";
+  let caption = "";
+  globalThis.fetch = (async (input, init) => {
+    if (init?.method === "POST" && String(input).endsWith("/account/media")) {
+      caption = new URLSearchParams(String(init.body)).get("caption") ?? "";
+      return new Response(JSON.stringify({ id: "container" }), { status: 200 });
+    }
+    if (init?.method === "POST" && String(input).endsWith("/account/media_publish")) {
+      return new Response(JSON.stringify({ id: "published" }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ status_code: "FINISHED" }), { status: 200 });
+  }) as typeof fetch;
+  const publisher = new MetaPublisher({
+    resolveAssets: async (value: any) => value,
+    validateAssets: async () => undefined,
+  } as any);
+  try {
+    await publisher.publish(
+      item({
+        instagramCopy: "",
+        title: "Título completo",
+        summary: "La bajada completa",
+        body: "El cuerpo completo de la nota",
+      }),
+      false,
+    );
+    assert.equal(caption, "Título completo\n\nLa bajada completa\n\nEl cuerpo completo de la nota");
+  } finally {
+    globalThis.fetch = previous.fetch;
+    if (previous.token === undefined) delete process.env.META_ACCESS_TOKEN;
+    else process.env.META_ACCESS_TOKEN = previous.token;
+    if (previous.account === undefined) delete process.env.META_INSTAGRAM_ACCOUNT_ID;
+    else process.env.META_INSTAGRAM_ACCOUNT_ID = previous.account;
+  }
+});
+
 test("publica video de Facebook mediante file_url", async () => {
   const oldToken = process.env.META_ACCESS_TOKEN;
   process.env.META_ACCESS_TOKEN = "token";

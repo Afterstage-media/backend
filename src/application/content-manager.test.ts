@@ -61,6 +61,36 @@ test("reclama una publicación para evitar duplicados concurrentes", async (cont
   assert.equal(results.filter((result) => result.status === "rejected").length, 1);
 });
 
+test("recomparte una nota publicada solamente en Instagram", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-repost-instagram-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const calls: any[] = [];
+  const publisher = {
+    publish: async (item: any) => {
+      calls.push(item);
+      return { instagram: "reposted-media", containerId: "reposted-container" };
+    },
+  } as unknown as MetaPublisher;
+  const manager = new ContentManager(new ContentStore(directory), {} as AiWriter, publisher);
+  const created = await manager.create({
+    title: "Una nota publicada",
+    summary: "Una bajada",
+    body: "El cuerpo completo",
+    channels: ["website", "instagram"],
+    assets: [{ id: "foto", url: "https://example.com/foto.jpg", altText: "", credit: "" }],
+  });
+  await manager.update(created.id, { status: "review" });
+  await manager.update(created.id, { status: "approved" });
+  await manager.publish(created.id);
+
+  const result = await manager.repostInstagram(created.id);
+  assert.equal(result.status, "published");
+  assert.equal(result.remoteIds.instagram, "reposted-media");
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].channels, ["instagram"]);
+  assert.equal(calls[1].containerId, null);
+});
+
 test("rechaza crear contenidos en estados internos y programar sin fecha", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-validation-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

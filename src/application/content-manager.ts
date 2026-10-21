@@ -235,6 +235,38 @@ export class ContentManager {
     }
   }
 
+  async repostInstagram(id: string, dryRun = false): Promise<ContentItem> {
+    const current = await this.required(id);
+    if (current.status !== "published") throw new Error("Solo se puede recompartir una nota publicada");
+    if (!current.channels.includes("instagram")) throw new Error("La nota no tiene Instagram entre sus canales");
+    if (!current.assets.length) throw new Error("Instagram requiere al menos una imagen con URL pública");
+
+    const instagramItem: ContentItem = {
+      ...current,
+      channels: ["instagram"],
+      containerId: null,
+      remoteIds: {},
+      publishedMediaId: null,
+    };
+    if (dryRun) {
+      await this.publisher.publish(instagramItem, true);
+      return current;
+    }
+
+    const remote = await this.publisher.publish(instagramItem, false);
+    const updated = await this.store.update(id, {
+      remoteIds: {
+        ...current.remoteIds,
+        ...(remote.instagram ? { instagram: remote.instagram } : {}),
+      },
+      containerId: remote.containerId ?? null,
+      publishedMediaId: remote.instagram ?? current.publishedMediaId,
+      lastError: null,
+    });
+    if (!updated) throw new Error("Contenido no encontrado luego de recompartir en Instagram");
+    return updated;
+  }
+
   async refreshInstagramMetrics(id: string, dryRun = false): Promise<ContentItem> {
     const current = await this.required(id);
     const mediaId = current.remoteIds.instagram;

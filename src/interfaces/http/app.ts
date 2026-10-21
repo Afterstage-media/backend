@@ -969,6 +969,20 @@ export const createApp = async (
     }
     response.json(await manager.publish(String(request.params.id), input.dryRun));
   });
+  app.post("/api/content/:id/repost/instagram", requireRole("admin", "editor", "social"), async (request, response) => {
+    const input = z.object({ dryRun: z.boolean().default(false) }).parse(request.body ?? {});
+    const current = await manager.required(String(request.params.id));
+    const actor = (request as typeof request & { actor?: import("./security.js").Actor }).actor;
+    if (!actor || !hasPermission(actor, "instagram:publish")) {
+      response.status(403).json({ error: "Se requiere el permiso instagram:publish" });
+      return;
+    }
+    if (!current.channels.includes("instagram")) {
+      response.status(400).json({ error: "La nota no tiene Instagram entre sus canales" });
+      return;
+    }
+    response.json(await manager.repostInstagram(String(request.params.id), input.dryRun));
+  });
   app.post("/api/assets", requireRole("admin", "editor"), upload.array("images", 10), async (request, response) => {
     const uploaded = request.files as Express.Multer.File[];
     if (!uploaded?.length) throw new Error("Se requiere al menos un archivo");
