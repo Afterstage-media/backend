@@ -32,7 +32,7 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
   try {
     const metadataResponse = await fetch(`${base}/.well-known/oauth-protected-resource/mcp`);
     assert.equal(metadataResponse.status, 200);
-    assert.deepEqual((await metadataResponse.json()) as Record<string, unknown>, {
+    const metadata = {
       resource: "https://afterstage.test/mcp",
       authorization_servers: ["https://afterstage.test/"],
       scopes_supported: [
@@ -48,7 +48,12 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
       ],
       resource_name: "Afterstage",
       resource_documentation: "https://afterstage.test/politica-editorial",
-    });
+    };
+    assert.deepEqual((await metadataResponse.json()) as Record<string, unknown>, metadata);
+
+    const originMetadataResponse = await fetch(`${base}/.well-known/oauth-protected-resource`);
+    assert.equal(originMetadataResponse.status, 200);
+    assert.deepEqual((await originMetadataResponse.json()) as Record<string, unknown>, metadata);
 
     const authorizationServerMetadata = await fetch(`${base}/.well-known/oauth-authorization-server`);
     assert.equal(authorizationServerMetadata.status, 200);

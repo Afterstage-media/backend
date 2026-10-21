@@ -829,6 +829,17 @@ export const mountRemoteMcp = (
       scopesSupported: [...mcpScopes],
     }),
   );
+  // Some MCP clients probe the origin-level RFC 9728 path before trying the
+  // resource-specific `/mcp` path. Keep both discovery URLs equivalent.
+  app.get("/.well-known/oauth-protected-resource", (_request, response) => {
+    response.json({
+      resource: resourceUrl.href,
+      authorization_servers: [publicUrl.href],
+      scopes_supported: [...mcpScopes],
+      resource_name: "Afterstage",
+      resource_documentation: new URL("/politica-editorial", publicUrl).href,
+    });
+  });
   app.get("/oauth/login", (request, response) => {
     const returnTo = oauthReturnPath(request.query.return_to, publicUrl);
     if (!returnTo) {
