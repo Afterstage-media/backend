@@ -129,6 +129,7 @@ test("expone health, readiness y feed editorial público", async (context) => {
     const health = await fetch(`${base}/health`);
     assert.equal(health.status, 200);
     assert.equal((await health.json()).status, "ok");
+    assert.equal(health.headers.get("Permissions-Policy"), "camera=(), microphone=(), geolocation=(self)");
     const ready = await fetch(`${base}/ready`);
     assert.equal(ready.status, 200);
     assert.equal((await ready.json()).mongo, false);
