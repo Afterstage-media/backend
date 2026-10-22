@@ -7,7 +7,7 @@ const transitions: Record<ContentStatus, ContentStatus[]> = {
   approved: ["draft", "scheduled", "publishing"],
   scheduled: ["approved", "publishing"],
   publishing: ["published", "failed"],
-  published: [],
+  published: ["draft"],
   failed: ["draft", "approved", "publishing"],
 };
 

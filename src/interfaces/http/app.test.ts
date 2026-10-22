@@ -152,7 +152,7 @@ test("expone health, readiness y feed editorial público", async (context) => {
     assert.equal(article.status, 200);
     assert.match(articleHtml, /data-share=/);
     assert.match(articleHtml, /data-share-instagram/);
-    assert.match(articleHtml, /src="\/share\.js"/);
+    assert.match(articleHtml, /src="\/share-ux-final-20261021\.js"/);
     const submission = await fetch(`${base}/api/public/submissions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${testTokens.admin}` },
