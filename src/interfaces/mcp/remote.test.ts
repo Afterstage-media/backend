@@ -1,10 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ContentManager } from "../../application/content-manager.js";
 import { PressManager } from "../../application/press-manager.js";
 import { hashPassword, issueAccessToken, type ActiveUser, type UserDirectory } from "../http/security.js";
 import { createApp } from "../http/app.js";
 import { MemoryMcpOAuthStore } from "./oauth.js";
+import { createRemoteMcpServer } from "./remote.js";
+
+test("expone la herramienta de creación con un nombre que describe la operación", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createRemoteMcpServer(new ContentManager());
+  const client = new Client({ name: "afterstage-test-client", version: "1.0.0" });
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    const result = await client.listTools();
+    const toolNames = result.tools.map((tool) => tool.name).sort();
+    assert.ok(toolNames.includes("crear_nota"));
+    assert.ok(toolNames.includes("get_profile"));
+    assert.ok(toolNames.includes("listar_notas"));
+    const createTool = result.tools.find((tool) => tool.name === "crear_nota");
+    assert.equal(createTool?.title, "Guardar nota redactada por el agente");
+    assert.match(createTool?.description ?? "", /Guarda como borrador/);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
 
 test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async () => {
   const previousPublicUrl = process.env.PUBLIC_BASE_URL;

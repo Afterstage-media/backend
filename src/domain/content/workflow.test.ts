@@ -8,7 +8,7 @@ test("el flujo exige revisión antes de aprobar", () => {
   assert.equal(canTransition("review", "approved"), true);
 });
 
-test("un contenido publicado queda cerrado", () => {
-  assert.equal(canTransition("published", "draft"), false);
+test("un contenido publicado puede retirarse y volver a borrador", () => {
+  assert.equal(canTransition("published", "draft"), true);
   assert.equal(canTransition("published", "published"), true);
 });

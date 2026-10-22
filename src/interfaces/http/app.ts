@@ -60,6 +60,17 @@ const escapeHtml = (value: string): string =>
       })[character]!,
   );
 const cdata = (value: string): string => value.replace(/]]>/g, "]]]]><![CDATA[>");
+const eventScheduleEnd = (event: {
+  startsAt?: string | null;
+  endsAt?: string | null;
+  dates?: string[];
+}): number | undefined => {
+  const dates = [...(event.dates ?? []), event.startsAt, event.endsAt]
+    .filter((date): date is string => Boolean(date))
+    .map((date) => Date.parse(date))
+    .filter(Number.isFinite);
+  return dates.length ? Math.max(...dates) : undefined;
+};
 const validSignature = async (file: Express.Multer.File): Promise<boolean> => {
   const bytes = await readFile(file.path);
   if (file.mimetype === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -160,7 +171,7 @@ const renderArticle = (item: Awaited<ReturnType<ContentManager["required"]>>): s
   const canonical = item.canonicalUrl || `${process.env.PUBLIC_BASE_URL ?? ""}/notas/${encodeURIComponent(item.slug)}`;
   const author = item.author ? `<span>Por ${escapeHtml(item.author)}</span>` : "";
   const credit = item.photographer ? `<span>Foto: ${escapeHtml(item.photographer)}</span>` : "";
-  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(item.seoTitle || item.title)} — afterstage</title><meta name="description" content="${escapeHtml(description)}"><link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:title" content="${escapeHtml(item.title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:type" content="article">${item.assets[0] ? `<meta property="og:image" content="${escapeHtml(item.assets[0].url)}">` : ""}<style>body{background:#f4f0e8;color:#171717;font:18px/1.65 system-ui;margin:0}.wrap{margin:auto;max-width:820px;padding:40px 22px 90px}a{color:inherit}h1{font-size:clamp(48px,8vw,92px);letter-spacing:-.07em;line-height:.92;margin:60px 0 25px}.summary{color:#57534e;font-size:22px}.hero-image{border:2px solid #171717;display:block;margin:45px 0;max-height:620px;object-fit:cover;width:100%}.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}.body{max-width:680px}.tags{border-top:1px solid #aaa;margin-top:50px;padding-top:18px}.credit{font-size:14px;color:#57534e}.share-bar{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.share-button{background:#171717;border:1px solid #171717;color:#fff;cursor:pointer;padding:12px 17px;font:inherit}.share-button.secondary{background:transparent;color:#171717}</style></head><body><main class="wrap"><a href="/">← afterstage</a><article><h1>${escapeHtml(item.title)}</h1><p class="summary">${escapeHtml(item.summary)}</p><p class="meta">${author}${credit}<span>Publicado ${new Date(item.publishedAt ?? item.updatedAt).toLocaleDateString("es-AR")}</span></p><div class="share-bar"><button class="share-button" data-share="${escapeHtml(item.title)}" data-share-url="${escapeHtml(canonical)}">Compartir desde el celular</button><button class="share-button secondary" data-share-instagram data-share-url="${escapeHtml(canonical)}">Compartir en Instagram</button></div>${image}<div class="body">${paragraphs}</div><p class="tags">${item.tags.map((tag) => `#${escapeHtml(tag)}`).join(" · ")}</p><p class="credit">Fuente: ${escapeHtml(item.source || "afterstage")}</p></article></main><script src="/share.js"></script></body></html>`;
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(item.seoTitle || item.title)} — afterstage</title><meta name="description" content="${escapeHtml(description)}"><link rel="canonical" href="${escapeHtml(canonical)}"><meta property="og:title" content="${escapeHtml(item.title)}"><meta property="og:description" content="${escapeHtml(description)}"><meta property="og:type" content="article">${item.assets[0] ? `<meta property="og:image" content="${escapeHtml(item.assets[0].url)}">` : ""}<style>body{background:#f4f0e8;color:#171717;font:18px/1.65 system-ui;margin:0}.wrap{margin:auto;max-width:820px;padding:40px 22px 90px}a{color:inherit}h1{font-size:clamp(48px,8vw,92px);letter-spacing:-.07em;line-height:.92;margin:60px 0 25px}.summary{color:#57534e;font-size:22px}.hero-image{border:2px solid #171717;display:block;margin:45px 0;max-height:620px;object-fit:cover;width:100%}.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}.body{max-width:680px}.tags{border-top:1px solid #aaa;margin-top:50px;padding-top:18px}.credit{font-size:14px;color:#57534e}.share-bar{align-items:center;display:flex;gap:12px;flex-wrap:wrap;margin:28px 0}.share-button{background:#171717;border:1px solid #171717;color:#fff;cursor:pointer;padding:10px 14px;font:inherit;font-size:15px;line-height:1.25}.share-button.secondary{background:transparent;border:0;color:#57534e;font-size:14px;padding:8px 0;text-decoration:underline;text-underline-offset:3px}.share-button.secondary:hover,.share-button.secondary:focus-visible{color:#171717}@media(max-width:600px){.share-bar{align-items:flex-start;display:grid;gap:6px}.share-button{justify-self:start}.share-button.secondary{font-size:13px}}</style></head><body><main class="wrap"><a href="/">← afterstage</a><article><h1>${escapeHtml(item.title)}</h1><p class="summary">${escapeHtml(item.summary)}</p><p class="meta">${author}${credit}<span>Publicado ${new Date(item.publishedAt ?? item.updatedAt).toLocaleDateString("es-AR")}</span></p><div class="share-bar"><button class="share-button" type="button" data-share="${escapeHtml(item.title)}" data-share-url="${escapeHtml(canonical)}">Compartir nota ↗</button><button class="share-button secondary" type="button" data-share-instagram data-share-url="${escapeHtml(canonical)}">Copiar copy para Instagram</button></div>${image}<div class="body">${paragraphs}</div><p class="tags">${item.tags.map((tag) => `#${escapeHtml(tag)}`).join(" · ")}</p><p class="credit">Fuente: ${escapeHtml(item.source || "afterstage")}</p></article></main><script src="/share-ux-final-20261021.js"></script></body></html>`;
 };
 
 const renderPressKit = (snapshot: Awaited<ReturnType<PressManager["snapshot"]>>): string => {
@@ -625,11 +636,12 @@ export const createApp = async (
   );
   app.get("/api/public/events", async (_request, response) => {
     const snapshot = await press.snapshot();
+    const now = Date.now();
     const local = snapshot.events.filter(
       (event) =>
         !isDemoEvent(event) &&
         event.status === "planned" &&
-        (!event.startsAt || Date.parse(event.startsAt) >= Date.now()),
+        (eventScheduleEnd(event) === undefined || eventScheduleEnd(event)! >= now),
     );
     const external = (await eventsFeed.list()).filter((event) => !isDemoEvent(event));
     const location = distanceQuery.safeParse({

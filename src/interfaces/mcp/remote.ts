@@ -441,9 +441,35 @@ export const createRemoteMcpServer = (
               .includes(normalized)
           )
             return false;
-          const startsAtMs = event.startsAt ? Date.parse(event.startsAt) : undefined;
-          if (fromMs !== undefined && (startsAtMs === undefined || startsAtMs < fromMs)) return false;
-          if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
+          const occurrenceDates = [...(event.dates ?? []), event.startsAt]
+            .filter((date): date is string => Boolean(date))
+            .map((date) => Date.parse(date))
+            .filter(Number.isFinite);
+          const startsAtMs = occurrenceDates.length ? Math.min(...occurrenceDates) : undefined;
+          const endsAtMs = event.endsAt
+            ? Math.max(
+                Date.parse(event.endsAt),
+                ...(occurrenceDates.length ? occurrenceDates : [Date.parse(event.endsAt)]),
+              )
+            : occurrenceDates.length
+              ? Math.max(...occurrenceDates)
+              : undefined;
+          const isDiscreteSchedule = (event.dates ?? []).length > 1;
+          if (isDiscreteSchedule) {
+            if (
+              fromMs !== undefined &&
+              toMs !== undefined &&
+              !occurrenceDates.some((date) => date >= fromMs && date <= toMs)
+            )
+              return false;
+            if (fromMs !== undefined && toMs === undefined && !occurrenceDates.some((date) => date >= fromMs))
+              return false;
+            if (toMs !== undefined && fromMs === undefined && !occurrenceDates.some((date) => date <= toMs))
+              return false;
+          } else {
+            if (fromMs !== undefined && (endsAtMs === undefined || endsAtMs < fromMs)) return false;
+            if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
+          }
           return true;
         })
         .sort((left, right) => (left.startsAt ?? "9999").localeCompare(right.startsAt ?? "9999"));

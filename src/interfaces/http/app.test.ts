@@ -130,6 +130,7 @@ test("expone health, readiness y feed editorial público", async (context) => {
     const health = await fetch(`${base}/health`);
     assert.equal(health.status, 200);
     assert.equal((await health.json()).status, "ok");
+    assert.equal(health.headers.get("Permissions-Policy"), "camera=(), microphone=(), geolocation=(self)");
     const ready = await fetch(`${base}/ready`);
     assert.equal(ready.status, 200);
     assert.equal((await ready.json()).mongo, false);
@@ -153,7 +154,10 @@ test("expone health, readiness y feed editorial público", async (context) => {
     assert.equal(article.status, 200);
     assert.match(articleHtml, /data-share=/);
     assert.match(articleHtml, /data-share-instagram/);
-    assert.match(articleHtml, /src="\/share\.js"/);
+    assert.match(articleHtml, /Compartir nota/);
+    assert.match(articleHtml, /Copiar copy para Instagram/);
+    assert.match(articleHtml, /share-bar\{align-items:center/);
+    assert.match(articleHtml, /src="\/share-ux-final-20261021\.js"/);
     const submission = await fetch(`${base}/api/public/submissions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${testTokens.admin}` },
@@ -198,6 +202,39 @@ test("no publica fixtures demo en las superficies públicas", async (context) =>
     assert.deepEqual(await (await fetch(`${base}/api/public/events`)).json(), []);
     assert.equal((await fetch(`${base}/api/public/content/${demo.slug}`)).status, 404);
     assert.equal((await fetch(`${base}/notas/${demo.slug}`)).status, 404);
+  });
+});
+
+test("mantiene visible un evento editorial mientras dura su rango de fechas", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-multiday-public-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new ContentManager(new ContentStore(directory));
+  const press = new PressManager(new PressStore(directory));
+  const event = await press.createEvent({
+    name: "Festival en curso",
+    startsAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  });
+  const recurringEvent = await press.createEvent({
+    name: "Ciclo con fechas sueltas",
+    dates: [
+      new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+    ],
+  });
+  const app = await createApp(manager, press, { list: async () => [] });
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/public/events`);
+    assert.equal(response.status, 200);
+    const events = await response.json();
+    assert.equal(
+      events.some((item: { id: string }) => item.id === event.id),
+      true,
+    );
+    assert.equal(
+      events.some((item: { id: string }) => item.id === recurringEvent.id),
+      true,
+    );
   });
 });
 
