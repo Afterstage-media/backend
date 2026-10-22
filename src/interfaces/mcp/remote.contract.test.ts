@@ -40,6 +40,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
   await manager.create({ title: "Segunda nota", body: "Otro contenido verificable" });
   await press.createEvent({
     name: "Festival de prueba",
+    genres: ["Rock"],
     artist: "Banda de prueba",
     city: "CABA",
     startsAt: "2026-11-01T20:00:00.000Z",
@@ -226,6 +227,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         name: "Fecha creada por MCP",
         artist: "Artista de prueba",
         city: "CABA",
+        genres: ["Rock"],
         startsAt: "2026-12-05T20:00:00.000Z",
       },
     });

@@ -6,6 +6,17 @@ import os from "node:os";
 import { PressManager } from "./press-manager.js";
 import { PressStore } from "../infrastructure/persistence/press-store.js";
 
+test("exige al menos un género al crear un evento", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-event-genre-required-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new PressManager(new PressStore(directory));
+
+  await assert.rejects(() => manager.createEvent({ name: "Evento sin género" }));
+  await assert.rejects(() => manager.createEvent({ name: "Evento sin género", genres: [] }));
+  const event = await manager.createEvent({ name: "Evento con género", genres: ["Rock"] });
+  assert.deepEqual(event.genres, ["Rock"]);
+});
+
 test("gestiona evento, contacto, acreditación y cobertura vinculados", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-press-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
@@ -56,6 +67,7 @@ test("guarda eventos con fechas independientes y valida su rango opcional", asyn
   const manager = new PressManager(new PressStore(directory));
   const event = await manager.createEvent({
     name: "Festival de varios días",
+    genres: ["Rock"],
     dates: [
       "2099-01-01T18:00:00.000Z",
       "2099-01-02T18:00:00.000Z",
@@ -76,6 +88,7 @@ test("guarda eventos con fechas independientes y valida su rango opcional", asyn
   assert.equal(event.endsAt, null);
   const rangeEvent = await manager.createEvent({
     name: "Rango continuo",
+    genres: ["Rock"],
     startsAt: "2099-02-01T18:00:00.000Z",
     endsAt: "2099-02-03T23:00:00.000Z",
   });
@@ -84,6 +97,7 @@ test("guarda eventos con fechas independientes y valida su rango opcional", asyn
     () =>
       manager.createEvent({
         name: "Rango inválido",
+        genres: ["Rock"],
         startsAt: "2099-01-03T18:00:00.000Z",
         endsAt: "2099-01-01T23:00:00.000Z",
       }),
@@ -113,6 +127,7 @@ test("genera el correo con identidad, reply-to y plantilla del medio", async (co
   });
   const event = await manager.createEvent({
     name: "Recital",
+    genres: ["Rock"],
     artist: "Las Perlas",
     venue: "Sala X",
   });
@@ -146,7 +161,7 @@ test("envía follow-ups vencidos y limpia su fecha para no duplicarlos", async (
     name: "Prensa",
     email: "prensa@evento.test",
   });
-  const event = await manager.createEvent({ name: "Fecha" });
+  const event = await manager.createEvent({ name: "Fecha", genres: ["Rock"] });
   const request = await manager.createAccreditation({
     eventId: event.id,
     contactId: contact.id,
@@ -176,7 +191,7 @@ test("impide referencias inexistentes y borrado de contactos vinculados", async 
     /Evento no encontrado/,
   );
   const contact = await manager.createContact({ name: "Contacto" });
-  const event = await manager.createEvent({ name: "Evento" });
+  const event = await manager.createEvent({ name: "Evento", genres: ["Rock"] });
   await manager.createAccreditation({
     eventId: event.id,
     contactId: contact.id,
@@ -198,6 +213,7 @@ test("gestiona búsqueda de reemplazo, postulación, asignación y aviso al medi
   await manager.updateMediaKit({ name: "afterstage", email: "redaccion@medio.test" });
   const event = await manager.createEvent({
     name: "Festival Under",
+    genres: ["Rock"],
     city: "Córdoba",
     latitude: -31.4,
     longitude: -64.2,
@@ -253,7 +269,7 @@ test("el modo simulación no cambia el estado ni requiere SMTP", async (context)
     name: "Prensa",
     email: "prensa@evento.test",
   });
-  const event = await manager.createEvent({ name: "Evento" });
+  const event = await manager.createEvent({ name: "Evento", genres: ["Rock"] });
   const request = await manager.createAccreditation({
     eventId: event.id,
     contactId: contact.id,
@@ -268,7 +284,7 @@ test("valida estados de acreditación y enlaces de coberturas", async (context) 
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-press-validation-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new PressManager(new PressStore(directory));
-  const event = await manager.createEvent({ name: "Evento" });
+  const event = await manager.createEvent({ name: "Evento", genres: ["Rock"] });
   const request = await manager.createAccreditation({
     eventId: event.id,
     subject: "Solicitud",
