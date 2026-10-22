@@ -610,6 +610,7 @@ export const createApp = async (
   );
   app.get("/api/public/events", async (_request, response) => {
     const snapshot = await press.snapshot();
+    const now = Date.now();
     const local = snapshot.events.filter(
       (event) =>
         !isDemoEvent(event) &&

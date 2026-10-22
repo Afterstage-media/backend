@@ -312,7 +312,8 @@ export const createRemoteMcpServer = (
           )
             return false;
           const startsAtMs = event.startsAt ? Date.parse(event.startsAt) : undefined;
-          if (fromMs !== undefined && (startsAtMs === undefined || startsAtMs < fromMs)) return false;
+          const endsAtMs = event.endsAt ? Date.parse(event.endsAt) : startsAtMs;
+          if (fromMs !== undefined && (endsAtMs === undefined || endsAtMs < fromMs)) return false;
           if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
           return true;
         })

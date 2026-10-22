@@ -203,6 +203,24 @@ test("no publica fixtures demo en las superficies públicas", async (context) =>
   });
 });
 
+test("mantiene visible un evento editorial mientras dura su rango de fechas", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-multiday-public-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new ContentManager(new ContentStore(directory));
+  const press = new PressManager(new PressStore(directory));
+  const event = await press.createEvent({
+    name: "Festival en curso",
+    startsAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  });
+  const app = await createApp(manager, press, { list: async () => [] });
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/public/events`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json())[0]?.id, event.id);
+  });
+});
+
 test("combina eventos editoriales con fuentes RSS externas", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-events-feed-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

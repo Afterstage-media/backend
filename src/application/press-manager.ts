@@ -18,6 +18,12 @@ import { parsePatch } from "../domain/parse-patch.js";
 
 const publicStatuses = new Set(["draft", "sent", "followup", "accepted", "rejected", "attended", "coverage_sent"]);
 
+const validateEventDates = (startsAt: string | null, endsAt: string | null) => {
+  if (endsAt && !startsAt) throw new Error("La fecha de fin necesita una fecha de inicio");
+  if (startsAt && endsAt && Date.parse(endsAt) < Date.parse(startsAt))
+    throw new Error("La fecha de fin no puede ser anterior al inicio");
+};
+
 export class PressManager {
   constructor(
     readonly store: PressRepository = new PressStore(),
@@ -28,12 +34,18 @@ export class PressManager {
     return this.store.snapshot();
   }
   async createEvent(input: unknown) {
-    return this.store.createEvent(eventSchema.parse(input));
+    const event = eventSchema.parse(input);
+    validateEventDates(event.startsAt, event.endsAt);
+    return this.store.createEvent(event);
   }
   async updateEvent(id: string, input: unknown) {
     const current = (await this.store.snapshot()).events.find((item) => item.id === id);
     if (!current) throw new Error("Evento no encontrado");
-    return this.store.updateEvent(id, parsePatch(eventSchema, input));
+    const patch = parsePatch(eventSchema, input);
+    const startsAt = patch.startsAt === undefined ? current.startsAt : patch.startsAt;
+    const endsAt = patch.endsAt === undefined ? current.endsAt : patch.endsAt;
+    validateEventDates(startsAt, endsAt);
+    return this.store.updateEvent(id, patch);
   }
   async createContact(input: unknown) {
     return this.store.createContact(contactSchema.parse(input));
