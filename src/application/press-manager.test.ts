@@ -19,6 +19,8 @@ test("gestiona evento, contacto, acreditación y cobertura vinculados", async (c
     name: "Noche Under",
     artist: "Banda Test",
     venue: "Sala Under",
+    genres: ["Rock", "Metal"],
+    tags: ["under", "gratis"],
     organizerContactId: contact.id,
   });
   const request = await manager.createAccreditation({
@@ -40,6 +42,8 @@ test("gestiona evento, contacto, acreditación y cobertura vinculados", async (c
 
   const snapshot = await manager.snapshot();
   assert.equal(snapshot.events[0]?.status, "covered");
+  assert.deepEqual(snapshot.events[0]?.genres, ["Rock", "Metal"]);
+  assert.deepEqual(snapshot.events[0]?.tags, ["under", "gratis"]);
   assert.equal(snapshot.accreditations[0]?.status, "sent");
   assert.equal(snapshot.coverages[0]?.id, coverage.id);
   assert.equal(snapshot.mediaKit.mission, "Periodismo musical independiente");
