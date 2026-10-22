@@ -41,6 +41,10 @@ export const eventSchema = z.object({
   notes: z.string().max(4000).default(""),
 });
 
+export const createEventSchema = eventSchema.extend({
+  genres: z.array(z.string().trim().min(1).max(60)).min(1).max(20),
+});
+
 export const contactSchema = z.object({
   name: z.string().min(1).max(180),
   organization: z.string().max(180).default(""),

@@ -4,6 +4,7 @@ import {
   accreditationSchema,
   contactSchema,
   coverageSchema,
+  createEventSchema,
   eventSchema,
   mediaKitSchema,
   type AccreditationInput,
@@ -51,7 +52,7 @@ export class PressManager {
     return this.store.snapshot();
   }
   async createEvent(input: unknown) {
-    const event = normalizeEventDates(eventSchema.parse(input));
+    const event = normalizeEventDates(createEventSchema.parse(input));
     validateEventDates(event.startsAt, event.endsAt, event.dates);
     return this.store.createEvent(event);
   }

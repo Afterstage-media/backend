@@ -193,6 +193,7 @@ test("no publica fixtures demo en las superficies públicas", async (context) =>
   const press = new PressManager(new PressStore(directory));
   await press.createEvent({
     name: "DEMO — Evento de prueba",
+    genres: ["Rock"],
     notes: "Evento ficticio generado para pruebas.",
     startsAt: "2099-01-01T21:00:00.000Z",
   });
@@ -212,11 +213,13 @@ test("mantiene visible un evento editorial mientras dura su rango de fechas", as
   const press = new PressManager(new PressStore(directory));
   const event = await press.createEvent({
     name: "Festival en curso",
+    genres: ["Rock"],
     startsAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   });
   const recurringEvent = await press.createEvent({
     name: "Ciclo con fechas sueltas",
+    genres: ["Rock"],
     dates: [
       new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
