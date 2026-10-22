@@ -29,6 +29,8 @@ export const eventSchema = z.object({
   venue: z.string().max(180).default(""),
   address: z.string().max(240).default(""),
   city: z.string().max(120).default(""),
+  genres: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+  tags: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
   ...locationFields,
   startsAt: optionalDate,
   endsAt: optionalDate,
