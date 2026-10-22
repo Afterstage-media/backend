@@ -324,8 +324,22 @@ export const createRemoteMcpServer = (
             : occurrenceDates.length
               ? Math.max(...occurrenceDates)
               : undefined;
-          if (fromMs !== undefined && (endsAtMs === undefined || endsAtMs < fromMs)) return false;
-          if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
+          const isDiscreteSchedule = (event.dates ?? []).length > 1;
+          if (isDiscreteSchedule) {
+            if (
+              fromMs !== undefined &&
+              toMs !== undefined &&
+              !occurrenceDates.some((date) => date >= fromMs && date <= toMs)
+            )
+              return false;
+            if (fromMs !== undefined && toMs === undefined && !occurrenceDates.some((date) => date >= fromMs))
+              return false;
+            if (toMs !== undefined && fromMs === undefined && !occurrenceDates.some((date) => date <= toMs))
+              return false;
+          } else {
+            if (fromMs !== undefined && (endsAtMs === undefined || endsAtMs < fromMs)) return false;
+            if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
+          }
           return true;
         })
         .sort((left, right) => (left.startsAt ?? "9999").localeCompare(right.startsAt ?? "9999"));
