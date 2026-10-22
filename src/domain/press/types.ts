@@ -32,6 +32,7 @@ export const eventSchema = z.object({
   ...locationFields,
   startsAt: optionalDate,
   endsAt: optionalDate,
+  dates: z.array(z.string().datetime()).max(100).default([]),
   status: z.enum(eventStatuses).default("planned"),
   organizerContactId: z.string().uuid().nullable().default(null),
   url: optionalUrl.default(""),

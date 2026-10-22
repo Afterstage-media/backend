@@ -213,11 +213,26 @@ test("mantiene visible un evento editorial mientras dura su rango de fechas", as
     startsAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   });
+  const recurringEvent = await press.createEvent({
+    name: "Ciclo con fechas sueltas",
+    dates: [
+      new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+    ],
+  });
   const app = await createApp(manager, press, { list: async () => [] });
   await withServer(app, async (base) => {
     const response = await fetch(`${base}/api/public/events`);
     assert.equal(response.status, 200);
-    assert.equal((await response.json())[0]?.id, event.id);
+    const events = await response.json();
+    assert.equal(
+      events.some((item: { id: string }) => item.id === event.id),
+      true,
+    );
+    assert.equal(
+      events.some((item: { id: string }) => item.id === recurringEvent.id),
+      true,
+    );
   });
 });
 

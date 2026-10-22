@@ -53,6 +53,17 @@ const escapeHtml = (value: string): string =>
       })[character]!,
   );
 const cdata = (value: string): string => value.replace(/]]>/g, "]]]]><![CDATA[>");
+const eventScheduleEnd = (event: {
+  startsAt?: string | null;
+  endsAt?: string | null;
+  dates?: string[];
+}): number | undefined => {
+  const dates = [...(event.dates ?? []), event.startsAt, event.endsAt]
+    .filter((date): date is string => Boolean(date))
+    .map((date) => Date.parse(date))
+    .filter(Number.isFinite);
+  return dates.length ? Math.max(...dates) : undefined;
+};
 const validSignature = async (file: Express.Multer.File): Promise<boolean> => {
   const bytes = await readFile(file.path);
   if (file.mimetype === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -615,7 +626,7 @@ export const createApp = async (
       (event) =>
         !isDemoEvent(event) &&
         event.status === "planned" &&
-        (!event.startsAt || Date.parse(event.startsAt) >= Date.now()),
+        (eventScheduleEnd(event) === undefined || eventScheduleEnd(event)! >= now),
     );
     const external = (await eventsFeed.list()).filter((event) => !isDemoEvent(event));
     const location = distanceQuery.safeParse({

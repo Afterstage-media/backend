@@ -311,8 +311,19 @@ export const createRemoteMcpServer = (
               .includes(normalized)
           )
             return false;
-          const startsAtMs = event.startsAt ? Date.parse(event.startsAt) : undefined;
-          const endsAtMs = event.endsAt ? Date.parse(event.endsAt) : startsAtMs;
+          const occurrenceDates = [...(event.dates ?? []), event.startsAt]
+            .filter((date): date is string => Boolean(date))
+            .map((date) => Date.parse(date))
+            .filter(Number.isFinite);
+          const startsAtMs = occurrenceDates.length ? Math.min(...occurrenceDates) : undefined;
+          const endsAtMs = event.endsAt
+            ? Math.max(
+                Date.parse(event.endsAt),
+                ...(occurrenceDates.length ? occurrenceDates : [Date.parse(event.endsAt)]),
+              )
+            : occurrenceDates.length
+              ? Math.max(...occurrenceDates)
+              : undefined;
           if (fromMs !== undefined && (endsAtMs === undefined || endsAtMs < fromMs)) return false;
           if (toMs !== undefined && (startsAtMs === undefined || startsAtMs > toMs)) return false;
           return true;

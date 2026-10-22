@@ -18,9 +18,26 @@ import { parsePatch } from "../domain/parse-patch.js";
 
 const publicStatuses = new Set(["draft", "sent", "followup", "accepted", "rejected", "attended", "coverage_sent"]);
 
-const validateEventDates = (startsAt: string | null, endsAt: string | null) => {
-  if (endsAt && !startsAt) throw new Error("La fecha de fin necesita una fecha de inicio");
-  if (startsAt && endsAt && Date.parse(endsAt) < Date.parse(startsAt))
+const normalizeEventDates = <T extends { startsAt?: string | null; dates?: string[] }>(event: T): T => {
+  const dates = [...(event.dates ?? []), event.startsAt]
+    .filter((date): date is string => Boolean(date))
+    .filter((date, index, values) => values.indexOf(date) === index)
+    .sort((left, right) => Date.parse(left) - Date.parse(right));
+  return {
+    ...event,
+    dates,
+    startsAt: dates[0] ?? null,
+  };
+};
+
+const validateEventDates = (startsAt: string | null, endsAt: string | null, dates: string[] = []) => {
+  const occurrenceDates = [...dates, startsAt]
+    .filter((date): date is string => Boolean(date))
+    .map((date) => Date.parse(date))
+    .filter(Number.isFinite);
+  const lastOccurrence = occurrenceDates.length ? Math.max(...occurrenceDates) : null;
+  if (endsAt && lastOccurrence === null) throw new Error("La fecha de fin necesita al menos una fecha del evento");
+  if (endsAt && lastOccurrence !== null && Date.parse(endsAt) < lastOccurrence)
     throw new Error("La fecha de fin no puede ser anterior al inicio");
 };
 
@@ -34,18 +51,21 @@ export class PressManager {
     return this.store.snapshot();
   }
   async createEvent(input: unknown) {
-    const event = eventSchema.parse(input);
-    validateEventDates(event.startsAt, event.endsAt);
+    const event = normalizeEventDates(eventSchema.parse(input));
+    validateEventDates(event.startsAt, event.endsAt, event.dates);
     return this.store.createEvent(event);
   }
   async updateEvent(id: string, input: unknown) {
     const current = (await this.store.snapshot()).events.find((item) => item.id === id);
     if (!current) throw new Error("Evento no encontrado");
     const patch = parsePatch(eventSchema, input);
-    const startsAt = patch.startsAt === undefined ? current.startsAt : patch.startsAt;
-    const endsAt = patch.endsAt === undefined ? current.endsAt : patch.endsAt;
-    validateEventDates(startsAt, endsAt);
-    return this.store.updateEvent(id, patch);
+    const merged = normalizeEventDates({ ...current, ...patch });
+    validateEventDates(merged.startsAt ?? null, merged.endsAt ?? null, merged.dates);
+    const scheduleChanged = patch.dates !== undefined || patch.startsAt !== undefined;
+    return this.store.updateEvent(
+      id,
+      scheduleChanged ? { ...patch, dates: merged.dates, startsAt: merged.startsAt } : patch,
+    );
   }
   async createContact(input: unknown) {
     return this.store.createContact(contactSchema.parse(input));

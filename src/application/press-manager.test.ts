@@ -46,17 +46,36 @@ test("gestiona evento, contacto, acreditación y cobertura vinculados", async (c
   await assert.rejects(() => manager.remove("events", event.id), /vinculadas/);
 });
 
-test("guarda eventos de varios días y valida su rango", async (context) => {
+test("guarda eventos con fechas independientes y valida su rango opcional", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-multiday-event-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const manager = new PressManager(new PressStore(directory));
   const event = await manager.createEvent({
     name: "Festival de varios días",
-    startsAt: "2099-01-01T18:00:00.000Z",
-    endsAt: "2099-01-03T23:00:00.000Z",
+    dates: [
+      "2099-01-01T18:00:00.000Z",
+      "2099-01-02T18:00:00.000Z",
+      "2099-01-05T18:00:00.000Z",
+      "2099-01-06T18:00:00.000Z",
+      "2099-01-20T18:00:00.000Z",
+    ],
   });
 
-  assert.equal(event.endsAt, "2099-01-03T23:00:00.000Z");
+  assert.deepEqual(event.dates, [
+    "2099-01-01T18:00:00.000Z",
+    "2099-01-02T18:00:00.000Z",
+    "2099-01-05T18:00:00.000Z",
+    "2099-01-06T18:00:00.000Z",
+    "2099-01-20T18:00:00.000Z",
+  ]);
+  assert.equal(event.startsAt, "2099-01-01T18:00:00.000Z");
+  assert.equal(event.endsAt, null);
+  const rangeEvent = await manager.createEvent({
+    name: "Rango continuo",
+    startsAt: "2099-02-01T18:00:00.000Z",
+    endsAt: "2099-02-03T23:00:00.000Z",
+  });
+  assert.equal(rangeEvent.endsAt, "2099-02-03T23:00:00.000Z");
   await assert.rejects(
     () =>
       manager.createEvent({
