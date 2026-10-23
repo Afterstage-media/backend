@@ -111,6 +111,20 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "actualizar_voz_notero",
       ].sort(),
     );
+    const createEventTool = tools.tools.find((tool) => tool.name === "crear_evento");
+    const requiredEventFields = ((createEventTool?.inputSchema as { required?: string[] } | undefined)?.required ?? [])
+      .slice()
+      .sort();
+    assert.deepEqual(requiredEventFields, [
+      "artist",
+      "city",
+      "genres",
+      "latitude",
+      "longitude",
+      "name",
+      "startsAt",
+      "venue",
+    ]);
     const notes = await client.callTool({ name: "listar_notas", arguments: { limit: 1 } });
     assert.equal(notes.isError, undefined);
     const noteResult = notes.structuredContent as { notes: unknown[]; total: number; limit: number };
@@ -296,7 +310,10 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       arguments: {
         name: "Fecha creada por MCP",
         artist: "Artista de prueba",
+        venue: "Sala MCP",
         city: "CABA",
+        latitude: -34.6037,
+        longitude: -58.3816,
         genres: ["Rock"],
         startsAt: "2026-12-05T20:00:00.000Z",
       },
@@ -304,6 +321,12 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal(createdEvent.isError, undefined);
     const createdEventResult = createdEvent.structuredContent as { id: string; createdBy: string };
     assert.equal(createdEventResult.createdBy, "editor-1");
+
+    const incompleteEvent = await client.callTool({
+      name: "crear_evento",
+      arguments: { name: "Evento incompleto", genres: ["Rock"] },
+    });
+    assert.equal(incompleteEvent.isError, true);
 
     const contact = await press.createContact({ name: "Producción MCP", email: "produccion@example.com" });
     const accreditation = await client.callTool({

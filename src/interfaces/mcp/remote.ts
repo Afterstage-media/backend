@@ -31,7 +31,7 @@ import {
 import {
   accreditationStatuses,
   accreditationSchema,
-  createEventSchema,
+  mcpCreateEventSchema,
   eventStatuses,
   replacementProfiles,
   replacementStatuses,
@@ -489,8 +489,9 @@ export const createRemoteMcpServer = (
     "crear_evento",
     {
       title: "Crear evento",
-      description: "Agrega un recital, fecha o encuentro a la agenda editorial de Afterstage.",
-      inputSchema: createEventSchema.shape,
+      description:
+        "Agrega un recital, fecha o encuentro a la agenda editorial de Afterstage. Artista, fecha, venue, ciudad, coordenadas y género son obligatorios.",
+      inputSchema: mcpCreateEventSchema.shape,
       outputSchema: eventOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: false },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
