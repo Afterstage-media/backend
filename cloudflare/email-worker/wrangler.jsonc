@@ -4,5 +4,7 @@
   "compatibility_date": "2026-10-25",
   "vars": {
     "AFTERSTAGE_API_URL": "https://afterstage.ar",
+    "FORWARD_DESTINATIONS": "{\"comunicaciones@afterstage.ar\":[\"fede.markoo@gmail.com\",\"carlajmagnol@gmail.com\",\"nfalconaro5@gmail.com\"],\"prensa@afterstage.ar\":[\"fede.markoo@gmail.com\",\"carlajmagnol@gmail.com\"],\"federico.markowicz@afterstage.ar\":[\"fede.markoo@gmail.com\"],\"carla.magnol@afterstage.ar\":[\"carlajmagnol@gmail.com\"],\"nahuel.falconaro@afterstage.ar\":[\"nfalconaro5@gmail.com\"]}",
+    "DEFAULT_FORWARD_DESTINATIONS": "[\"fede.markoo@gmail.com\"]",
   },
 }

@@ -3,6 +3,8 @@ import PostalMime from "postal-mime";
 interface Env {
   AFTERSTAGE_API_URL: string;
   INBOUND_EMAIL_WEBHOOK_SECRET: string;
+  FORWARD_DESTINATIONS?: string;
+  DEFAULT_FORWARD_DESTINATIONS?: string;
 }
 
 type Address = { address?: string; name?: string } | string;
@@ -15,6 +17,31 @@ const asAddress = (value: Address | undefined | null): string => {
 
 const asAddresses = (value: Address | Address[] | undefined | null): string[] =>
   (Array.isArray(value) ? value : value ? [value] : []).map(asAddress).filter(Boolean);
+
+const parseDestinations = (value: string | undefined): string[] => {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.includes("@"))
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const destinationsFor = (recipient: string, env: Env): string[] => {
+  let mapping: Record<string, unknown> = {};
+  try {
+    mapping = JSON.parse(env.FORWARD_DESTINATIONS ?? "{}") as Record<string, unknown>;
+  } catch {
+    mapping = {};
+  }
+  const configured = mapping[recipient.trim().toLowerCase()];
+  return Array.isArray(configured)
+    ? configured.filter((item): item is string => typeof item === "string" && item.includes("@"))
+    : parseDestinations(env.DEFAULT_FORWARD_DESTINATIONS);
+};
 
 const sign = async (body: string, secret: string): Promise<string> => {
   const key = await crypto.subtle.importKey(
@@ -58,6 +85,17 @@ export default {
       message.setReject(`Afterstage rejected the message (${response.status})`);
       throw new Error(`Afterstage inbound endpoint returned ${response.status}`);
     }
+    const destinations = destinationsFor(message.to, env);
+    if (!destinations.length) {
+      message.setReject("No forwarding destination configured for this address");
+      throw new Error(`No forwarding destination configured for ${message.to}`);
+    }
+    try {
+      await Promise.all(destinations.map((destination) => message.forward(destination)));
+    } catch (error) {
+      message.setReject("Afterstage could not forward the message");
+      throw error;
+    }
   },
 };
 
@@ -67,4 +105,5 @@ interface ForwardableEmailMessage {
   headers: Headers;
   raw: ReadableStream;
   setReject(reason: string): void;
+  forward(destination: string): Promise<void>;
 }
