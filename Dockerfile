@@ -13,6 +13,9 @@ FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production PORT=8787 DATA_DIR=/app/data UPLOAD_DIR=/app/uploads MEDIA_ROOT=/app/media
 WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --create-home app
+# npm is only needed in the build stage. Removing it from the runtime image
+# eliminates its unrelated CLI dependency tree and reduces the attack surface.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/dist ./dist
 COPY --chown=app:app package.json ./
