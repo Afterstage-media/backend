@@ -842,7 +842,7 @@ export const mountRemoteMcp = (
         serviceDocumentationUrl: new URL("/politica-editorial", publicUrl),
         scopesSupported: [...mcpScopes],
       }),
-      issuer: publicUrl.origin,
+      issuer: publicUrl.href,
       // The authorization flow currently guarantees `iss` on successful
       // approvals, but not on every possible OAuth error response. Do not
       // advertise RFC 9207 issuer identification until that guarantee is
@@ -853,7 +853,7 @@ export const mountRemoteMcp = (
   app.get("/.well-known/oauth-protected-resource/mcp", (_request, response) => {
     response.json({
       resource: resourceUrl.href,
-      authorization_servers: [publicUrl.origin],
+      authorization_servers: [publicUrl.href],
       scopes_supported: [...mcpScopes],
       resource_name: "Afterstage",
       resource_documentation: new URL("/politica-editorial", publicUrl).href,
@@ -875,7 +875,7 @@ export const mountRemoteMcp = (
   app.get("/.well-known/oauth-protected-resource", (_request, response) => {
     response.json({
       resource: resourceUrl.href,
-      authorization_servers: [publicUrl.origin],
+      authorization_servers: [publicUrl.href],
       scopes_supported: [...mcpScopes],
       resource_name: "Afterstage",
       resource_documentation: new URL("/politica-editorial", publicUrl).href,
