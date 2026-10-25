@@ -25,10 +25,20 @@ export class MailboxManager {
     if (!thread) throw new Error("Conversación no encontrada");
     const latestInbound = [...thread.messages].reverse().find((message) => message.direction === "inbound");
     if (!latestInbound) throw new Error("La conversación no tiene un destinatario para responder");
+    const domain = (process.env.INBOUND_EMAIL_DOMAIN ?? "afterstage.ar").toLowerCase();
+    const replyFrom =
+      [latestInbound.deliveredTo, ...latestInbound.to]
+        .filter((address): address is string => Boolean(address))
+        .map((address) => address.trim().toLowerCase())
+        .find((address) => address.endsWith(`@${domain}`)) ??
+      process.env.SMTP_FROM ??
+      process.env.SMTP_USER ??
+      `afterstage@${domain}`;
     const subject = /^re:/i.test(latestInbound.subject)
       ? latestInbound.subject
       : `Re: ${latestInbound.subject || "(sin asunto)"}`;
     const mail: Mail = {
+      from: replyFrom,
       to: latestInbound.from,
       subject,
       text: input.text,
@@ -42,7 +52,7 @@ export class MailboxManager {
     return this.repository.addOutbound({
       threadId: id,
       messageId: result.messageId,
-      from: process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "afterstage@afterstage.ar",
+      from: replyFrom,
       to: [latestInbound.from],
       subject,
       text: input.text,

@@ -70,6 +70,7 @@ test("acepta el webhook firmado y rechaza firmas inválidas", async (context) =>
   const body = JSON.stringify({
     messageId: "<incoming@example.com>",
     from: "persona@example.com",
+    deliveredTo: "prensa@afterstage.ar",
     to: ["prensa@afterstage.ar"],
     subject: "Hola",
     text: "Mensaje recibido",

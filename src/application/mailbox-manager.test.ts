@@ -9,6 +9,7 @@ const inbound: MailMessage = {
   threadId: "thread-1",
   direction: "inbound",
   messageId: "<incoming@example.com>",
+  deliveredTo: "prensa@afterstage.ar",
   references: [],
   from: "persona@example.com",
   to: ["prensa@afterstage.ar"],
@@ -65,7 +66,8 @@ class FakeMailbox implements MailRepository {
 test("responde al último remitente y persiste la salida", async () => {
   const repository = new FakeMailbox();
   const mailer = {
-    send: async (mail: { to: string; subject: string; text: string }) => {
+    send: async (mail: { from?: string; to: string; subject: string; text: string }) => {
+      assert.equal(mail.from, "prensa@afterstage.ar");
       assert.equal(mail.to, "persona@example.com");
       assert.equal(mail.subject, "Re: Solicitud de prensa");
       assert.equal(mail.text, "Sí, coordinemos.");
@@ -80,7 +82,7 @@ test("responde al último remitente y persiste la salida", async () => {
   assert.deepEqual(repository.sent[0], {
     threadId: "thread-1",
     messageId: "<outgoing@afterstage.ar>",
-    from: "afterstage@afterstage.ar",
+    from: "prensa@afterstage.ar",
     to: ["persona@example.com"],
     subject: "Re: Solicitud de prensa",
     text: "Sí, coordinemos.",
