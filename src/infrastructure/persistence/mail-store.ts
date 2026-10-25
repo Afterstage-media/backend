@@ -129,7 +129,7 @@ export class MongoMailStore implements MailRepository {
     const threads = await this.threads.find().sort({ lastMessageAt: -1 }).toArray();
     return threads.map((thread) => {
       const value = withoutId(thread) as unknown as MailThreadSummary;
-      return value;
+      return { ...value, id: thread._id };
     });
   }
 
@@ -139,6 +139,7 @@ export class MongoMailStore implements MailRepository {
     const messages = await this.messages.find({ threadId: id }).sort({ receivedAt: 1 }).toArray();
     return {
       ...(withoutId(thread) as unknown as Omit<MailThread, "messages">),
+      id: thread._id,
       messages: messages.map((message) => withoutId(message) as unknown as MailMessage),
     };
   }
