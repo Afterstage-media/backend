@@ -29,6 +29,8 @@ export const eventSchema = z.object({
   venue: z.string().max(180).default(""),
   address: z.string().max(240).default(""),
   city: z.string().max(120).default(""),
+  genres: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+  tags: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
   ...locationFields,
   startsAt: optionalDate,
   endsAt: optionalDate,
@@ -37,6 +39,19 @@ export const eventSchema = z.object({
   organizerContactId: z.string().uuid().nullable().default(null),
   url: optionalUrl.default(""),
   notes: z.string().max(4000).default(""),
+});
+
+export const createEventSchema = eventSchema.extend({
+  genres: z.array(z.string().trim().min(1).max(60)).min(1).max(20),
+});
+
+export const mcpCreateEventSchema = createEventSchema.extend({
+  artist: z.string().trim().min(1).max(180),
+  venue: z.string().trim().min(1).max(180),
+  city: z.string().trim().min(1).max(120),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  startsAt: z.string().datetime(),
 });
 
 export const contactSchema = z.object({

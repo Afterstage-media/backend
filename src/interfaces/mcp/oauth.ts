@@ -24,6 +24,8 @@ export const mcpScopes = [
   "directory:read",
   "directory:write",
   "replacements:read",
+  "voice:read",
+  "voice:write",
 ] as const;
 export type McpScope = (typeof mcpScopes)[number];
 
@@ -35,6 +37,8 @@ export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
   "directory:read": ["admin", "editor", "press", "directory", "auditor"],
   "directory:write": ["admin", "editor", "press", "directory"],
   "replacements:read": ["admin", "press", "auditor"],
+  "voice:read": ["admin", "editor", "press", "auditor"],
+  "voice:write": ["admin", "editor", "press"],
 };
 
 type PendingAuthorization = {
@@ -417,6 +421,8 @@ const scopeLabel = (scope: string) =>
     "directory:read": "Leer directorio editorial",
     "directory:write": "Crear y modificar directorio editorial",
     "replacements:read": "Leer búsquedas de reemplazo",
+    "voice:read": "Consultar voz editorial de noteros",
+    "voice:write": "Modificar voz editorial de noteros",
   })[scope] ?? scope;
 
 export class McpOAuthProvider implements OAuthServerProvider {
@@ -488,7 +494,7 @@ export class McpOAuthProvider implements OAuthServerProvider {
     const redirect = new URL(approved.redirectUri);
     redirect.searchParams.set("code", code);
     if (approved.state) redirect.searchParams.set("state", approved.state);
-    redirect.searchParams.set("iss", this.options.issuerUrl.href);
+    redirect.searchParams.set("iss", this.options.issuerUrl.origin);
     if (redirect.hostname === "127.0.0.1" || redirect.hostname === "localhost") {
       response
         .type("html")

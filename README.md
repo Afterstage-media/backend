@@ -42,7 +42,7 @@ src/
 └── bootstrap/                  # arranque del proceso
 ```
 
-Las colecciones `contents`, `press_events`, `press_contacts`, `press_accreditations`, `press_coverages`, `press_settings`, `directory` y `users` se inicializan con índices para estados, fechas, agenda, directorio y búsquedas de contactos. Sin `MONGODB_URI` el servicio no inicia.
+Las colecciones `contents`, `press_events`, `press_contacts`, `press_accreditations`, `press_coverages`, `press_settings`, `directory`, `users`, `mail_threads` y `mail_messages` se inicializan con índices para estados, fechas, agenda, directorio, búsquedas de contactos y conversaciones de correo. Sin `MONGODB_URI` el servicio no inicia.
 
 No se automatiza Chrome. La API oficial de Meta evita selectores rotos, sesiones vencidas, captchas y almacenamiento de contraseñas. También ofrece IDs, estados y errores auditables. Si una función no está disponible para la cuenta, se puede añadir otro adaptador detrás de `MetaPublisher` sin cambiar el panel ni MCP.
 
@@ -96,9 +96,12 @@ npm run dev
 | `CORS_ORIGINS` | Lista opcional de orígenes permitidos, separada por comas. |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Opcionales. Habilitan el envío de solicitudes de acreditación. |
 | `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Ajustes del transporte de correo. |
+| `INBOUND_EMAIL_WEBHOOK_SECRET` | Secreto compartido con el Email Worker de Cloudflare para aceptar mensajes entrantes. |
+| `INBOUND_EMAIL_DOMAIN` | Dominio permitido para destinatarios entrantes; por defecto `afterstage.ar`. |
 | `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
 | `JWT_ACCESS_TTL_SECONDS` | Duración del access token emitido por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
 | `MCP_PUBLIC_URL` | URL pública HTTPS del recurso MCP y su Authorization Server; por defecto usa `PUBLIC_BASE_URL`. |
+| `JSON_BODY_LIMIT` | Límite del cuerpo JSON para notas con imágenes base64; por defecto `32mb`. |
 | `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
 | `EVENTS_RSS_URLS` | URLs RSS/Atom públicas separadas por coma. Sus eventos se combinan con la agenda editorial, con caché de 5 minutos. |
 
@@ -110,6 +113,10 @@ Para Atlas, agregá la IP del servidor en Network Access, creá un usuario de ba
 
 El login se administra en MongoDB. Para crear o rotar un usuario ejecutá `USER_PASSWORD='una-clave-de-12-o-más-caracteres' MONGODB_URI='...' npm run users:upsert -- redaccion editor redaccion@medio.example true`. El backend nunca guarda la contraseña en claro: usa hashes `scrypt`, emite JWT HS256 de corta duración y vuelve a consultar en Mongo el usuario activo y su rol en cada request.
 El flujo de archivos locales y Cloudflare está detallado en [`documentacion/06-publicacion-local-cloudflare.md`](../documentacion/06-publicacion-local-cloudflare.md). La URL estable se configura con `CLOUDFLARE_TUNNEL_URL`; no se crea un container de Meta hasta que llega la fecha programada.
+
+### Bandeja de correo
+
+El Worker de Cloudflare Email Routing vive en `cloudflare/email-worker`. Procesa cualquier dirección de `afterstage.ar`, conserva el destinatario real del sobre (`deliveredTo`), firma el JSON y lo envía a `POST /api/inbound/email`. El backend deduplica por `Message-ID`, agrupa conversaciones por remitente, asunto y bandeja destinataria en MongoDB y expone la bandeja en `/admin/correo`. Las respuestas salen por SMTP usando esa bandeja como identidad remitente cuando está disponible y se guardan como mensajes salientes en la misma conversación. El Worker necesita el secreto `INBOUND_EMAIL_WEBHOOK_SECRET` cargado con `wrangler secret put` y el dominio debe tener una ruta de Email Routing hacia el Worker.
 
 ## Sitio público conectado
 
@@ -167,6 +174,7 @@ Configuración remota de ejemplo:
 Herramientas remotas:
 
 - `crear_nota` — recibe una nota ya redactada por el agente y la guarda como borrador. El MCP no llama a una IA, no publica, no programa ni envía comunicaciones. Acepta `idempotencyKey` para repetir una solicitud sin crear otro borrador.
+- `agregar_imagenes_nota` — adjunta imágenes a una nota existente sin publicarla. Cada imagen se envía como `base64` o data URL y puede incluir `mimeType`, `filename`, `altText` y `credit`. Se aceptan hasta 10 imágenes por operación; cada archivo decodificado puede pesar hasta 20 MB. El binario se guarda en `MEDIA_ROOT` y MongoDB conserva únicamente sus metadatos y URL pública.
 - `listar_notas` — busca notas del workspace conectado y devuelve `{ notes, total, limit }` para mantener un contrato MCP de objeto, incluso sin resultados.
 - `listar_agenda` — consulta eventos, acreditaciones y coberturas con filtros de texto, estado y fecha.
 - `buscar_directorio` — busca entradas del directorio; los emails, teléfonos y contactos sólo se incluyen cuando se solicita y el rol está autorizado.
@@ -182,6 +190,8 @@ Ejemplo de instrucción para un agente:
 ```text
 Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte y usá `crear_nota` para guardar el título, la bajada y el cuerpo como borrador. No la publiques ni la programes.
 ```
+
+Para incluir una imagen en `crear_nota`, el agente puede enviar una entrada como `{ "base64": "data:image/jpeg;base64,...", "altText": "...", "credit": "..." }`. También puede usar base64 sin prefijo y declarar `mimeType`. El servidor valida el MIME contra la firma real del archivo antes de escribirlo.
 
 ## API principal
 
@@ -213,6 +223,10 @@ Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte
 - `POST /api/press/replacement-applications/:id/assign` — asigna un reemplazo, rechaza los demás y notifica por email con la identidad del medio.
 - `GET/PATCH /api/press/media-kit`
 - `POST /api/press/accreditations/:id/send` — SMTP; recibe `dryRun: true` por defecto
+- `POST /api/inbound/email` — webhook firmado del Worker de Cloudflare; no requiere login de usuario.
+- `GET /api/mail/threads` — bandeja autenticada para admin, editor, prensa y comunidad.
+- `GET /api/mail/threads/:id` — conversación autenticada; la marca como leída.
+- `POST /api/mail/threads/:id/reply` — envía y persiste una respuesta por SMTP.
 - `GET /health`
 - `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, devuelve un JWT de acceso y establece la sesión de navegador segura.
 - `GET /api/auth/me` — devuelve la identidad, roles y permisos del JWT actual.

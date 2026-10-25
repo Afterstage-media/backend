@@ -6,7 +6,7 @@ import {
   type MediaReservation,
   type MediaAssetRecord,
   type MediaObjectMetadata,
-} from "../persistence/media-assets.js";
+} from "../persistence/mongo-media-assets.js";
 
 export const MEDIA_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 export type MediaContentType = (typeof MEDIA_CONTENT_TYPES)[number];

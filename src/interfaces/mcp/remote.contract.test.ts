@@ -11,6 +11,7 @@ import { PressManager } from "../../application/press-manager.js";
 import { ContentStore } from "../../infrastructure/persistence/content-store.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
+import { MediaAssetStore } from "../../infrastructure/persistence/media-assets.js";
 import { createRemoteMcpServer } from "./remote.js";
 
 const authInfo = (roles: string[]) => ({
@@ -24,15 +25,24 @@ const authInfo = (roles: string[]) => ({
     "directory:read",
     "directory:write",
     "replacements:read",
+    "voice:read",
+    "voice:write",
   ],
   extra: { userId: "editor-1", roles, permissions: [] },
 });
 
 test("expone contratos de salida como objetos y aplica filtros, límites y roles MCP", async (context) => {
   const directoryPath = await mkdtemp(path.join(os.tmpdir(), "afterstage-mcp-contract-"));
+  const mediaPath = await mkdtemp(path.join(os.tmpdir(), "afterstage-mcp-contract-media-"));
   context.after(() => rm(directoryPath, { recursive: true, force: true }));
+  context.after(() => rm(mediaPath, { recursive: true, force: true }));
 
-  const manager = new ContentManager(new ContentStore(directoryPath));
+  const manager = new ContentManager(
+    new ContentStore(directoryPath),
+    undefined,
+    undefined,
+    new MediaAssetStore(mediaPath, "https://afterstage.test"),
+  );
   const press = new PressManager(new PressStore(directoryPath));
   const directory = new DirectoryManager(new DirectoryStore(directoryPath));
 
@@ -40,6 +50,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
   await manager.create({ title: "Segunda nota", body: "Otro contenido verificable" });
   await press.createEvent({
     name: "Festival de prueba",
+    genres: ["Rock"],
     artist: "Banda de prueba",
     city: "CABA",
     startsAt: "2026-11-01T20:00:00.000Z",
@@ -80,6 +91,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       tools.tools.map((tool) => tool.name).sort(),
       [
         "actualizar_nota",
+        "agregar_imagenes_nota",
         "cambiar_estado_nota",
         "crear_contacto",
         "crear_nota",
@@ -95,8 +107,24 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "actualizar_contacto",
         "obtener_estadisticas",
         "obtener_nota",
+        "obtener_voz_notero",
+        "actualizar_voz_notero",
       ].sort(),
     );
+    const createEventTool = tools.tools.find((tool) => tool.name === "crear_evento");
+    const requiredEventFields = ((createEventTool?.inputSchema as { required?: string[] } | undefined)?.required ?? [])
+      .slice()
+      .sort();
+    assert.deepEqual(requiredEventFields, [
+      "artist",
+      "city",
+      "genres",
+      "latitude",
+      "longitude",
+      "name",
+      "startsAt",
+      "venue",
+    ]);
     const notes = await client.callTool({ name: "listar_notas", arguments: { limit: 1 } });
     assert.equal(notes.isError, undefined);
     const noteResult = notes.structuredContent as { notes: unknown[]; total: number; limit: number };
@@ -118,6 +146,29 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const fullNote = await client.callTool({ name: "obtener_nota", arguments: { id: firstNote.id } });
     assert.equal(fullNote.isError, undefined);
     assert.equal((fullNote.structuredContent as { body: string }).body, "Contenido verificable");
+
+    const voiceBefore = await client.callTool({ name: "obtener_voz_notero", arguments: {} });
+    assert.equal(voiceBefore.isError, undefined);
+    assert.equal((voiceBefore.structuredContent as { configured: boolean }).configured, false);
+
+    const voiceAfter = await client.callTool({
+      name: "actualizar_voz_notero",
+      arguments: {
+        guide: "Escribí con tono cercano, preciso y sin exageraciones.",
+        examples: ["Usá frases cortas y priorizá datos concretos."],
+      },
+    });
+    assert.equal(voiceAfter.isError, undefined);
+    const savedVoice = voiceAfter.structuredContent as {
+      configured: boolean;
+      guide: string;
+      examples: string[];
+      revision: number;
+    };
+    assert.equal(savedVoice.configured, true);
+    assert.equal(savedVoice.guide, "Escribí con tono cercano, preciso y sin exageraciones.");
+    assert.deepEqual(savedVoice.examples, ["Usá frases cortas y priorizá datos concretos."]);
+    assert.equal(savedVoice.revision, 1);
 
     const directoryWithoutContacts = await client.callTool({
       name: "buscar_directorio",
@@ -174,6 +225,40 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const draftResult = draft.structuredContent as { id: string; status: string; idempotencyKey?: string };
     assert.equal(draftResult.status, "draft");
     assert.equal("idempotencyKey" in draftResult, false);
+    const imageNote = await client.callTool({
+      name: "crear_nota",
+      arguments: {
+        title: "Nota MCP con imagen adjunta",
+        body: "Contenido de prueba con imagen.",
+        images: [
+          {
+            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            mimeType: "image/png",
+          },
+        ],
+      },
+    });
+    assert.equal(imageNote.isError, undefined);
+    const imageNoteResult = imageNote.structuredContent as {
+      id: string;
+      assets: Array<{ url: string; localPath: string }>;
+    };
+    assert.equal(imageNoteResult.assets.length, 1);
+    assert.match(imageNoteResult.assets[0]!.url, /^https:\/\/afterstage\.test\/media\//);
+    const addedImage = await client.callTool({
+      name: "agregar_imagenes_nota",
+      arguments: {
+        id: imageNoteResult.id,
+        images: [
+          {
+            base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            mimeType: "image/png",
+          },
+        ],
+      },
+    });
+    assert.equal(addedImage.isError, undefined);
+    assert.equal((addedImage.structuredContent as { assets: unknown[] }).assets.length, 2);
     const modified = await client.callTool({
       name: "modificar_nota",
       arguments: {
@@ -225,13 +310,23 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       arguments: {
         name: "Fecha creada por MCP",
         artist: "Artista de prueba",
+        venue: "Sala MCP",
         city: "CABA",
+        latitude: -34.6037,
+        longitude: -58.3816,
+        genres: ["Rock"],
         startsAt: "2026-12-05T20:00:00.000Z",
       },
     });
     assert.equal(createdEvent.isError, undefined);
     const createdEventResult = createdEvent.structuredContent as { id: string; createdBy: string };
     assert.equal(createdEventResult.createdBy, "editor-1");
+
+    const incompleteEvent = await client.callTool({
+      name: "crear_evento",
+      arguments: { name: "Evento incompleto", genres: ["Rock"] },
+    });
+    assert.equal(incompleteEvent.isError, true);
 
     const contact = await press.createContact({ name: "Producción MCP", email: "produccion@example.com" });
     const accreditation = await client.callTool({
@@ -301,6 +396,42 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       arguments: { includeContacts: true },
     });
     assert.equal(forbiddenContacts.isError, true);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("filtra las tools expuestas según los roles del usuario", async () => {
+  const server = createRemoteMcpServer(new ContentManager(), new PressManager(), new DirectoryManager(), ["editor"]);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "role-filter-test-client", version: "1.0.0" });
+  await client.connect(clientTransport);
+
+  try {
+    const tools = await client.listTools();
+    assert.deepEqual(
+      tools.tools.map((tool) => tool.name).sort(),
+      [
+        "actualizar_contacto",
+        "actualizar_nota",
+        "agregar_imagenes_nota",
+        "buscar_directorio",
+        "cambiar_estado_nota",
+        "consultar_borradores",
+        "crear_contacto",
+        "crear_nota",
+        "get_profile",
+        "listar_notas",
+        "modificar_nota",
+        "obtener_nota",
+        "obtener_voz_notero",
+        "actualizar_voz_notero",
+      ].sort(),
+    );
+    const forbidden = await client.callTool({ name: "crear_evento", arguments: { name: "No debe existir" } });
+    assert.equal(forbidden.isError, true);
   } finally {
     await client.close();
     await server.close();

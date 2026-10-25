@@ -2,11 +2,14 @@ import nodemailer, { type Transporter } from "nodemailer";
 
 export type Mail = {
   to: string;
+  from?: string;
   subject: string;
   text: string;
   html?: string;
   replyTo?: string;
   fromName?: string;
+  inReplyTo?: string;
+  references?: string[];
 };
 
 export class PressMailer {
@@ -31,14 +34,18 @@ export class PressMailer {
 
   async send(mail: Mail, dryRun = false): Promise<{ messageId: string; dryRun: boolean }> {
     if (dryRun) return { messageId: `dry-run-${Date.now()}`, dryRun: true };
-    const address = process.env.SMTP_FROM ?? process.env.SMTP_USER;
+    const address = mail.from ?? process.env.SMTP_FROM ?? process.env.SMTP_USER;
     if (!address) throw new Error("SMTP_FROM o SMTP_USER es necesario para enviar solicitudes");
     const from = mail.fromName ? `"${mail.fromName.replace(/[\"\r\n]/g, "")}" <${address}>` : address;
-    const { fromName: _fromName, ...payload } = mail;
+    const { fromName: _fromName, from: _from, inReplyTo, references, ...payload } = mail;
     const result = await this.getTransporter().sendMail({
       from,
       ...payload,
-      headers: { "X-Mailer": "afterstage Press Desk" },
+      headers: {
+        "X-Mailer": "afterstage Press Desk",
+        ...(inReplyTo ? { "In-Reply-To": inReplyTo } : {}),
+        ...(references?.length ? { References: references.join(" ") } : {}),
+      },
     });
     return { messageId: result.messageId, dryRun: false };
   }

@@ -1,6 +1,6 @@
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
@@ -40,7 +40,18 @@ import { monetizationStatuses } from "../../domain/monetization/types.js";
 import { mountRemoteMcp } from "../mcp/remote.js";
 import type { McpOAuthStore } from "../mcp/oauth.js";
 import { MEDIA_CONTENT_TYPES, MediaAssetService } from "../../infrastructure/integrations/media-storage.js";
-import { MediaQuotaExceededError } from "../../infrastructure/persistence/media-assets.js";
+import { MediaQuotaExceededError } from "../../infrastructure/persistence/mongo-media-assets.js";
+import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
+import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
+import { MailboxManager } from "../../application/mailbox-manager.js";
+import { inboundMailSchema, mailReplySchema } from "../../domain/mail/types.js";
+import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
+import type { PressMailer } from "../../infrastructure/integrations/mailer.js";
+import {
+  exchangeInstagramCode,
+  instagramAuthorizationUrl,
+  readInstagramOAuthState,
+} from "../../infrastructure/integrations/instagram-oauth.js";
 
 const escapeHtml = (value: string): string =>
   value.replace(
@@ -185,9 +196,15 @@ export const createApp = async (
   directory = new DirectoryManager(),
   monetization = new MonetizationManager(),
   mcpOAuthStore?: McpOAuthStore,
+  instagramConnections?: InstagramConnectionStore,
+  editorialVoice?: EditorialVoiceRepository,
+  mailbox?: MailRepository,
+  mailer?: Pick<PressMailer, "send">,
   media?: MediaAssetService,
 ) => {
   const app = express();
+  const mailboxManager = mailbox ? new MailboxManager(mailbox, mailer) : undefined;
+  const inboundMailbox = mailbox;
   if (users) configureUserDirectory(users);
   const uploadDir = process.env.UPLOAD_DIR ?? path.resolve("uploads");
   const mediaRoot = process.env.MEDIA_ROOT ?? uploadDir;
@@ -224,10 +241,57 @@ export const createApp = async (
   app.use(new RateLimiter().middleware);
   app.use(auditMiddleware);
   app.use(cors({ origin: origins.length ? origins : false }));
-  app.use(express.json({ limit: "2mb" }));
+  app.post(
+    "/api/inbound/email",
+    express.raw({ type: "application/json", limit: process.env.JSON_BODY_LIMIT ?? "32mb" }),
+    async (request, response) => {
+      const secret = process.env.INBOUND_EMAIL_WEBHOOK_SECRET;
+      const rawBody = Buffer.isBuffer(request.body) ? request.body : Buffer.from("");
+      const signature = request.header("x-afterstage-signature")?.replace(/^sha256=/, "") ?? "";
+      const expected = secret ? createHmac("sha256", secret).update(rawBody).digest() : Buffer.alloc(0);
+      const received = Buffer.from(signature, "hex");
+      if (!secret || received.length !== expected.length || !timingSafeEqual(received, expected)) {
+        response.status(401).json({ error: "invalid_signature" });
+        return;
+      }
+      if (!mailboxManager || !inboundMailbox) {
+        response.status(503).json({ error: "mailbox_not_configured" });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        response.status(400).json({ error: "invalid_json" });
+        return;
+      }
+      const parsed = inboundMailSchema.safeParse(body);
+      if (!parsed.success) {
+        response.status(400).json({ error: "invalid_inbound_email", details: parsed.error.flatten() });
+        return;
+      }
+      const domain = (process.env.INBOUND_EMAIL_DOMAIN ?? "afterstage.ar").toLowerCase();
+      const recipients = [...parsed.data.to, ...parsed.data.cc];
+      if (!recipients.some((address) => address.toLowerCase().endsWith(`@${domain}`))) {
+        response.status(400).json({ error: "recipient_domain_not_allowed" });
+        return;
+      }
+      try {
+        const message = await inboundMailbox.ingestInbound(parsed.data);
+        response.status(202).json({ accepted: true, messageId: message.messageId, threadId: message.threadId });
+      } catch (error) {
+        log("error", "inbound_email_store_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        response.status(503).json({ error: "inbound_email_store_failed" });
+      }
+    },
+  );
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "32mb" }));
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
-    if (publicUrl) mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl));
+    if (publicUrl)
+      mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl), editorialVoice);
   }
   app.use(
     "/media",
@@ -255,7 +319,12 @@ export const createApp = async (
       mongo: Boolean(process.env.MONGODB_URI),
       ai: Boolean(process.env.AI_API_KEY),
       smtp: Boolean(process.env.SMTP_HOST),
-      meta: Boolean(process.env.META_ACCESS_TOKEN),
+      meta: Boolean(
+        process.env.META_ACCESS_TOKEN ||
+        (process.env.META_INSTAGRAM_APP_ID &&
+          process.env.META_INSTAGRAM_APP_SECRET &&
+          process.env.META_TOKEN_ENCRYPTION_KEY),
+      ),
     }),
   );
   app.get("/api/ops/status", requireRole("admin"), (_request, response) =>
@@ -783,7 +852,123 @@ export const createApp = async (
   app.get("/press-kit", async (_request, response) =>
     response.type("html").send(renderPressKit(await press.snapshot())),
   );
+
+  app.get("/api/integrations/instagram/callback", requireSecureTransport, async (request, response) => {
+    const code = typeof request.query.code === "string" ? request.query.code : "";
+    const state = typeof request.query.state === "string" ? request.query.state : "";
+    const error = typeof request.query.error === "string" ? request.query.error : "";
+    if (error) {
+      response.status(400).send("La autorización de Instagram fue cancelada.");
+      return;
+    }
+    if (!code || !state) {
+      response.status(400).send("Faltan datos de autorización de Instagram.");
+      return;
+    }
+    try {
+      const oauthState = readInstagramOAuthState(state);
+      if (!instagramConnections) {
+        response.status(503).send("La conexión con Instagram no está configurada en Afterstage.");
+        return;
+      }
+      const connection = await exchangeInstagramCode(code);
+      await instagramConnections.upsert({ ...connection, connectedByUserId: oauthState.actorId });
+      const destination = `${(process.env.PUBLIC_BASE_URL ?? "/").replace(/\/$/, "")}/admin?instagram=connected`;
+      response.redirect(destination || "/admin?instagram=connected");
+    } catch (oauthError) {
+      log("error", "instagram_oauth_failed", {
+        error: oauthError instanceof Error ? oauthError.message : String(oauthError),
+      });
+      response.status(400).send("No se pudo conectar Instagram. Revisá la configuración de Meta e intentá nuevamente.");
+    }
+  });
+
   app.use("/api", requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"));
+  app.get("/api/mail/threads", requireRole("admin", "editor", "press", "community"), async (_request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    response.json({ threads: await mailboxManager.listThreads() });
+  });
+  app.get("/api/mail/threads/:id", requireRole("admin", "editor", "press", "community"), async (request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    const thread = await mailboxManager.getThread(String(request.params.id));
+    if (!thread) {
+      response.status(404).json({ error: "thread_not_found" });
+      return;
+    }
+    await mailboxManager.markRead(thread.id);
+    response.json({ thread: { ...thread, unreadCount: 0 } });
+  });
+  app.post(
+    "/api/mail/threads/:id/reply",
+    requireRole("admin", "editor", "press", "community"),
+    requireSecureTransport,
+    async (request, response) => {
+      if (!mailboxManager) {
+        response.status(503).json({ error: "mailbox_not_configured" });
+        return;
+      }
+      const parsed = mailReplySchema.safeParse(request.body);
+      if (!parsed.success) {
+        response.status(400).json({ error: "invalid_reply", details: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const message = await mailboxManager.reply(String(request.params.id), parsed.data);
+        response.status(201).json({ message });
+      } catch (error) {
+        log("error", "mail_reply_failed", {
+          error: error instanceof Error ? error.message : String(error),
+          threadId: String(request.params.id),
+        });
+        const status = error instanceof Error && error.message === "Conversación no encontrada" ? 404 : 502;
+        response.status(status).json({ error: status === 404 ? "thread_not_found" : "mail_reply_failed" });
+      }
+    },
+  );
+  app.get("/api/integrations/instagram", requirePermission("instagram:read"), async (_request, response) => {
+    if (!instagramConnections) {
+      response.status(503).json({ error: "La conexión con Instagram no está configurada" });
+      return;
+    }
+    response.json({ connections: await instagramConnections.list() });
+  });
+  app.get(
+    "/api/integrations/instagram/connect",
+    requireRole("admin", "social"),
+    requireSecureTransport,
+    (request, response) => {
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!instagramConnections) {
+        response.status(503).json({ error: "La conexión con Instagram no está configurada" });
+        return;
+      }
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      response.redirect(instagramAuthorizationUrl(actor.id));
+    },
+  );
+  app.delete(
+    "/api/integrations/instagram/:accountId",
+    requireRole("admin", "social"),
+    requireSecureTransport,
+    async (request, response) => {
+      if (!instagramConnections) {
+        response.status(503).json({ error: "La conexión con Instagram no está configurada" });
+        return;
+      }
+      const accountId = z.string().regex(/^\d+$/).parse(request.params.accountId);
+      const removed = await instagramConnections.remove(accountId);
+      response.status(removed ? 204 : 404).end();
+    },
+  );
   app.get(
     "/api/account/ai-access",
     requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
@@ -967,6 +1152,20 @@ export const createApp = async (
     const cleaned = await media.cleanup();
     const reconciliation = await media.reconcile();
     response.json({ cleaned, reconciliation });
+  });
+  app.post("/api/content/:id/repost/instagram", requireRole("admin", "editor", "social"), async (request, response) => {
+    const input = z.object({ dryRun: z.boolean().default(false) }).parse(request.body ?? {});
+    const current = await manager.required(String(request.params.id));
+    const actor = (request as typeof request & { actor?: import("./security.js").Actor }).actor;
+    if (!actor || !hasPermission(actor, "instagram:publish")) {
+      response.status(403).json({ error: "Se requiere el permiso instagram:publish" });
+      return;
+    }
+    if (!current.channels.includes("instagram")) {
+      response.status(400).json({ error: "La nota no tiene Instagram entre sus canales" });
+      return;
+    }
+    response.json(await manager.repostInstagram(String(request.params.id), input.dryRun));
   });
   app.post("/api/assets", requireRole("admin", "editor"), upload.array("images", 10), async (request, response) => {
     const uploaded = request.files as Express.Multer.File[];

@@ -1,6 +1,9 @@
 import cors from "cors";
 import express, { type Express } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
 import {
@@ -11,9 +14,14 @@ import {
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
-import { channels, contentStatuses, type ContentItem } from "../../domain/content/types.js";
+import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
+import { editorialVoiceInputSchema } from "../../domain/editorial-voice/types.js";
+import {
+  MemoryEditorialVoiceStore,
+  type EditorialVoiceRepository,
+} from "../../infrastructure/persistence/editorial-voice-store.js";
 import {
   directoryInputSchema,
   directoryKinds,
@@ -23,12 +31,12 @@ import {
 import {
   accreditationStatuses,
   accreditationSchema,
-  eventSchema,
+  mcpCreateEventSchema,
   eventStatuses,
   replacementProfiles,
   replacementStatuses,
 } from "../../domain/press/types.js";
-import { McpOAuthProvider, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
+import { McpOAuthProvider, mcpScopeRoles, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
 import {
   actorFromRequest,
   authenticateUser,
@@ -125,12 +133,53 @@ const replacementsOutputSchema = z.object({
   total: z.number().int().nonnegative(),
   limit: z.number().int().positive(),
 });
+const editorialVoiceOutputSchema = z.object({
+  configured: z.boolean(),
+  authorId: z.string(),
+  guide: z.string(),
+  examples: z.array(z.string()),
+  revision: z.number().int().nonnegative(),
+  createdAt: z.string().nullable(),
+  updatedAt: z.string().nullable(),
+  updatedBy: z.string().nullable(),
+});
 
 const readNotesRoles = ["admin", "editor", "press", "auditor"] as const;
+const writeNotesRoles = ["admin", "editor"] as const;
 const readAgendaRoles = ["admin", "press", "auditor"] as const;
 const readDirectoryRoles = ["admin", "editor", "press", "directory", "auditor"] as const;
 const writeDirectoryRoles = ["admin", "editor", "press", "directory"] as const;
 const readReplacementsRoles = ["admin", "press", "auditor"] as const;
+const readEditorialVoiceRoles = ["admin", "editor", "press", "auditor"] as const;
+const writeEditorialVoiceRoles = ["admin", "editor", "press"] as const;
+const toolScopes: Record<string, readonly McpScope[]> = {
+  get_profile: ["notes:read"],
+  obtener_nota: ["notes:read"],
+  listar_notas: ["notes:read"],
+  consultar_borradores: ["notes:read"],
+  obtener_estadisticas: ["notes:read", "agenda:read"],
+  listar_agenda: ["agenda:read"],
+  crear_evento: ["agenda:write"],
+  gestionar_acreditacion: ["agenda:write"],
+  buscar_directorio: ["directory:read"],
+  crear_contacto: ["directory:write"],
+  actualizar_contacto: ["directory:write"],
+  listar_reemplazos: ["replacements:read"],
+  crear_nota: ["notes:write"],
+  agregar_imagenes_nota: ["notes:write"],
+  modificar_nota: ["notes:write"],
+  actualizar_nota: ["notes:write"],
+  cambiar_estado_nota: ["notes:write"],
+  obtener_voz_notero: ["voice:read"],
+  actualizar_voz_notero: ["voice:write"],
+};
+
+const toolsAllowedForRoles = (roles: readonly string[]): Set<string> =>
+  new Set(
+    Object.entries(toolScopes)
+      .filter(([, scopes]) => scopes.every((scope) => mcpScopeRoles[scope].some((role) => roles.includes(role))))
+      .map(([name]) => name),
+  );
 const escapeHtml = (value: string): string =>
   value.replace(
     /[&<>"']/g,
@@ -155,13 +204,34 @@ export const createRemoteMcpServer = (
   manager: ContentManager,
   press: PressManager = new PressManager(),
   directory: DirectoryManager = new DirectoryManager(),
+  roles?: readonly string[],
+  editorialVoice: EditorialVoiceRepository = new MemoryEditorialVoiceStore(),
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
     version: "1.0.0",
   });
+  const allowedTools = roles ? toolsAllowedForRoles(roles) : undefined;
+  const registerTool = <
+    OutputArgs extends ZodRawShapeCompat | AnySchema,
+    InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined,
+  >(
+    name: string,
+    config: {
+      title?: string;
+      description?: string;
+      inputSchema?: InputArgs;
+      outputSchema?: OutputArgs;
+      annotations?: ToolAnnotations;
+      _meta?: Record<string, unknown>;
+    },
+    callback: ToolCallback<InputArgs>,
+  ) => {
+    if (allowedTools && !allowedTools.has(name)) return;
+    return server.registerTool(name, config, callback);
+  };
 
-  server.registerTool(
+  registerTool(
     "get_profile",
     {
       title: "Perfil de Afterstage",
@@ -173,7 +243,67 @@ export const createRemoteMcpServer = (
     async (_input, extra) => textResult(authFromExtra(extra, "notes:read")),
   );
 
-  server.registerTool(
+  const canAccessOtherAuthorVoice = (rolesForUser: readonly string[]) =>
+    rolesForUser.some((role) => ["admin", "editor", "auditor"].includes(role));
+  const resolveVoiceAuthorId = (actor: ReturnType<typeof authFromExtra>, requestedAuthorId?: string) => {
+    const authorId = requestedAuthorId?.trim() || actor.userId;
+    if (authorId !== actor.userId && !canAccessOtherAuthorVoice(actor.roles)) {
+      throw new Error("Solo podés gestionar la voz editorial de tu propio usuario");
+    }
+    return authorId;
+  };
+  const publicEditorialVoice = (authorId: string, voice: Awaited<ReturnType<EditorialVoiceRepository["get"]>>) => ({
+    configured: Boolean(voice && (voice.guide.trim() || voice.examples.length)),
+    authorId,
+    guide: voice?.guide ?? "",
+    examples: voice?.examples ?? [],
+    revision: voice?.revision ?? 0,
+    createdAt: voice?.createdAt ?? null,
+    updatedAt: voice?.updatedAt ?? null,
+    updatedBy: voice?.updatedBy ?? null,
+  });
+
+  registerTool(
+    "obtener_voz_notero",
+    {
+      title: "Obtener voz editorial del notero",
+      description:
+        "Consulta la guía editorial opcional de un notero: tono, lenguaje, acento, criterios y ejemplos. Si no está configurada, devuelve configured=false para que el agente escriba con las reglas generales.",
+      inputSchema: { authorId: z.string().trim().min(1).max(180).optional() },
+      outputSchema: editorialVoiceOutputSchema,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["voice:read"] }] },
+    },
+    async ({ authorId }, extra) => {
+      const actor = authFromExtra(extra, "voice:read", readEditorialVoiceRoles);
+      const targetAuthorId = resolveVoiceAuthorId(actor, authorId);
+      return textResult(publicEditorialVoice(targetAuthorId, await editorialVoice.get(targetAuthorId)));
+    },
+  );
+
+  registerTool(
+    "actualizar_voz_notero",
+    {
+      title: "Actualizar voz editorial del notero",
+      description:
+        "Guarda o reemplaza una guía editorial opcional en lenguaje natural. No es obligatoria para crear notas; una guía vacía y sin ejemplos la deja sin configurar.",
+      inputSchema: {
+        authorId: z.string().trim().min(1).max(180).optional(),
+        ...editorialVoiceInputSchema.shape,
+      },
+      outputSchema: editorialVoiceOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["voice:write"] }] },
+    },
+    async ({ authorId, guide, examples }, extra) => {
+      const actor = authFromExtra(extra, "voice:write", writeEditorialVoiceRoles);
+      const targetAuthorId = resolveVoiceAuthorId(actor, authorId);
+      const voice = await editorialVoice.upsert(targetAuthorId, { guide, examples }, actor.userId);
+      return textResult(publicEditorialVoice(targetAuthorId, voice));
+    },
+  );
+
+  registerTool(
     "obtener_nota",
     {
       title: "Obtener nota",
@@ -189,7 +319,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "listar_notas",
     {
       title: "Listar notas",
@@ -210,7 +340,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "consultar_borradores",
     {
       title: "Consultar borradores",
@@ -231,7 +361,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "obtener_estadisticas",
     {
       title: "Obtener estadísticas",
@@ -276,7 +406,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "listar_agenda",
     {
       title: "Listar agenda editorial",
@@ -355,12 +485,13 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "crear_evento",
     {
       title: "Crear evento",
-      description: "Agrega un recital, fecha o encuentro a la agenda editorial de Afterstage.",
-      inputSchema: eventSchema.shape,
+      description:
+        "Agrega un recital, fecha o encuentro a la agenda editorial de Afterstage. Artista, fecha, venue, ciudad, coordenadas y género son obligatorios.",
+      inputSchema: mcpCreateEventSchema.shape,
       outputSchema: eventOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: false },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
@@ -372,7 +503,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "gestionar_acreditacion",
     {
       title: "Gestionar acreditación",
@@ -408,7 +539,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "buscar_directorio",
     {
       title: "Buscar en directorio",
@@ -445,7 +576,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "crear_contacto",
     {
       title: "Crear entrada de directorio",
@@ -463,7 +594,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "actualizar_contacto",
     {
       title: "Actualizar entrada de directorio",
@@ -481,7 +612,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "listar_reemplazos",
     {
       title: "Listar reemplazos",
@@ -534,7 +665,7 @@ export const createRemoteMcpServer = (
     },
   );
 
-  server.registerTool(
+  registerTool(
     "crear_nota",
     {
       title: "Guardar nota redactada por el agente",
@@ -549,6 +680,11 @@ export const createRemoteMcpServer = (
         channels: z.array(z.enum(channels)).default(["website", "instagram"]),
         tags: z.array(z.string().max(80)).default([]),
         source: z.string().max(500).default(""),
+        images: z
+          .array(imageInputSchema)
+          .max(10)
+          .default([])
+          .describe("Imágenes para guardar junto con la nota. Enviá cada archivo como base64 o data URL."),
         idempotencyKey: z
           .string()
           .trim()
@@ -568,13 +704,34 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async (input, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const note = await manager.createAgentNote(input, actor.userId);
       return textResult({ ...publicNote(note), createdBy: actor.userId });
     },
   );
 
-  server.registerTool(
+  registerTool(
+    "agregar_imagenes_nota",
+    {
+      title: "Agregar imágenes a una nota",
+      description:
+        "Adjunta una o más imágenes en base64 a una nota existente. Las imágenes se guardan en el almacenamiento de medios de Afterstage y se agregan al borrador sin publicar automáticamente.",
+      inputSchema: {
+        id: z.string().trim().min(1).max(180),
+        images: z.array(imageInputSchema).min(1).max(10),
+      },
+      outputSchema: noteMutationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ id, images }, extra) => {
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
+      const note = await manager.addImages(id, images);
+      return textResult({ ...publicNote(note), updatedBy: actor.userId });
+    },
+  );
+
+  registerTool(
     "modificar_nota",
     {
       title: "Modificar nota",
@@ -589,14 +746,14 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async ({ id, ...patch }, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para modificar la nota");
       const note = await manager.update(id, patch);
       return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
   );
 
-  server.registerTool(
+  registerTool(
     "actualizar_nota",
     {
       title: "Actualizar nota",
@@ -611,7 +768,7 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async ({ id, ...patch }, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para actualizar la nota");
       const note = await manager.update(id, patch);
       return textResult({ ...publicNote(note), updatedBy: actor.userId });
@@ -632,7 +789,7 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async ({ id, status }, extra) => {
-      const actor = authFromExtra(extra, "notes:write");
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const note = await manager.update(id, { status });
       return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
@@ -649,6 +806,7 @@ export const mountRemoteMcp = (
   store: McpOAuthStore,
   users: UserDirectory,
   publicUrl: URL,
+  editorialVoice?: EditorialVoiceRepository,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
   const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
@@ -684,7 +842,21 @@ export const mountRemoteMcp = (
         serviceDocumentationUrl: new URL("/politica-editorial", publicUrl),
         scopesSupported: [...mcpScopes],
       }),
-      authorization_response_iss_parameter_supported: true,
+      issuer: publicUrl.origin,
+      // The authorization flow currently guarantees `iss` on successful
+      // approvals, but not on every possible OAuth error response. Do not
+      // advertise RFC 9207 issuer identification until that guarantee is
+      // complete; ChatGPT will use the callback-specific redirect instead.
+      authorization_response_iss_parameter_supported: false,
+    });
+  });
+  app.get("/.well-known/oauth-protected-resource/mcp", (_request, response) => {
+    response.json({
+      resource: resourceUrl.href,
+      authorization_servers: [publicUrl.origin],
+      scopes_supported: [...mcpScopes],
+      resource_name: "Afterstage",
+      resource_documentation: new URL("/politica-editorial", publicUrl).href,
     });
   });
   app.use(
@@ -698,6 +870,17 @@ export const mountRemoteMcp = (
       scopesSupported: [...mcpScopes],
     }),
   );
+  // Some MCP clients probe the origin-level RFC 9728 path before trying the
+  // resource-specific `/mcp` path. Keep both discovery URLs equivalent.
+  app.get("/.well-known/oauth-protected-resource", (_request, response) => {
+    response.json({
+      resource: resourceUrl.href,
+      authorization_servers: [publicUrl.origin],
+      scopes_supported: [...mcpScopes],
+      resource_name: "Afterstage",
+      resource_documentation: new URL("/politica-editorial", publicUrl).href,
+    });
+  });
   app.get("/oauth/login", (request, response) => {
     const returnTo = oauthReturnPath(request.query.return_to, publicUrl);
     if (!returnTo) {
@@ -772,7 +955,10 @@ export const mountRemoteMcp = (
 
   app.all("/mcp", cors(), auth, async (request, response, next) => {
     try {
-      const server = createRemoteMcpServer(manager, press, directory);
+      const roles = Array.isArray(request.auth?.extra?.roles)
+        ? request.auth.extra.roles.filter((role): role is string => typeof role === "string")
+        : [];
+      const server = createRemoteMcpServer(manager, press, directory, roles, editorialVoice);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
       await transport.handleRequest(request, response, request.body);

@@ -7,6 +7,7 @@ import { ContentManager } from "./content-manager.js";
 import { AiWriter } from "../infrastructure/integrations/ai.js";
 import { MetaPublisher } from "../infrastructure/integrations/meta.js";
 import { ContentStore } from "../infrastructure/persistence/content-store.js";
+import { MediaAssetStore } from "../infrastructure/persistence/media-assets.js";
 
 test("la simulación no altera el estado editorial", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-"));
@@ -58,6 +59,36 @@ test("reclama una publicación para evitar duplicados concurrentes", async (cont
   const results = await Promise.allSettled([first.publish(created.id), second.publish(created.id)]);
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+});
+
+test("recomparte una nota publicada solamente en Instagram", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-repost-instagram-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const calls: any[] = [];
+  const publisher = {
+    publish: async (item: any) => {
+      calls.push(item);
+      return { instagram: "reposted-media", containerId: "reposted-container" };
+    },
+  } as unknown as MetaPublisher;
+  const manager = new ContentManager(new ContentStore(directory), {} as AiWriter, publisher);
+  const created = await manager.create({
+    title: "Una nota publicada",
+    summary: "Una bajada",
+    body: "El cuerpo completo",
+    channels: ["website", "instagram"],
+    assets: [{ id: "foto", url: "https://example.com/foto.jpg", altText: "", credit: "" }],
+  });
+  await manager.update(created.id, { status: "review" });
+  await manager.update(created.id, { status: "approved" });
+  await manager.publish(created.id);
+
+  const result = await manager.repostInstagram(created.id);
+  assert.equal(result.status, "published");
+  assert.equal(result.remoteIds.instagram, "reposted-media");
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].channels, ["instagram"]);
+  assert.equal(calls[1].containerId, null);
 });
 
 test("rechaza crear contenidos en estados internos y programar sin fecha", async (context) => {
@@ -157,6 +188,35 @@ test("guarda una nota redactada por el agente como borrador sin publicarla", asy
   assert.equal(note.title, "La banda vuelve a escena");
   assert.equal(note.status, "draft");
   assert.equal(note.body, "La banda vuelve a escena con un show en el barrio.");
+});
+
+test("crea notas MCP con imágenes y permite adjuntar más imágenes a una nota", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-ai-note-media-"));
+  const mediaDirectory = await mkdtemp(path.join(os.tmpdir(), "afterstage-ai-note-media-files-"));
+  context.after(() =>
+    Promise.all([
+      rm(directory, { recursive: true, force: true }),
+      rm(mediaDirectory, { recursive: true, force: true }),
+    ]),
+  );
+  const media = new MediaAssetStore(mediaDirectory, "https://afterstage.test");
+  const manager = new ContentManager(new ContentStore(directory), undefined, undefined, media);
+  const image = {
+    base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    mimeType: "image/png" as const,
+  };
+
+  const note = await manager.createAgentNote({
+    title: "Nota con imagen",
+    body: "Contenido con un medio adjunto.",
+    images: [image],
+  });
+  assert.equal(note.assets.length, 1);
+  assert.match(note.assets[0]!.url, /^https:\/\/afterstage\.test\/media\//);
+
+  const updated = await manager.addImages(note.id, [image]);
+  assert.equal(updated.assets.length, 2);
+  assert.notEqual(updated.assets[0]!.localPath, updated.assets[1]!.localPath);
 });
 
 test("busca contexto editorial por título, cuerpo, etiquetas y fuente", async (context) => {

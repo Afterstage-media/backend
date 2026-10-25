@@ -36,7 +36,11 @@ import { MongoMonetizationStore } from "./monetization-store.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
 import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
 import { MediaAssetService, MediaGatewayClient } from "../integrations/media-storage.js";
-import { MongoMediaAssetStore } from "./media-assets.js";
+import { MongoMediaAssetStore } from "./mongo-media-assets.js";
+import { createInstagramConnectionStore, type MongoInstagramConnectionStore } from "./instagram-connections.js";
+import { MongoEditorialVoiceStore } from "./editorial-voice-mongo.js";
+import { MetaPublisher } from "../integrations/meta.js";
+import { MongoMailStore } from "./mail-store.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -538,6 +542,9 @@ export type MongoPersistence = {
   monetization: MongoMonetizationStore;
   mcpOAuth: MongoMcpOAuthStore;
   mediaAssets: MongoMediaAssetStore;
+  instagramConnections: MongoInstagramConnectionStore;
+  editorialVoice: MongoEditorialVoiceStore;
+  mail: MongoMailStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -562,6 +569,9 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
   const mcpOAuth = new MongoMcpOAuthStore(db);
   const mediaAssets = new MongoMediaAssetStore(db);
+  const instagramConnections = createInstagramConnectionStore(db);
+  const editorialVoice = new MongoEditorialVoiceStore(db.collection("editorial_voices"));
+  const mail = new MongoMailStore(db);
   await Promise.all([
     content.init(),
     press.init(),
@@ -570,20 +580,42 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     monetization.init(),
     mcpOAuth.init(),
     mediaAssets.init(),
+    instagramConnections.init(),
+    editorialVoice.init(),
+    mail.init(),
   ]);
-  return { client, content, press, users, directory, monetization, mcpOAuth, mediaAssets };
+  return {
+    client,
+    content,
+    press,
+    users,
+    directory,
+    monetization,
+    mcpOAuth,
+    instagramConnections,
+    editorialVoice,
+    mail,
+    mediaAssets,
+  };
 };
 
 export const createManagers = async () => {
   const persistence = await createMongoPersistence();
   return {
     persistence,
-    manager: new ContentManager(persistence?.content),
+    manager: new ContentManager(
+      persistence?.content,
+      undefined,
+      new MetaPublisher(undefined, persistence?.instagramConnections),
+    ),
     press: new PressManager(persistence?.press),
     users: persistence?.users,
     directory: new DirectoryManager(persistence?.directory),
     monetization: new MonetizationManager(persistence?.monetization),
     mcpOAuth: persistence?.mcpOAuth,
     media: persistence ? new MediaAssetService(persistence.mediaAssets, new MediaGatewayClient()) : undefined,
+    instagramConnections: persistence?.instagramConnections,
+    editorialVoice: persistence?.editorialVoice,
+    mail: persistence?.mail,
   };
 };

@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { createApp } from "./app.js";
 import { ContentManager } from "../../application/content-manager.js";
+import { MetaPublisher } from "../../infrastructure/integrations/meta.js";
 import { ContentStore } from "../../infrastructure/persistence/content-store.js";
 import { PressManager } from "../../application/press-manager.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
@@ -192,6 +193,7 @@ test("no publica fixtures demo en las superficies públicas", async (context) =>
   const press = new PressManager(new PressStore(directory));
   await press.createEvent({
     name: "DEMO — Evento de prueba",
+    genres: ["Rock"],
     notes: "Evento ficticio generado para pruebas.",
     startsAt: "2099-01-01T21:00:00.000Z",
   });
@@ -211,11 +213,13 @@ test("mantiene visible un evento editorial mientras dura su rango de fechas", as
   const press = new PressManager(new PressStore(directory));
   const event = await press.createEvent({
     name: "Festival en curso",
+    genres: ["Rock"],
     startsAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   });
   const recurringEvent = await press.createEvent({
     name: "Ciclo con fechas sueltas",
+    genres: ["Rock"],
     dates: [
       new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
@@ -471,6 +475,52 @@ test("expone y protege las métricas de Instagram", async (context) => {
         })
       ).status,
       200,
+    );
+  });
+});
+
+test("permite recompartir una nota publicada en Instagram con el permiso correspondiente", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-app-instagram-repost-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const calls: any[] = [];
+  const publisher = {
+    publish: async (item: any) => {
+      calls.push(item);
+      return { instagram: `media-${calls.length}`, containerId: `container-${calls.length}` };
+    },
+  } as unknown as MetaPublisher;
+  const manager = new ContentManager(new ContentStore(directory), undefined, publisher);
+  const item = await manager.create({
+    title: "Nota para recompartir",
+    summary: "Una bajada",
+    body: "El texto completo",
+    channels: ["instagram"],
+    assets: [{ id: "foto", url: "https://example.com/foto.jpg", altText: "", credit: "" }],
+  });
+  await manager.update(item.id, { status: "review" });
+  await manager.update(item.id, { status: "approved" });
+  await manager.publish(item.id);
+  const app = await createApp(manager, new PressManager(new PressStore(directory)));
+
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/content/${item.id}/repost/instagram`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.remoteIds.instagram, "media-2");
+    assert.deepEqual(calls[1].channels, ["instagram"]);
+    assert.equal(
+      (
+        await fetch(`${base}/api/content/${item.id}/repost/instagram`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${testTokens.editor}`, "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        })
+      ).status,
+      403,
     );
   });
 });
