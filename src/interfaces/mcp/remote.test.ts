@@ -60,7 +60,7 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
     assert.equal(metadataResponse.status, 200);
     const metadata = {
       resource: "https://afterstage.test/mcp",
-      authorization_servers: ["https://afterstage.test"],
+      authorization_servers: ["https://afterstage.test/"],
       scopes_supported: [
         "notes:read",
         "notes:write",

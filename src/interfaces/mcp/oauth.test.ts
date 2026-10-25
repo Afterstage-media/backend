@@ -133,5 +133,5 @@ test("emite tokens OAuth por usuario, cliente y scope sin credenciales en entorn
     ?.match(/<a href="([^"]+)">Continuar a ChatGPT/)?.[1]
     ?.replaceAll("&amp;", "&");
   assert.equal(new URL(webCallbackUrl!).origin, "https://chatgpt.com");
-  assert.equal(new URL(webCallbackUrl!).searchParams.get("iss"), "https://afterstage.ar");
+  assert.equal(new URL(webCallbackUrl!).searchParams.get("iss"), "https://afterstage.ar/");
 });
