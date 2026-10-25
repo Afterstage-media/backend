@@ -65,6 +65,7 @@ export class MongoMailStore implements MailRepository {
     return this.threads.findOne({
       subjectKey: normalizeSubject(input.subject),
       participants: input.from,
+      ...(input.deliveredTo ? { mailbox: input.deliveredTo.toLowerCase() } : {}),
     });
   }
 
@@ -82,6 +83,7 @@ export class MongoMailStore implements MailRepository {
       threadId,
       direction: "inbound",
       messageId,
+      ...(input.deliveredTo ? { deliveredTo: input.deliveredTo } : {}),
       ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
       references: unique(input.references),
       from: input.from,
@@ -107,6 +109,7 @@ export class MongoMailStore implements MailRepository {
         $set: {
           subject: existingThread?.subject || input.subject || "(sin asunto)",
           subjectKey: normalizeSubject(input.subject),
+          ...(input.deliveredTo ? { mailbox: input.deliveredTo.toLowerCase() } : {}),
           participants,
           lastMessageAt: receivedAt,
           updatedAt: receivedAt,

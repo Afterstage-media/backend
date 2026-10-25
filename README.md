@@ -106,7 +106,7 @@ El flujo de archivos locales y Cloudflare está detallado en [`documentacion/06-
 
 ### Bandeja de correo
 
-El Worker de Cloudflare Email Routing vive en `cloudflare/email-worker`. Procesa cualquier dirección de `afterstage.ar`, firma el JSON y lo envía a `POST /api/inbound/email`. El backend deduplica por `Message-ID`, agrupa conversaciones en MongoDB y expone la bandeja en `/admin/correo`. Las respuestas salen por SMTP y se guardan como mensajes salientes en la misma conversación. El Worker necesita el secreto `INBOUND_EMAIL_WEBHOOK_SECRET` cargado con `wrangler secret put` y el dominio debe tener una ruta de Email Routing hacia el Worker.
+El Worker de Cloudflare Email Routing vive en `cloudflare/email-worker`. Procesa cualquier dirección de `afterstage.ar`, conserva el destinatario real del sobre (`deliveredTo`), firma el JSON y lo envía a `POST /api/inbound/email`. El backend deduplica por `Message-ID`, agrupa conversaciones por remitente, asunto y bandeja destinataria en MongoDB y expone la bandeja en `/admin/correo`. Las respuestas salen por SMTP usando esa bandeja como identidad remitente cuando está disponible y se guardan como mensajes salientes en la misma conversación. El Worker necesita el secreto `INBOUND_EMAIL_WEBHOOK_SECRET` cargado con `wrangler secret put` y el dominio debe tener una ruta de Email Routing hacia el Worker.
 
 ## Sitio público conectado
 

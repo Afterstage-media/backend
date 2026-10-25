@@ -35,6 +35,7 @@ export default {
     const payload = JSON.stringify({
       messageId: parsed.messageId || message.headers.get("message-id") || undefined,
       from: asAddress(parsed.from) || message.from,
+      deliveredTo: message.to,
       to: [message.to, ...asAddresses(parsed.to)],
       cc: asAddresses(parsed.cc),
       subject: parsed.subject || message.headers.get("subject") || "",
