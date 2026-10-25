@@ -1,5 +1,12 @@
 import { PressMailer, type Mail } from "../infrastructure/integrations/mailer.js";
 import type { MailReplyInput, MailThread, MailThreadSummary } from "../domain/mail/types.js";
+import {
+  defaultMailRoutes,
+  normalizeRouteAddress,
+  type MailRoute,
+  type MailRouteInput,
+  type MailRoutePatch,
+} from "../domain/mail/routing.js";
 import type { MailRepository } from "../infrastructure/persistence/mail-store.js";
 
 export class MailboxManager {
@@ -8,12 +15,57 @@ export class MailboxManager {
     private readonly mailer: Pick<PressMailer, "send"> = new PressMailer(),
   ) {}
 
-  listThreads(): Promise<MailThreadSummary[]> {
-    return this.repository.listThreads();
+  async listThreads(): Promise<MailThreadSummary[]> {
+    const [threads, routes] = await Promise.all([this.repository.listThreads(), this.listRoutes()]);
+    const routeByAddress = new Map(routes.map((route) => [route.address, route]));
+    return threads.map((thread) => this.withRouteMetadata(thread, routeByAddress));
   }
 
-  getThread(id: string): Promise<MailThread | undefined> {
-    return this.repository.getThread(id);
+  async getThread(id: string): Promise<MailThread | undefined> {
+    const thread = await this.repository.getThread(id);
+    if (!thread) return undefined;
+    const route = thread.mailbox ? await this.getRoute(thread.mailbox) : undefined;
+    return this.withRouteMetadata(thread, route ? new Map([[route.address, route]]) : new Map());
+  }
+
+  async listRoutes(): Promise<MailRoute[]> {
+    return this.repository.listRoutes
+      ? this.repository.listRoutes()
+      : defaultMailRoutes.map((route) => ({ ...route, id: route.address }));
+  }
+
+  async getRoute(address: string): Promise<MailRoute | undefined> {
+    const normalized = normalizeRouteAddress(address);
+    if (this.repository.getRoute) return this.repository.getRoute(normalized);
+    const route = defaultMailRoutes.find((item) => item.address === normalized);
+    return route ? { ...route, id: route.address } : undefined;
+  }
+
+  createRoute(input: MailRouteInput): Promise<MailRoute> {
+    if (!this.repository.createRoute) throw new Error("La gestión de rutas de correo no está disponible");
+    return this.repository.createRoute(input);
+  }
+
+  updateRoute(address: string, patch: MailRoutePatch): Promise<MailRoute | undefined> {
+    if (!this.repository.updateRoute) throw new Error("La gestión de rutas de correo no está disponible");
+    return this.repository.updateRoute(normalizeRouteAddress(address), patch);
+  }
+
+  deleteRoute(address: string): Promise<boolean> {
+    if (!this.repository.deleteRoute) throw new Error("La gestión de rutas de correo no está disponible");
+    return this.repository.deleteRoute(normalizeRouteAddress(address));
+  }
+
+  private withRouteMetadata<T extends MailThreadSummary | MailThread>(
+    thread: T,
+    routeByAddress: Map<string, MailRoute>,
+  ): T {
+    const route = thread.mailbox ? routeByAddress.get(normalizeRouteAddress(thread.mailbox)) : undefined;
+    return {
+      ...thread,
+      mailboxType: route?.kind ?? "personal",
+      mailboxLabel: route?.label ?? thread.mailbox ?? "Dirección personal",
+    } as T;
   }
 
   markRead(id: string): Promise<void> {

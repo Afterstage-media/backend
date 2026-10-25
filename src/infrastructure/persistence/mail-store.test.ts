@@ -45,6 +45,18 @@ test("expone el id del hilo al listar y consultar conversaciones", async () => {
     mail_messages: {
       find: () => cursor([message]),
     },
+    mail_routes: {
+      find: () =>
+        cursor([
+          {
+            _id: "prensa@afterstage.ar",
+            address: "prensa@afterstage.ar",
+            label: "Prensa",
+            kind: "distribution",
+            destinations: ["fede.markoo@gmail.com", "carlajmagnol@gmail.com"],
+          },
+        ]),
+    },
   };
   const db = { collection: (name: keyof typeof collections) => collections[name] } as unknown as Db;
   const store = new MongoMailStore(db);
@@ -55,4 +67,8 @@ test("expone el id del hilo al listar y consultar conversaciones", async () => {
   const loaded = await store.getThread("thread-1");
   assert.equal(loaded?.id, "thread-1");
   assert.equal(loaded?.messages[0]?.id, "message-1");
+
+  const routes = await store.listRoutes();
+  assert.equal(routes[0]?.id, "prensa@afterstage.ar");
+  assert.equal(routes[0]?.kind, "distribution");
 });

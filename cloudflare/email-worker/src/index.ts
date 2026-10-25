@@ -30,7 +30,7 @@ const parseDestinations = (value: string | undefined): string[] => {
   }
 };
 
-const destinationsFor = (recipient: string, env: Env): string[] => {
+const fallbackDestinationsFor = (recipient: string, env: Env): string[] => {
   let mapping: Record<string, unknown> = {};
   try {
     mapping = JSON.parse(env.FORWARD_DESTINATIONS ?? "{}") as Record<string, unknown>;
@@ -41,6 +41,29 @@ const destinationsFor = (recipient: string, env: Env): string[] => {
   return Array.isArray(configured)
     ? configured.filter((item): item is string => typeof item === "string" && item.includes("@"))
     : parseDestinations(env.DEFAULT_FORWARD_DESTINATIONS);
+};
+
+type RoutingResponse = {
+  route?: {
+    destinations?: unknown;
+  };
+};
+
+const destinationsFromAfterstage = async (recipient: string, env: Env): Promise<string[] | undefined> => {
+  try {
+    const response = await fetch(
+      `${env.AFTERSTAGE_API_URL.replace(/\/$/, "")}/api/inbound/email/routing?recipient=${encodeURIComponent(recipient)}`,
+      { headers: { "x-afterstage-routing-secret": env.INBOUND_EMAIL_WEBHOOK_SECRET } },
+    );
+    if (response.status === 404) return parseDestinations(env.DEFAULT_FORWARD_DESTINATIONS);
+    if (!response.ok) return undefined;
+    const payload = (await response.json()) as RoutingResponse;
+    return Array.isArray(payload.route?.destinations)
+      ? payload.route.destinations.filter((item): item is string => typeof item === "string" && item.includes("@"))
+      : [];
+  } catch {
+    return undefined;
+  }
 };
 
 const sign = async (body: string, secret: string): Promise<string> => {
@@ -85,7 +108,8 @@ export default {
       message.setReject(`Afterstage rejected the message (${response.status})`);
       throw new Error(`Afterstage inbound endpoint returned ${response.status}`);
     }
-    const destinations = destinationsFor(message.to, env);
+    const configuredDestinations = await destinationsFromAfterstage(message.to, env);
+    const destinations = configuredDestinations ?? fallbackDestinationsFor(message.to, env);
     if (!destinations.length) {
       message.setReject("No forwarding destination configured for this address");
       throw new Error(`No forwarding destination configured for ${message.to}`);
