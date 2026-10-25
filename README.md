@@ -139,6 +139,55 @@ Una generación de IA nunca aprueba ni publica. La publicación manual pide conf
 Las solicitudes de acreditación también tienen **Simular** y **Enviar**. El envío real solo se habilita cuando SMTP está configurado; el modo simulación siempre permite revisar destinatario y asunto sin salir del sistema.
 Los correos se envían con el nombre configurado en el dossier (`mediaKit.name`), `reply-to` del medio y una plantilla HTML/texto. Así no salen como mensajes personales del operador.
 
+### Habilitar el envío real
+
+El envío saliente necesita una cuenta SMTP de un proveedor de correo. Cloudflare
+Email Routing por sí solo no reemplaza SMTP: sirve para recibir y enrutar correo,
+pero las respuestas y notificaciones salientes salen por el transporte SMTP
+configurado en el backend.
+
+En producción, cargar estos valores en el Secret `medio-under-secrets` sin
+guardarlos en Git:
+
+```text
+SMTP_HOST=smtp.proveedor.example
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=cuenta-de-envio
+SMTP_PASS=secreto-del-proveedor
+SMTP_FROM=prensa@afterstage.ar
+```
+
+Después de actualizar el Secret, reiniciar el deployment del backend y verificar
+`/ready`: el campo `smtp` debe pasar a `true`. El endpoint de acreditaciones y
+las respuestas de `/admin/correo` siguen usando `dryRun: true` por defecto; el
+envío real requiere una acción explícita con `dryRun: false`.
+
+El proveedor debe autorizar `SMTP_FROM` (incluyendo sus registros SPF/DKIM o la
+verificación equivalente). Configurar una dirección no verificada puede hacer
+que el proveedor rechace el mensaje o lo marque como spam; el backend no debe
+usar una cuenta personal como remitente de producción.
+
+Para correo entrante, desplegar `cloudflare/email-worker`, cargar el mismo
+`INBOUND_EMAIL_WEBHOOK_SECRET` que existe en el Secret del backend y configurar
+Cloudflare Email Routing para enviar las direcciones de `afterstage.ar` al
+Worker. El Worker consulta las rutas de distribución en el backend, firma el
+payload y reenvía el mensaje a los destinos configurados.
+
+```bash
+cd cloudflare/email-worker
+npm ci --ignore-scripts
+npx wrangler secret put INBOUND_EMAIL_WEBHOOK_SECRET
+npx wrangler deploy
+```
+
+Antes del despliegue real, la validación reproducible es:
+
+```bash
+npx wrangler deploy --dry-run --outdir=/tmp/afterstage-email-worker
+npm audit --omit=dev --audit-level=moderate
+```
+
 ## Seguridad y operación
 
 Las rutas privadas aceptan `Authorization: Bearer <JWT>` o la sesión de navegador `HttpOnly` emitida por el login. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
