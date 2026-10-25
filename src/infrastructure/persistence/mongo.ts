@@ -35,6 +35,8 @@ import type { ActiveUser, ManagedUser, ManagedUserInput, UserDirectory } from ".
 import { MongoMonetizationStore } from "./monetization-store.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
 import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
+import { MediaAssetService, MediaGatewayClient } from "../integrations/media-storage.js";
+import { MongoMediaAssetStore } from "./mongo-media-assets.js";
 import { createInstagramConnectionStore, type MongoInstagramConnectionStore } from "./instagram-connections.js";
 import { MongoEditorialVoiceStore } from "./editorial-voice-mongo.js";
 import { MetaPublisher } from "../integrations/meta.js";
@@ -539,6 +541,7 @@ export type MongoPersistence = {
   directory: MongoDirectoryStore;
   monetization: MongoMonetizationStore;
   mcpOAuth: MongoMcpOAuthStore;
+  mediaAssets: MongoMediaAssetStore;
   instagramConnections: MongoInstagramConnectionStore;
   editorialVoice: MongoEditorialVoiceStore;
   mail: MongoMailStore;
@@ -565,6 +568,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const directory = new MongoDirectoryStore(db.collection<MongoRecord>("directory"));
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
   const mcpOAuth = new MongoMcpOAuthStore(db);
+  const mediaAssets = new MongoMediaAssetStore(db);
   const instagramConnections = createInstagramConnectionStore(db);
   const editorialVoice = new MongoEditorialVoiceStore(db.collection("editorial_voices"));
   const mail = new MongoMailStore(db);
@@ -575,6 +579,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     directory.init(),
     monetization.init(),
     mcpOAuth.init(),
+    mediaAssets.init(),
     instagramConnections.init(),
     editorialVoice.init(),
     mail.init(),
@@ -590,6 +595,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     instagramConnections,
     editorialVoice,
     mail,
+    mediaAssets,
   };
 };
 
@@ -607,6 +613,7 @@ export const createManagers = async () => {
     directory: new DirectoryManager(persistence?.directory),
     monetization: new MonetizationManager(persistence?.monetization),
     mcpOAuth: persistence?.mcpOAuth,
+    media: persistence ? new MediaAssetService(persistence.mediaAssets, new MediaGatewayClient()) : undefined,
     instagramConnections: persistence?.instagramConnections,
     editorialVoice: persistence?.editorialVoice,
     mail: persistence?.mail,

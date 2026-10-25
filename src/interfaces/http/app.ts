@@ -39,6 +39,8 @@ import { MonetizationManager } from "../../application/monetization-manager.js";
 import { monetizationStatuses } from "../../domain/monetization/types.js";
 import { mountRemoteMcp } from "../mcp/remote.js";
 import type { McpOAuthStore } from "../mcp/oauth.js";
+import { MEDIA_CONTENT_TYPES, MediaAssetService } from "../../infrastructure/integrations/media-storage.js";
+import { MediaQuotaExceededError } from "../../infrastructure/persistence/mongo-media-assets.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
 import { MailboxManager } from "../../application/mailbox-manager.js";
@@ -198,6 +200,7 @@ export const createApp = async (
   editorialVoice?: EditorialVoiceRepository,
   mailbox?: MailRepository,
   mailer?: Pick<PressMailer, "send">,
+  media?: MediaAssetService,
 ) => {
   const app = express();
   const mailboxManager = mailbox ? new MailboxManager(mailbox, mailer) : undefined;
@@ -334,6 +337,11 @@ export const createApp = async (
       persistence: {
         mongoConfigured: Boolean(process.env.MONGODB_URI),
         dataDir: process.env.DATA_DIR ?? "data",
+      },
+      media: {
+        gatewayConfigured: Boolean(media?.configured),
+        maxObjectBytes: Number(process.env.MEDIA_MAX_OBJECT_BYTES ?? 5 * 1024 * 1024),
+        contentTypes: MEDIA_CONTENT_TYPES,
       },
       ai: {
         configured: Boolean(process.env.AI_API_KEY),
@@ -1056,9 +1064,13 @@ export const createApp = async (
         ),
       ),
   );
-  app.patch("/api/content/:id", requireRole("admin", "editor"), async (request, response) =>
-    response.json(await manager.update(String(request.params.id), request.body)),
-  );
+  app.patch("/api/content/:id", requireRole("admin", "editor"), async (request, response) => {
+    const contentId = String(request.params.id);
+    const updated = await manager.update(contentId, request.body);
+    if (updated && media && Array.isArray(request.body?.assets))
+      await media.syncContentAssets(contentId, updated.assets);
+    response.json(updated);
+  });
   app.delete("/api/content/:id", requireRole("admin", "editor"), async (request, response) => {
     const removed = await manager.store.remove(String(request.params.id));
     response.status(removed ? 204 : 404).end();
@@ -1081,6 +1093,65 @@ export const createApp = async (
       return;
     }
     response.json(await manager.publish(String(request.params.id), input.dryRun));
+  });
+  app.post("/api/assets/grants", requireRole("admin", "editor"), async (request, response) => {
+    if (!media?.configured) {
+      response.status(503).json({ error: "El almacenamiento R2 no está configurado" });
+      return;
+    }
+    const input = z
+      .object({
+        contentId: z.string().uuid(),
+        files: z
+          .array(
+            z.object({
+              name: z.string().trim().min(1).max(255),
+              contentType: z.enum(MEDIA_CONTENT_TYPES),
+              size: z
+                .number()
+                .int()
+                .positive()
+                .max(Number(process.env.MEDIA_MAX_OBJECT_BYTES ?? 5 * 1024 * 1024)),
+            }),
+          )
+          .min(1)
+          .max(10),
+      })
+      .parse(request.body);
+    await manager.required(input.contentId);
+    try {
+      response.status(201).json({ grants: await media.createUploadGrants(input.contentId, input.files) });
+    } catch (error) {
+      if (error instanceof MediaQuotaExceededError) {
+        response.status(507).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
+  });
+  app.post("/api/assets/:id/complete", requireRole("admin", "editor"), async (request, response) => {
+    if (!media?.configured) {
+      response.status(503).json({ error: "El almacenamiento R2 no está configurado" });
+      return;
+    }
+    response.json(await media.completeUpload(String(request.params.id)));
+  });
+  app.delete("/api/assets/:id", requireRole("admin", "editor"), async (request, response) => {
+    if (!media?.configured) {
+      response.status(503).json({ error: "El almacenamiento R2 no está configurado" });
+      return;
+    }
+    await media.removeAsset(String(request.params.id));
+    response.status(204).end();
+  });
+  app.post("/api/assets/maintenance", requireRole("admin"), async (_request, response) => {
+    if (!media?.configured) {
+      response.status(503).json({ error: "El almacenamiento R2 no está configurado" });
+      return;
+    }
+    const cleaned = await media.cleanup();
+    const reconciliation = await media.reconcile();
+    response.json({ cleaned, reconciliation });
   });
   app.post("/api/content/:id/repost/instagram", requireRole("admin", "editor", "social"), async (request, response) => {
     const input = z.object({ dryRun: z.boolean().default(false) }).parse(request.body ?? {});

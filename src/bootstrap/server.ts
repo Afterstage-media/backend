@@ -15,6 +15,7 @@ const {
   instagramConnections,
   editorialVoice,
   mail,
+  media,
 } = await createManagers();
 const app = await createApp(
   manager,
@@ -27,6 +28,8 @@ const app = await createApp(
   instagramConnections,
   editorialVoice,
   mail,
+  undefined,
+  media,
 );
 
 app.listen(port, () => log("info", "server_started", { port }));
@@ -42,8 +45,21 @@ const timer = setInterval(
 );
 timer.unref();
 
+const mediaMaintenanceInterval = Number(process.env.MEDIA_MAINTENANCE_INTERVAL_MS ?? 7 * 24 * 60 * 60 * 1000);
+const mediaTimer = setInterval(
+  () =>
+    void schedulerRun(async () => {
+      if (!media) return;
+      await media.cleanup();
+      await media.reconcile();
+    }).catch((error) => log("error", "media_maintenance_failed", { error: (error as Error).message })),
+  mediaMaintenanceInterval,
+);
+mediaTimer.unref();
+
 const shutdown = async () => {
   clearInterval(timer);
+  clearInterval(mediaTimer);
   await persistence?.client.close();
   process.exit(0);
 };
