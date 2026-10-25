@@ -45,6 +45,7 @@ import type { InstagramConnectionStore } from "../../infrastructure/persistence/
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
 import { MailboxManager } from "../../application/mailbox-manager.js";
 import { inboundMailSchema, mailReplySchema } from "../../domain/mail/types.js";
+import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import type { PressMailer } from "../../infrastructure/integrations/mailer.js";
 import {
@@ -287,6 +288,30 @@ export const createApp = async (
       }
     },
   );
+  app.get("/api/inbound/email/routing", async (request, response) => {
+    const secret = process.env.INBOUND_EMAIL_WEBHOOK_SECRET;
+    const received = Buffer.from(request.header("x-afterstage-routing-secret") ?? "", "utf8");
+    const expected = Buffer.from(secret ?? "", "utf8");
+    if (!secret || received.length !== expected.length || !timingSafeEqual(received, expected)) {
+      response.status(401).json({ error: "invalid_routing_secret" });
+      return;
+    }
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    const recipient = String(request.query.recipient ?? "").trim();
+    if (!recipient) {
+      response.status(400).json({ error: "recipient_required" });
+      return;
+    }
+    const route = await mailboxManager.getRoute(recipient);
+    if (!route) {
+      response.status(404).json({ error: "mail_route_not_found" });
+      return;
+    }
+    response.json({ route });
+  });
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "32mb" }));
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
@@ -904,6 +929,73 @@ export const createApp = async (
     await mailboxManager.markRead(thread.id);
     response.json({ thread: { ...thread, unreadCount: 0 } });
   });
+  app.get("/api/mail/routes", requireRole("admin", "editor", "press", "community"), async (_request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    response.json({ routes: await mailboxManager.listRoutes() });
+  });
+  app.post("/api/mail/routes", requireRole("admin", "editor"), requireSecureTransport, async (request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    const parsed = mailRouteInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: "invalid_mail_route", details: parsed.error.flatten() });
+      return;
+    }
+    try {
+      response.status(201).json({ route: await mailboxManager.createRoute(parsed.data) });
+    } catch (error) {
+      const duplicate = (error as { code?: number }).code === 11000;
+      response.status(duplicate ? 409 : 400).json({ error: duplicate ? "mail_route_exists" : "invalid_mail_route" });
+    }
+  });
+  app.patch(
+    "/api/mail/routes/:address",
+    requireRole("admin", "editor"),
+    requireSecureTransport,
+    async (request, response) => {
+      if (!mailboxManager) {
+        response.status(503).json({ error: "mailbox_not_configured" });
+        return;
+      }
+      const parsed = mailRoutePatchSchema.safeParse(request.body);
+      if (!parsed.success) {
+        response.status(400).json({ error: "invalid_mail_route", details: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const route = await mailboxManager.updateRoute(decodeURIComponent(String(request.params.address)), parsed.data);
+        if (!route) {
+          response.status(404).json({ error: "mail_route_not_found" });
+          return;
+        }
+        response.json({ route });
+      } catch {
+        response.status(400).json({ error: "invalid_mail_route" });
+      }
+    },
+  );
+  app.delete(
+    "/api/mail/routes/:address",
+    requireRole("admin", "editor"),
+    requireSecureTransport,
+    async (request, response) => {
+      if (!mailboxManager) {
+        response.status(503).json({ error: "mailbox_not_configured" });
+        return;
+      }
+      const deleted = await mailboxManager.deleteRoute(decodeURIComponent(String(request.params.address)));
+      if (!deleted) {
+        response.status(404).json({ error: "mail_route_not_found" });
+        return;
+      }
+      response.status(204).end();
+    },
+  );
   app.post(
     "/api/mail/threads/:id/reply",
     requireRole("admin", "editor", "press", "community"),

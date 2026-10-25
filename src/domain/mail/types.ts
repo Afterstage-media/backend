@@ -47,6 +47,8 @@ export type MailThread = {
   id: string;
   subject: string;
   mailbox?: string;
+  mailboxType?: "personal" | "distribution";
+  mailboxLabel?: string;
   participants: string[];
   lastMessageAt: string;
   unreadCount: number;

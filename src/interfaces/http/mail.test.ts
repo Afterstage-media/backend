@@ -93,5 +93,15 @@ test("acepta el webhook firmado y rechaza firmas inválidas", async (context) =>
       body,
     });
     assert.equal(rejected.status, 401);
+
+    const route = await fetch(
+      `${base}/api/inbound/email/routing?recipient=${encodeURIComponent("prensa@afterstage.ar")}`,
+      { headers: { "X-Afterstage-Routing-Secret": secret } },
+    );
+    assert.equal(route.status, 200);
+    assert.equal((await route.json()).route.kind, "distribution");
+
+    const unauthorizedRoute = await fetch(`${base}/api/inbound/email/routing?recipient=prensa@afterstage.ar`);
+    assert.equal(unauthorizedRoute.status, 401);
   });
 });
