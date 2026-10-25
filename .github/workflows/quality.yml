@@ -21,3 +21,9 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm audit --omit=dev --audit-level=moderate
+      - name: Validate Cloudflare inbound email worker
+        working-directory: cloudflare/email-worker
+        run: |
+          npm ci --ignore-scripts
+          npx wrangler deploy --dry-run --outdir="$RUNNER_TEMP/afterstage-email-worker"
+          npm audit --omit=dev --audit-level=moderate
