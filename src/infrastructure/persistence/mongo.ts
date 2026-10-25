@@ -35,6 +35,8 @@ import type { ActiveUser, ManagedUser, ManagedUserInput, UserDirectory } from ".
 import { MongoMonetizationStore } from "./monetization-store.js";
 import { MonetizationManager } from "../../application/monetization-manager.js";
 import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
+import { MediaAssetService, MediaGatewayClient } from "../integrations/media-storage.js";
+import { MongoMediaAssetStore } from "./media-assets.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -535,6 +537,7 @@ export type MongoPersistence = {
   directory: MongoDirectoryStore;
   monetization: MongoMonetizationStore;
   mcpOAuth: MongoMcpOAuthStore;
+  mediaAssets: MongoMediaAssetStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -558,6 +561,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const directory = new MongoDirectoryStore(db.collection<MongoRecord>("directory"));
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
   const mcpOAuth = new MongoMcpOAuthStore(db);
+  const mediaAssets = new MongoMediaAssetStore(db);
   await Promise.all([
     content.init(),
     press.init(),
@@ -565,8 +569,9 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     directory.init(),
     monetization.init(),
     mcpOAuth.init(),
+    mediaAssets.init(),
   ]);
-  return { client, content, press, users, directory, monetization, mcpOAuth };
+  return { client, content, press, users, directory, monetization, mcpOAuth, mediaAssets };
 };
 
 export const createManagers = async () => {
@@ -579,5 +584,6 @@ export const createManagers = async () => {
     directory: new DirectoryManager(persistence?.directory),
     monetization: new MonetizationManager(persistence?.monetization),
     mcpOAuth: persistence?.mcpOAuth,
+    media: persistence ? new MediaAssetService(persistence.mediaAssets, new MediaGatewayClient()) : undefined,
   };
 };

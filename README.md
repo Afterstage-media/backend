@@ -75,6 +75,16 @@ npm run dev
 | `MONETIZATION_PRODUCTS_JSON` | Catálogo opcional configurable en JSON; si se omite se usa el catálogo inicial de monetización. |
 | `MEDIA_ROOT` | Raíz local autorizada para archivos que se sirven bajo `/media`. |
 | `PUBLIC_MEDIA_BASE_URL` | Base pública alternativa para medios locales. |
+| `MEDIA_GATEWAY_URL` | URL del Worker `afterstage-storage-gateway`; habilita grants y mantenimiento R2. |
+| `MEDIA_GATEWAY_SERVICE_TOKEN` | Token servidor-a-servidor para el gateway; nunca se envía al navegador. |
+| `MEDIA_PUBLIC_BASE_URL` | Base pública del gateway para servir fotos, por ejemplo `https://media.afterstage.ar`. |
+| `MEDIA_MAX_OBJECT_BYTES` | Máximo por foto; por defecto 5 MiB. |
+| `MEDIA_MAX_TOTAL_BYTES` | Cuota total reservada en Mongo; por defecto 25 GiB. |
+| `MEDIA_MAX_MONTHLY_UPLOAD_BYTES` | Cuota mensual de nuevas fotos; por defecto 2 GiB. |
+| `MEDIA_RESERVATION_TTL_MS` | Vida operativa de una reserva pendiente; por defecto 24 horas. |
+| `MEDIA_ORPHAN_GRACE_MS` | Período de gracia antes de borrar fotos no vinculadas; por defecto 48 horas. |
+| `MEDIA_MAINTENANCE_INTERVAL_MS` | Frecuencia de limpieza y reconciliación R2 ↔ Mongo; por defecto semanal. |
+| `VITE_R2_MEDIA_UPLOADS` | Variable del frontend; cuando vale `true`, el navegador sube fotos directamente al gateway R2. |
 | `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
 | `AI_API_KEY` | Opcional para las herramientas internas de regeneración editorial (`/api/content/:id/generate`); no es necesaria para el MCP, porque el agente genera la nota. Nunca debe configurarse en el cliente, Git o la conexión MCP. |
 | `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
@@ -182,7 +192,11 @@ Generá una nota con los datos verificables, marcá con [VERIFICAR] lo que falte
 - `POST /api/content/:id/publish`
 - `POST /api/content/:id/metrics/instagram` — consulta y persiste insights de la publicación de Instagram.
 - `GET /api/metrics/instagram` — resumen agregado de alcance, impresiones, interacciones, likes, comentarios, guardados, compartidos y reproducciones.
-- `POST /api/assets`
+- `POST /api/assets/grants` — crea reservas Mongo y grants temporales para subir fotos directamente a R2.
+- `POST /api/assets/:id/complete` — verifica el objeto en R2 y lo registra como subido.
+- `DELETE /api/assets/:id` — elimina una foto R2 autorizada y libera la reserva.
+- `POST /api/assets/maintenance` — ejecuta manualmente limpieza y reconciliación (admin).
+- `POST /api/assets` — flujo local legado, disponible mientras `VITE_R2_MEDIA_UPLOADS` siga desactivado.
 - `GET /media/<archivo>` — sirve únicamente archivos dentro de `MEDIA_ROOT`
 - `GET /api/public/content` y `/api/public/content/:slug`
 - `GET /notas/:slug` — vista pública segura de cada nota publicada en el canal web
@@ -208,6 +222,8 @@ El detector de duplicados bloquea al guardar coincidencias fuertes (HTTP 409), p
 Los listados públicos de contenido, eventos, directorio y reemplazos aplican un límite seguro por request (default 50, máximo 100). El backend devuelve sólo ese máximo efectivo; la paginación/cursor queda como siguiente evolución si el volumen editorial lo requiere.
 
 Las rutas `/api/*` requieren el JWT emitido por el login o la sesión de navegador segura; los roles y permisos se validan contra MongoDB en cada request.
+
+Cuando el flujo R2 está habilitado, la colección `media_assets` conserva una fila por foto y `media_quota` conserva los contadores reservados. Una foto queda en estado `uploaded` hasta que el contenido la referencia; al quitarla de una nota pasa a `delete_pending` y se elimina después del período de gracia. La reconciliación semanal detecta objetos de R2 sin fila Mongo y filas Mongo cuyo objeto ya no existe.
 
 ## Verificación
 

@@ -25,6 +25,9 @@ export const assetSchema = z.object({
   mediaType: z.enum(["image", "video"]).default("image"),
   altText: z.string().default(""),
   credit: z.string().default(""),
+  storage: z.enum(["local", "r2"]).optional(),
+  key: z.string().max(512).optional(),
+  mediaAssetId: z.string().max(100).optional(),
 });
 
 export const contentInputSchema = z.object({
