@@ -1,0 +1,8 @@
+{
+  "name": "afterstage-inbound-email",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-25",
+  "vars": {
+    "AFTERSTAGE_API_URL": "https://afterstage.ar",
+  },
+}

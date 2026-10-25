@@ -38,6 +38,7 @@ import { MongoMcpOAuthStore } from "../../interfaces/mcp/oauth.js";
 import { createInstagramConnectionStore, type MongoInstagramConnectionStore } from "./instagram-connections.js";
 import { MongoEditorialVoiceStore } from "./editorial-voice-mongo.js";
 import { MetaPublisher } from "../integrations/meta.js";
+import { MongoMailStore } from "./mail-store.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -540,6 +541,7 @@ export type MongoPersistence = {
   mcpOAuth: MongoMcpOAuthStore;
   instagramConnections: MongoInstagramConnectionStore;
   editorialVoice: MongoEditorialVoiceStore;
+  mail: MongoMailStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -565,6 +567,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const mcpOAuth = new MongoMcpOAuthStore(db);
   const instagramConnections = createInstagramConnectionStore(db);
   const editorialVoice = new MongoEditorialVoiceStore(db.collection("editorial_voices"));
+  const mail = new MongoMailStore(db);
   await Promise.all([
     content.init(),
     press.init(),
@@ -574,8 +577,20 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     mcpOAuth.init(),
     instagramConnections.init(),
     editorialVoice.init(),
+    mail.init(),
   ]);
-  return { client, content, press, users, directory, monetization, mcpOAuth, instagramConnections, editorialVoice };
+  return {
+    client,
+    content,
+    press,
+    users,
+    directory,
+    monetization,
+    mcpOAuth,
+    instagramConnections,
+    editorialVoice,
+    mail,
+  };
 };
 
 export const createManagers = async () => {
@@ -594,5 +609,6 @@ export const createManagers = async () => {
     mcpOAuth: persistence?.mcpOAuth,
     instagramConnections: persistence?.instagramConnections,
     editorialVoice: persistence?.editorialVoice,
+    mail: persistence?.mail,
   };
 };
