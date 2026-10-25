@@ -42,7 +42,7 @@ src/
 └── bootstrap/                  # arranque del proceso
 ```
 
-Las colecciones `contents`, `press_events`, `press_contacts`, `press_accreditations`, `press_coverages`, `press_settings`, `directory` y `users` se inicializan con índices para estados, fechas, agenda, directorio y búsquedas de contactos. Sin `MONGODB_URI` el servicio no inicia.
+Las colecciones `contents`, `press_events`, `press_contacts`, `press_accreditations`, `press_coverages`, `press_settings`, `directory`, `users`, `mail_threads` y `mail_messages` se inicializan con índices para estados, fechas, agenda, directorio, búsquedas de contactos y conversaciones de correo. Sin `MONGODB_URI` el servicio no inicia.
 
 No se automatiza Chrome. La API oficial de Meta evita selectores rotos, sesiones vencidas, captchas y almacenamiento de contraseñas. También ofrece IDs, estados y errores auditables. Si una función no está disponible para la cuenta, se puede añadir otro adaptador detrás de `MetaPublisher` sin cambiar el panel ni MCP.
 
@@ -86,6 +86,8 @@ npm run dev
 | `CORS_ORIGINS` | Lista opcional de orígenes permitidos, separada por comas. |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Opcionales. Habilitan el envío de solicitudes de acreditación. |
 | `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Ajustes del transporte de correo. |
+| `INBOUND_EMAIL_WEBHOOK_SECRET` | Secreto compartido con el Email Worker de Cloudflare para aceptar mensajes entrantes. |
+| `INBOUND_EMAIL_DOMAIN` | Dominio permitido para destinatarios entrantes; por defecto `afterstage.ar`. |
 | `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
 | `JWT_ACCESS_TTL_SECONDS` | Duración del access token emitido por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
 | `MCP_PUBLIC_URL` | URL pública HTTPS del recurso MCP y su Authorization Server; por defecto usa `PUBLIC_BASE_URL`. |
@@ -101,6 +103,10 @@ Para Atlas, agregá la IP del servidor en Network Access, creá un usuario de ba
 
 El login se administra en MongoDB. Para crear o rotar un usuario ejecutá `USER_PASSWORD='una-clave-de-12-o-más-caracteres' MONGODB_URI='...' npm run users:upsert -- redaccion editor redaccion@medio.example true`. El backend nunca guarda la contraseña en claro: usa hashes `scrypt`, emite JWT HS256 de corta duración y vuelve a consultar en Mongo el usuario activo y su rol en cada request.
 El flujo de archivos locales y Cloudflare está detallado en [`documentacion/06-publicacion-local-cloudflare.md`](../documentacion/06-publicacion-local-cloudflare.md). La URL estable se configura con `CLOUDFLARE_TUNNEL_URL`; no se crea un container de Meta hasta que llega la fecha programada.
+
+### Bandeja de correo
+
+El Worker de Cloudflare Email Routing vive en `cloudflare/email-worker`. Procesa cualquier dirección de `afterstage.ar`, firma el JSON y lo envía a `POST /api/inbound/email`. El backend deduplica por `Message-ID`, agrupa conversaciones en MongoDB y expone la bandeja en `/admin/correo`. Las respuestas salen por SMTP y se guardan como mensajes salientes en la misma conversación. El Worker necesita el secreto `INBOUND_EMAIL_WEBHOOK_SECRET` cargado con `wrangler secret put` y el dominio debe tener una ruta de Email Routing hacia el Worker.
 
 ## Sitio público conectado
 
@@ -203,6 +209,10 @@ Para incluir una imagen en `crear_nota`, el agente puede enviar una entrada como
 - `POST /api/press/replacement-applications/:id/assign` — asigna un reemplazo, rechaza los demás y notifica por email con la identidad del medio.
 - `GET/PATCH /api/press/media-kit`
 - `POST /api/press/accreditations/:id/send` — SMTP; recibe `dryRun: true` por defecto
+- `POST /api/inbound/email` — webhook firmado del Worker de Cloudflare; no requiere login de usuario.
+- `GET /api/mail/threads` — bandeja autenticada para admin, editor, prensa y comunidad.
+- `GET /api/mail/threads/:id` — conversación autenticada; la marca como leída.
+- `POST /api/mail/threads/:id/reply` — envía y persiste una respuesta por SMTP.
 - `GET /health`
 - `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, devuelve un JWT de acceso y establece la sesión de navegador segura.
 - `GET /api/auth/me` — devuelve la identidad, roles y permisos del JWT actual.

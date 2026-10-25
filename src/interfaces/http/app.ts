@@ -1,6 +1,6 @@
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
@@ -41,6 +41,10 @@ import { mountRemoteMcp } from "../mcp/remote.js";
 import type { McpOAuthStore } from "../mcp/oauth.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
+import { MailboxManager } from "../../application/mailbox-manager.js";
+import { inboundMailSchema, mailReplySchema } from "../../domain/mail/types.js";
+import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
+import type { PressMailer } from "../../infrastructure/integrations/mailer.js";
 import {
   exchangeInstagramCode,
   instagramAuthorizationUrl,
@@ -192,8 +196,12 @@ export const createApp = async (
   mcpOAuthStore?: McpOAuthStore,
   instagramConnections?: InstagramConnectionStore,
   editorialVoice?: EditorialVoiceRepository,
+  mailbox?: MailRepository,
+  mailer?: Pick<PressMailer, "send">,
 ) => {
   const app = express();
+  const mailboxManager = mailbox ? new MailboxManager(mailbox, mailer) : undefined;
+  const inboundMailbox = mailbox;
   if (users) configureUserDirectory(users);
   const uploadDir = process.env.UPLOAD_DIR ?? path.resolve("uploads");
   const mediaRoot = process.env.MEDIA_ROOT ?? uploadDir;
@@ -230,6 +238,52 @@ export const createApp = async (
   app.use(new RateLimiter().middleware);
   app.use(auditMiddleware);
   app.use(cors({ origin: origins.length ? origins : false }));
+  app.post(
+    "/api/inbound/email",
+    express.raw({ type: "application/json", limit: process.env.JSON_BODY_LIMIT ?? "32mb" }),
+    async (request, response) => {
+      const secret = process.env.INBOUND_EMAIL_WEBHOOK_SECRET;
+      const rawBody = Buffer.isBuffer(request.body) ? request.body : Buffer.from("");
+      const signature = request.header("x-afterstage-signature")?.replace(/^sha256=/, "") ?? "";
+      const expected = secret ? createHmac("sha256", secret).update(rawBody).digest() : Buffer.alloc(0);
+      const received = Buffer.from(signature, "hex");
+      if (!secret || received.length !== expected.length || !timingSafeEqual(received, expected)) {
+        response.status(401).json({ error: "invalid_signature" });
+        return;
+      }
+      if (!mailboxManager || !inboundMailbox) {
+        response.status(503).json({ error: "mailbox_not_configured" });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString("utf8"));
+      } catch {
+        response.status(400).json({ error: "invalid_json" });
+        return;
+      }
+      const parsed = inboundMailSchema.safeParse(body);
+      if (!parsed.success) {
+        response.status(400).json({ error: "invalid_inbound_email", details: parsed.error.flatten() });
+        return;
+      }
+      const domain = (process.env.INBOUND_EMAIL_DOMAIN ?? "afterstage.ar").toLowerCase();
+      const recipients = [...parsed.data.to, ...parsed.data.cc];
+      if (!recipients.some((address) => address.toLowerCase().endsWith(`@${domain}`))) {
+        response.status(400).json({ error: "recipient_domain_not_allowed" });
+        return;
+      }
+      try {
+        const message = await inboundMailbox.ingestInbound(parsed.data);
+        response.status(202).json({ accepted: true, messageId: message.messageId, threadId: message.threadId });
+      } catch (error) {
+        log("error", "inbound_email_store_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        response.status(503).json({ error: "inbound_email_store_failed" });
+      }
+    },
+  );
   app.use(express.json({ limit: process.env.JSON_BODY_LIMIT ?? "32mb" }));
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
@@ -822,6 +876,53 @@ export const createApp = async (
   });
 
   app.use("/api", requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"));
+  app.get("/api/mail/threads", requireRole("admin", "editor", "press", "community"), async (_request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    response.json({ threads: await mailboxManager.listThreads() });
+  });
+  app.get("/api/mail/threads/:id", requireRole("admin", "editor", "press", "community"), async (request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    const thread = await mailboxManager.getThread(String(request.params.id));
+    if (!thread) {
+      response.status(404).json({ error: "thread_not_found" });
+      return;
+    }
+    await mailboxManager.markRead(thread.id);
+    response.json({ thread: { ...thread, unreadCount: 0 } });
+  });
+  app.post(
+    "/api/mail/threads/:id/reply",
+    requireRole("admin", "editor", "press", "community"),
+    requireSecureTransport,
+    async (request, response) => {
+      if (!mailboxManager) {
+        response.status(503).json({ error: "mailbox_not_configured" });
+        return;
+      }
+      const parsed = mailReplySchema.safeParse(request.body);
+      if (!parsed.success) {
+        response.status(400).json({ error: "invalid_reply", details: parsed.error.flatten() });
+        return;
+      }
+      try {
+        const message = await mailboxManager.reply(String(request.params.id), parsed.data);
+        response.status(201).json({ message });
+      } catch (error) {
+        log("error", "mail_reply_failed", {
+          error: error instanceof Error ? error.message : String(error),
+          threadId: String(request.params.id),
+        });
+        const status = error instanceof Error && error.message === "Conversación no encontrada" ? 404 : 502;
+        response.status(status).json({ error: status === 404 ? "thread_not_found" : "mail_reply_failed" });
+      }
+    },
+  );
   app.get("/api/integrations/instagram", requirePermission("instagram:read"), async (_request, response) => {
     if (!instagramConnections) {
       response.status(503).json({ error: "La conexión con Instagram no está configurada" });

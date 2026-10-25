@@ -7,6 +7,8 @@ export type Mail = {
   html?: string;
   replyTo?: string;
   fromName?: string;
+  inReplyTo?: string;
+  references?: string[];
 };
 
 export class PressMailer {
@@ -34,11 +36,15 @@ export class PressMailer {
     const address = process.env.SMTP_FROM ?? process.env.SMTP_USER;
     if (!address) throw new Error("SMTP_FROM o SMTP_USER es necesario para enviar solicitudes");
     const from = mail.fromName ? `"${mail.fromName.replace(/[\"\r\n]/g, "")}" <${address}>` : address;
-    const { fromName: _fromName, ...payload } = mail;
+    const { fromName: _fromName, inReplyTo, references, ...payload } = mail;
     const result = await this.getTransporter().sendMail({
       from,
       ...payload,
-      headers: { "X-Mailer": "afterstage Press Desk" },
+      headers: {
+        "X-Mailer": "afterstage Press Desk",
+        ...(inReplyTo ? { "In-Reply-To": inReplyTo } : {}),
+        ...(references?.length ? { References: references.join(" ") } : {}),
+      },
     });
     return { messageId: result.messageId, dryRun: false };
   }
