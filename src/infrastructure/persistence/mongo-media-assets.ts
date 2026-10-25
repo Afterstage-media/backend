@@ -86,7 +86,6 @@ export class MongoMediaAssetStore {
       this.assets.createIndex({ status: 1, deleteAfter: 1 }),
       this.assets.createIndex({ contentId: 1, status: 1 }),
       this.assets.createIndex({ requestedContentId: 1, status: 1 }),
-      this.quota.createIndex({ _id: 1 }, { unique: true }),
     ]);
   }
 
