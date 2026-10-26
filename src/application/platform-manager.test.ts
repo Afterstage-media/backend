@@ -104,6 +104,33 @@ test("gestiona perfiles, coberturas, seguros, foro y traslados de la plataforma"
   assert.equal(renewedInsurance?.renewedFromId, insurance.id);
   assert.equal(renewedInsurance?.email, insurance.email);
   assert.equal(renewedInsurance?.contractStatus, "pending");
+  const detailedInsurance = await manager.createInsuranceRequest({
+    name: "Productora Completa",
+    dni: "30123456",
+    email: "cotizaciones@example.com",
+    coverageTypes: ["ap", "art", "vida", "robo_equipos"],
+    coverageType: "Accidentes personales + ART + Seguro de vida + Robo de equipos",
+    productDetails: {
+      eventName: "Festival de prueba",
+      eventLocation: "CABA",
+      eventDescription: "Evento musical al aire libre.",
+      apPeopleCount: 120,
+      apInsuredSumLabel: "$10.000.000",
+      artEmployer: "Productora Completa SRL",
+      artActivity: "Producción de eventos",
+      artWorkerCount: 18,
+      vidaInsuredName: "Persona Asegurada",
+      vidaInsuredAge: 35,
+      vidaInsuredSumLabel: "$20.000.000",
+      vidaBeneficiary: "Familia directa",
+      equipmentDescription: "Cámaras, consolas y notebooks.",
+      equipmentValueLabel: "USD 25.000",
+      equipmentCount: 14,
+      equipmentSerials: "INV-001 a INV-014",
+    },
+  });
+  assert.deepEqual(detailedInsurance.coverageTypes, ["ap", "art", "vida", "robo_equipos"]);
+  assert.equal(detailedInsurance.productDetails.artWorkerCount, 18);
   const thread = await manager.createForumThread({
     eventId: offer.eventId,
     title: "¿Desde dónde salen?",

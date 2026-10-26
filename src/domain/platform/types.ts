@@ -15,6 +15,14 @@ export const transportStatuses = ["open", "full", "closed", "cancelled"] as cons
 export const insuranceStatuses = ["new", "contacted", "quoted", "closed"] as const;
 export const insuranceNotificationStatuses = ["pending", "sent", "not_configured", "failed"] as const;
 export const insuranceContractStatuses = ["pending", "contracted", "cancelled"] as const;
+export const insuranceProducts = ["ap", "art", "vida", "robo_equipos"] as const;
+export const insuranceProductLabels: Record<(typeof insuranceProducts)[number], string> = {
+  ap: "Accidentes personales",
+  art: "ART",
+  vida: "Seguro de vida",
+  robo_equipos: "Robo de equipos",
+};
+export const insuranceProductSchema = z.enum(insuranceProducts);
 export const marketplaceCategories = ["merch", "service", "benefit"] as const;
 
 export const photographerProfileSchema = z.object({
@@ -84,33 +92,118 @@ export const transportRequestSchema = z.object({
   status: z.enum(["new", "contacted", "confirmed", "cancelled"] as const).default("new"),
 });
 
-export const insuranceRequestSchema = z.object({
-  eventId: z.string().uuid().nullable().default(null),
-  name: z.string().trim().min(2).max(180),
-  organization: z.string().max(180).default(""),
-  email: z.string().email().max(180),
-  phone: z.string().max(80).default(""),
-  coverageType: z.string().trim().min(2).max(180),
-  startsAt: optionalDate,
-  endsAt: optionalDate,
-  peopleCount: z.number().int().min(1).max(100000).default(1),
-  notes: z.string().max(4000).default(""),
-  providerName: z.string().max(180).default(""),
-  quoteLabel: z.string().max(500).default(""),
-  quoteUrl: optionalUrl.default(""),
-  policyNumber: z.string().max(180).default(""),
-  policyUrl: optionalUrl.default(""),
-  internalNotes: z.string().max(4000).default(""),
-  mailThreadId: z.string().max(180).default(""),
-  notificationStatus: z.enum(insuranceNotificationStatuses).default("pending"),
-  notificationTo: z.string().max(1000).default(""),
-  contractStatus: z.enum(insuranceContractStatuses).default("pending"),
-  contractedAt: optionalDate,
-  commissionLabel: z.string().max(500).default(""),
-  commissionNotes: z.string().max(4000).default(""),
-  renewedFromId: z.string().max(180).default(""),
-  status: z.enum(insuranceStatuses).default("new"),
+const insuranceProductDetailsBaseSchema = z.object({
+  eventName: z.string().max(220).default(""),
+  eventLocation: z.string().max(220).default(""),
+  eventDescription: z.string().max(2000).default(""),
+  apPeopleCount: z.number().int().min(1).max(100000).nullable().default(null),
+  apInsuredSumLabel: z.string().max(180).default(""),
+  artEmployer: z.string().max(180).default(""),
+  artActivity: z.string().max(500).default(""),
+  artWorkerCount: z.number().int().min(1).max(100000).nullable().default(null),
+  vidaInsuredName: z.string().max(180).default(""),
+  vidaInsuredAge: z.number().int().min(0).max(130).nullable().default(null),
+  vidaInsuredSumLabel: z.string().max(180).default(""),
+  vidaBeneficiary: z.string().max(500).default(""),
+  equipmentDescription: z.string().max(2000).default(""),
+  equipmentValueLabel: z.string().max(180).default(""),
+  equipmentCount: z.number().int().min(1).max(100000).nullable().default(null),
+  equipmentSerials: z.string().max(2000).default(""),
 });
+
+export const insuranceProductDetailsSchema = insuranceProductDetailsBaseSchema;
+const defaultInsuranceProductDetails = insuranceProductDetailsBaseSchema.parse({});
+export const insuranceRequestSchema = z
+  .object({
+    eventId: z.string().uuid().nullable().default(null),
+    name: z.string().trim().min(2).max(180),
+    dni: z.string().trim().max(30).default(""),
+    organization: z.string().max(180).default(""),
+    email: z.string().email().max(180),
+    phone: z.string().max(80).default(""),
+    coverageType: z.string().trim().max(500).default(""),
+    coverageTypes: z.array(insuranceProductSchema).max(4).default([]),
+    productDetails: insuranceProductDetailsBaseSchema.default(defaultInsuranceProductDetails),
+    startsAt: optionalDate,
+    endsAt: optionalDate,
+    peopleCount: z.number().int().min(1).max(100000).default(1),
+    notes: z.string().max(4000).default(""),
+    providerName: z.string().max(180).default(""),
+    quoteLabel: z.string().max(500).default(""),
+    quoteUrl: optionalUrl.default(""),
+    policyNumber: z.string().max(180).default(""),
+    policyUrl: optionalUrl.default(""),
+    internalNotes: z.string().max(4000).default(""),
+    mailThreadId: z.string().max(180).default(""),
+    notificationStatus: z.enum(insuranceNotificationStatuses).default("pending"),
+    notificationTo: z.string().max(1000).default(""),
+    contractStatus: z.enum(insuranceContractStatuses).default("pending"),
+    contractedAt: optionalDate,
+    commissionLabel: z.string().max(500).default(""),
+    commissionNotes: z.string().max(4000).default(""),
+    renewedFromId: z.string().max(180).default(""),
+    status: z.enum(insuranceStatuses).default("new"),
+  })
+  .superRefine((value, context) => {
+    const details = value.productDetails;
+    const required = (condition: boolean, path: string[], message: string) => {
+      if (!condition) context.addIssue({ code: "custom", path, message });
+    };
+    if (value.coverageTypes.includes("ap")) {
+      required(
+        Boolean(details.apPeopleCount),
+        ["productDetails", "apPeopleCount"],
+        "Indicá cuántas personas se aseguran.",
+      );
+      required(
+        Boolean(details.apInsuredSumLabel.trim()),
+        ["productDetails", "apInsuredSumLabel"],
+        "Indicá la suma asegurada de AP.",
+      );
+    }
+    if (value.coverageTypes.includes("art")) {
+      required(
+        Boolean(details.artEmployer.trim()),
+        ["productDetails", "artEmployer"],
+        "Indicá el empleador o razón social para ART.",
+      );
+      required(Boolean(details.artActivity.trim()), ["productDetails", "artActivity"], "Indicá la actividad para ART.");
+      required(
+        Boolean(details.artWorkerCount),
+        ["productDetails", "artWorkerCount"],
+        "Indicá la cantidad de trabajadores para ART.",
+      );
+    }
+    if (value.coverageTypes.includes("vida")) {
+      required(
+        Boolean(details.vidaInsuredName.trim()),
+        ["productDetails", "vidaInsuredName"],
+        "Indicá la persona asegurada.",
+      );
+      required(
+        Boolean(details.vidaInsuredSumLabel.trim()),
+        ["productDetails", "vidaInsuredSumLabel"],
+        "Indicá la suma asegurada de vida.",
+      );
+    }
+    if (value.coverageTypes.includes("robo_equipos")) {
+      required(
+        Boolean(details.equipmentDescription.trim()),
+        ["productDetails", "equipmentDescription"],
+        "Describí los equipos a asegurar.",
+      );
+      required(
+        Boolean(details.equipmentValueLabel.trim()),
+        ["productDetails", "equipmentValueLabel"],
+        "Indicá el valor total de los equipos.",
+      );
+      required(
+        Boolean(details.equipmentCount),
+        ["productDetails", "equipmentCount"],
+        "Indicá cuántos equipos se aseguran.",
+      );
+    }
+  });
 
 export const forumThreadSchema = z.object({
   eventId: z.string().uuid(),
@@ -147,6 +240,8 @@ export type CoverageApplicationInput = z.infer<typeof coverageApplicationSchema>
 export type TransportOfferInput = z.infer<typeof transportOfferSchema>;
 export type TransportRequestInput = z.infer<typeof transportRequestSchema>;
 export type InsuranceRequestInput = z.infer<typeof insuranceRequestSchema>;
+export type InsuranceProduct = (typeof insuranceProducts)[number];
+export type InsuranceProductDetails = z.infer<typeof insuranceProductDetailsSchema>;
 export type ForumThreadInput = z.infer<typeof forumThreadSchema>;
 export type ForumPostInput = z.infer<typeof forumPostSchema>;
 export type MarketplaceListingInput = z.infer<typeof marketplaceListingSchema>;
