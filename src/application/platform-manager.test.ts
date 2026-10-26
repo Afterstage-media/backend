@@ -15,11 +15,13 @@ test("gestiona perfiles, coberturas, seguros, foro y traslados de la plataforma"
     name: "Fotógrafa Nueva",
     city: "Moreno",
     specialties: ["Recitales"],
+    portfolioUrls: ["https://cdn.example.com/foto-1.jpg", "https://cdn.example.com/foto-2.jpg"],
     contactEmail: "foto@example.com",
   });
   assert.equal(pending.status, "pending");
   await manager.updatePhotographer(pending.id, { status: "published" });
   assert.equal((await manager.publicPhotographers()).length, 1);
+  assert.equal((await manager.publicPhotographers())[0]?.portfolioUrls.length, 2);
   const request = await manager.createCoverageRequest({
     eventId: "6cc5f2d1-5f22-4a2a-971e-c7783fb8c1a1",
     title: "Cobertura de recital",
@@ -35,6 +37,15 @@ test("gestiona perfiles, coberturas, seguros, foro y traslados de la plataforma"
     message: "Tengo disponibilidad.",
   });
   assert.equal(application.status, "pending");
+  const publicRequests = await manager.publicCoverageRequests();
+  assert.equal("requesterEmail" in (publicRequests[0] || {}), false);
+  const accepted = await manager.updateCoverageApplication(application.id, {
+    status: "accepted",
+    deliveryUrl: "https://cdn.example.com/entrega.zip",
+    deliveryNotes: "Material listo para edición.",
+  });
+  assert.equal(accepted?.status, "accepted");
+  assert.equal((await manager.snapshot()).coverageRequests[0]?.status, "assigned");
   const offer = await manager.createTransportOffer({
     eventId: "6cc5f2d1-5f22-4a2a-971e-c7783fb8c1a1",
     title: "Micro desde Moreno",
@@ -52,6 +63,36 @@ test("gestiona perfiles, coberturas, seguros, foro y traslados de la plataforma"
     origin: "Moreno",
   });
   assert.equal(transportRequest.status, "new");
+  const smallOffer = await manager.createTransportOffer({
+    eventId: offer.eventId,
+    title: "Cupo chico",
+    kind: "carpool",
+    providerName: "Comunidad",
+    origin: "Moreno",
+    destination: "CABA",
+    seats: 2,
+  });
+  const reserved = await manager.createTransportRequest({
+    eventId: smallOffer.eventId,
+    offerId: smallOffer.id,
+    name: "Pasajero 1",
+    email: "pasajero1@example.com",
+    origin: "Moreno",
+    partySize: 2,
+  });
+  await manager.updateTransportRequest(reserved.id, { status: "confirmed" });
+  await assert.rejects(
+    () =>
+      manager.createTransportRequest({
+        eventId: smallOffer.eventId,
+        offerId: smallOffer.id,
+        name: "Pasajero 2",
+        email: "pasajero2@example.com",
+        origin: "Moreno",
+        partySize: 1,
+      }),
+    /No quedan cupos/,
+  );
   const insurance = await manager.createInsuranceRequest({
     eventId: offer.eventId,
     name: "Productora",
@@ -73,7 +114,7 @@ test("gestiona perfiles, coberturas, seguros, foro y traslados de la plataforma"
     authorEmail: "otra@example.com",
   });
   const hub = await manager.eventHub({ id: offer.eventId });
-  assert.equal(hub.coverageRequests.length, 1);
-  assert.equal(hub.transportOffers.length, 1);
+  assert.equal(hub.coverageRequests.length, 0);
+  assert.equal(hub.transportOffers.length, 2);
   assert.equal(hub.threads[0]?.posts.length, 1);
 });
