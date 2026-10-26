@@ -4,7 +4,7 @@ import { constants, publicEncrypt } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { createApp } from "./app.js";
+import { createApp, insuranceNotificationText } from "./app.js";
 import { ContentManager } from "../../application/content-manager.js";
 import { MetaPublisher } from "../../infrastructure/integrations/meta.js";
 import { ContentStore } from "../../infrastructure/persistence/content-store.js";
@@ -44,6 +44,35 @@ const withServer = async (
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 };
+
+test("arma una solicitud de seguros lista para copiar y pegar por producto", () => {
+  const text = insuranceNotificationText({
+    name: "Productora Completa",
+    dni: "30123456",
+    organization: "Productora Completa SRL",
+    email: "cotizaciones@example.com",
+    phone: "",
+    coverageType: "Accidentes personales + ART",
+    coverageTypes: ["ap", "art"],
+    productDetails: {
+      eventName: "Festival de prueba",
+      eventLocation: "CABA",
+      apPeopleCount: 120,
+      apInsuredSumLabel: "$10.000.000",
+      artEmployer: "Productora Completa SRL",
+      artActivity: "Producción de eventos",
+      artWorkerCount: 18,
+    },
+    startsAt: null,
+    endsAt: null,
+    peopleCount: 120,
+    notes: "Consultar cobertura para montaje y show.",
+  });
+  assert.match(text, /Asunto sugerido: Solicitud de cotización · Accidentes personales \+ ART/);
+  assert.match(text, /\[ACCIDENTES PERSONALES\]/);
+  assert.match(text, /\[ART\]/);
+  assert.match(text, /DNI: 30123456/);
+});
 
 test("rechaza login y registro sin HTTPS y no acepta contraseñas en claro", async (context) => {
   const previous = { nodeEnv: process.env.NODE_ENV, trustProxy: process.env.TRUST_PROXY };

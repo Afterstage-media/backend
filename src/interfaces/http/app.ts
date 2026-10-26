@@ -49,6 +49,7 @@ import { inboundMailSchema, mailReplySchema } from "../../domain/mail/types.js";
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
+import { insuranceProductLabels, type InsuranceProduct } from "../../domain/platform/types.js";
 import {
   exchangeInstagramCode,
   instagramAuthorizationUrl,
@@ -74,36 +75,109 @@ const insuranceRecipients = (): string[] =>
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
 
-const insuranceNotificationText = (item: {
+const insuranceProductNames = (coverageTypes: InsuranceProduct[] | undefined, fallback: string): string[] =>
+  coverageTypes?.length ? coverageTypes.map((product) => insuranceProductLabels[product]) : fallback ? [fallback] : [];
+
+export const insuranceNotificationText = (item: {
   name: string;
+  dni?: string;
   organization: string;
   email: string;
   phone: string;
   coverageType: string;
+  coverageTypes?: InsuranceProduct[];
+  productDetails?: {
+    eventName?: string;
+    eventLocation?: string;
+    eventDescription?: string;
+    apPeopleCount?: number | null;
+    apInsuredSumLabel?: string;
+    artEmployer?: string;
+    artActivity?: string;
+    artWorkerCount?: number | null;
+    vidaInsuredName?: string;
+    vidaInsuredAge?: number | null;
+    vidaInsuredSumLabel?: string;
+    vidaBeneficiary?: string;
+    equipmentDescription?: string;
+    equipmentValueLabel?: string;
+    equipmentCount?: number | null;
+    equipmentSerials?: string;
+  };
   startsAt: string | null;
   endsAt: string | null;
   peopleCount: number;
   notes: string;
   eventName?: string;
 }) =>
-  [
-    "Nueva solicitud de seguro en Afterstage",
-    "",
-    `Nombre: ${item.name}`,
-    `Organización: ${item.organization || "No indicada"}`,
-    `Email: ${item.email}`,
-    `Teléfono: ${item.phone || "No indicado"}`,
-    `Cobertura: ${item.coverageType}`,
-    `Evento: ${item.eventName || "No asociado a un evento"}`,
-    `Desde: ${item.startsAt || "No indicado"}`,
-    `Hasta: ${item.endsAt || "No indicado"}`,
-    `Personas: ${item.peopleCount}`,
-    "",
-    "Detalles:",
-    item.notes || "Sin detalles adicionales.",
-    "",
-    "La cotización debe gestionarse manualmente con el productor/aseguradora.",
-  ].join("\n");
+  (() => {
+    const details = item.productDetails ?? {};
+    const products = insuranceProductNames(item.coverageTypes, item.coverageType);
+    const lines = [
+      "SOLICITUD DE COTIZACIÓN | AFTERSTAGE",
+      "",
+      `Asunto sugerido: Solicitud de cotización · ${products.join(" + ") || "Seguro"} · ${item.name}`,
+      "",
+      "DATOS DEL SOLICITANTE",
+      `Nombre y apellido: ${item.name}`,
+      `DNI: ${item.dni || "No indicado"}`,
+      `Organización: ${item.organization || "No indicada"}`,
+      `Email: ${item.email}`,
+      `Teléfono: ${item.phone || "No indicado"}`,
+      "",
+      `PRODUCTOS SOLICITADOS: ${products.join(" + ") || item.coverageType || "No indicado"}`,
+      "",
+      "DATOS GENERALES DEL EVENTO",
+      `Evento: ${details.eventName || item.eventName || "No indicado"}`,
+      `Lugar: ${details.eventLocation || "No indicado"}`,
+      `Descripción: ${details.eventDescription || "No indicada"}`,
+      `Desde: ${item.startsAt || "No indicado"}`,
+      `Hasta: ${item.endsAt || "No indicado"}`,
+      `Personas involucradas: ${item.peopleCount}`,
+      "",
+      "DETALLE POR PRODUCTO",
+    ];
+    if (item.coverageTypes?.includes("ap"))
+      lines.push(
+        "[ACCIDENTES PERSONALES]",
+        `Personas a asegurar: ${details.apPeopleCount ?? item.peopleCount}`,
+        `Suma asegurada: ${details.apInsuredSumLabel || "No indicada"}`,
+        "",
+      );
+    if (item.coverageTypes?.includes("art"))
+      lines.push(
+        "[ART]",
+        `Empleador / razón social: ${details.artEmployer || "No indicado"}`,
+        `Actividad: ${details.artActivity || "No indicada"}`,
+        `Trabajadores: ${details.artWorkerCount ?? "No indicado"}`,
+        "",
+      );
+    if (item.coverageTypes?.includes("vida"))
+      lines.push(
+        "[SEGURO DE VIDA]",
+        `Persona asegurada: ${details.vidaInsuredName || "No indicada"}`,
+        `Edad: ${details.vidaInsuredAge ?? "No indicada"}`,
+        `Suma asegurada: ${details.vidaInsuredSumLabel || "No indicada"}`,
+        `Beneficiario: ${details.vidaBeneficiary || "No indicado"}`,
+        "",
+      );
+    if (item.coverageTypes?.includes("robo_equipos"))
+      lines.push(
+        "[ROBO DE EQUIPOS]",
+        `Equipos: ${details.equipmentDescription || "No indicados"}`,
+        `Valor total: ${details.equipmentValueLabel || "No indicado"}`,
+        `Cantidad: ${details.equipmentCount ?? "No indicada"}`,
+        `Números de serie / inventario: ${details.equipmentSerials || "No indicados"}`,
+        "",
+      );
+    lines.push(
+      "DETALLES ADICIONALES",
+      item.notes || "Sin detalles adicionales.",
+      "",
+      "La cotización debe gestionarse manualmente con la compañía. Este mensaje está armado para copiar y pegar.",
+    );
+    return lines.join("\n");
+  })();
 const cdata = (value: string): string => value.replace(/]]>/g, "]]]]><![CDATA[>");
 const eventScheduleEnd = (event: {
   startsAt?: string | null;
@@ -848,12 +922,21 @@ export const createApp = async (
     const snapshot = await press.snapshot();
     if (request.body?.eventId && !snapshot.events.some((event) => event.id === request.body.eventId))
       return response.status(404).json({ error: "Evento no encontrado" });
-    const item = await platform.createInsuranceRequest({ ...request.body, status: "new" });
+    const requestedProducts = Array.isArray(request.body?.coverageTypes) ? request.body.coverageTypes : [];
+    const coverageType = requestedProducts.length
+      ? requestedProducts.map((product: InsuranceProduct) => insuranceProductLabels[product] ?? product).join(" + ")
+      : String(request.body?.coverageType ?? "");
+    const item = await platform.createInsuranceRequest({
+      ...request.body,
+      coverageType,
+      coverageTypes: requestedProducts,
+      status: "new",
+    });
     const from = (process.env.INSURANCE_FROM_EMAIL ?? "seguros@afterstage.ar").trim().toLowerCase();
     const recipients = insuranceRecipients();
     const eventName = item.eventId ? snapshot.events.find((event) => event.id === item.eventId)?.name : undefined;
     const text = insuranceNotificationText({ ...item, eventName });
-    const subject = `Nueva solicitud de seguro · ${item.name}`;
+    const subject = `Solicitud de cotización · ${item.coverageType} · ${item.name}`;
     let mailThreadId = "";
     let notificationStatus: "sent" | "not_configured" | "failed" = "not_configured";
 
