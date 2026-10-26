@@ -13,6 +13,8 @@ export const coverageApplicationStatuses = ["pending", "shortlisted", "accepted"
 export const transportKinds = ["bus", "carpool", "shuttle", "other"] as const;
 export const transportStatuses = ["open", "full", "closed", "cancelled"] as const;
 export const insuranceStatuses = ["new", "contacted", "quoted", "closed"] as const;
+export const insuranceNotificationStatuses = ["pending", "sent", "not_configured", "failed"] as const;
+export const insuranceContractStatuses = ["pending", "contracted", "cancelled"] as const;
 export const marketplaceCategories = ["merch", "service", "benefit"] as const;
 
 export const photographerProfileSchema = z.object({
@@ -99,6 +101,14 @@ export const insuranceRequestSchema = z.object({
   policyNumber: z.string().max(180).default(""),
   policyUrl: optionalUrl.default(""),
   internalNotes: z.string().max(4000).default(""),
+  mailThreadId: z.string().max(180).default(""),
+  notificationStatus: z.enum(insuranceNotificationStatuses).default("pending"),
+  notificationTo: z.string().max(1000).default(""),
+  contractStatus: z.enum(insuranceContractStatuses).default("pending"),
+  contractedAt: optionalDate,
+  commissionLabel: z.string().max(500).default(""),
+  commissionNotes: z.string().max(4000).default(""),
+  renewedFromId: z.string().max(180).default(""),
   status: z.enum(insuranceStatuses).default("new"),
 });
 

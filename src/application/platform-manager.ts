@@ -126,6 +126,41 @@ export class PlatformManager {
   async updateInsuranceRequest(id: string, input: unknown) {
     return this.store.updateInsuranceRequest(id, parsePatch(insuranceRequestSchema, input));
   }
+  async renewInsuranceRequest(id: string) {
+    const snapshot = await this.store.snapshot();
+    const current = snapshot.insuranceRequests.find((item) => item.id === id);
+    if (!current) return undefined;
+    const {
+      id: _id,
+      createdAt: _createdAt,
+      updatedAt: _updatedAt,
+      providerName: _providerName,
+      quoteLabel: _quoteLabel,
+      quoteUrl: _quoteUrl,
+      policyNumber: _policyNumber,
+      policyUrl: _policyUrl,
+      internalNotes: _internalNotes,
+      mailThreadId: _mailThreadId,
+      notificationStatus: _notificationStatus,
+      notificationTo: _notificationTo,
+      contractStatus: _contractStatus,
+      contractedAt: _contractedAt,
+      commissionLabel: _commissionLabel,
+      commissionNotes: _commissionNotes,
+      renewedFromId: _renewedFromId,
+      status: _status,
+      ...base
+    } = current;
+    return this.store.createInsuranceRequest(
+      insuranceRequestSchema.parse({
+        ...base,
+        startsAt: null,
+        endsAt: null,
+        renewedFromId: current.id,
+        status: "new",
+      }),
+    );
+  }
 
   async createForumThread(input: unknown) {
     return this.store.createForumThread(forumThreadSchema.parse(input));

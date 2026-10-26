@@ -112,6 +112,7 @@ export class MongoMailStore implements MailRepository {
       direction: "inbound",
       messageId,
       ...(input.deliveredTo ? { deliveredTo: input.deliveredTo } : {}),
+      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
       ...(input.inReplyTo ? { inReplyTo: input.inReplyTo } : {}),
       references: unique(input.references),
       from: input.from,

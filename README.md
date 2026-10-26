@@ -94,8 +94,10 @@ npm run dev
 | `META_PAGE_ID` | ID de la página de Facebook. |
 | `META_API_VERSION` | Versión de Graph API, configurable para facilitar upgrades. |
 | `CORS_ORIGINS` | Lista opcional de orígenes permitidos, separada por comas. |
-| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Opcionales. Habilitan el envío de solicitudes de acreditación. |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Opcionales. Habilitan el envío de solicitudes de acreditación, seguros y respuestas desde la bandeja. |
 | `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Ajustes del transporte de correo. |
+| `INSURANCE_FROM_EMAIL` | Identidad del circuito de seguros; por defecto `seguros@afterstage.ar`. |
+| `INSURANCE_RECIPIENT_EMAIL` | Destinatario del productor/aseguradora para las solicitudes de seguros. Si falta, la solicitud se guarda y queda marcada como no configurada. |
 | `INBOUND_EMAIL_WEBHOOK_SECRET` | Secreto compartido con el Email Worker de Cloudflare para aceptar mensajes entrantes. |
 | `INBOUND_EMAIL_DOMAIN` | Dominio permitido para destinatarios entrantes; por defecto `afterstage.ar`. |
 | `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
@@ -156,6 +158,8 @@ SMTP_SECURE=false
 SMTP_USER=cuenta-de-envio
 SMTP_PASS=secreto-del-proveedor
 SMTP_FROM=prensa@afterstage.ar
+INSURANCE_FROM_EMAIL=seguros@afterstage.ar
+INSURANCE_RECIPIENT_EMAIL=destinatario-del-productor@example.com
 ```
 
 Después de actualizar el Secret, reiniciar el deployment del backend y verificar

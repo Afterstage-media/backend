@@ -48,7 +48,7 @@ import { MailboxManager } from "../../application/mailbox-manager.js";
 import { inboundMailSchema, mailReplySchema } from "../../domain/mail/types.js";
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
-import type { PressMailer } from "../../infrastructure/integrations/mailer.js";
+import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
 import {
   exchangeInstagramCode,
   instagramAuthorizationUrl,
@@ -67,6 +67,43 @@ const escapeHtml = (value: string): string =>
         "'": "&#39;",
       })[character]!,
   );
+
+const insuranceRecipients = (): string[] =>
+  (process.env.INSURANCE_RECIPIENT_EMAIL ?? process.env.INSURANCE_FORWARD_TO ?? "")
+    .split(/[;,\s]+/)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+const insuranceNotificationText = (item: {
+  name: string;
+  organization: string;
+  email: string;
+  phone: string;
+  coverageType: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  peopleCount: number;
+  notes: string;
+  eventName?: string;
+}) =>
+  [
+    "Nueva solicitud de seguro en Afterstage",
+    "",
+    `Nombre: ${item.name}`,
+    `Organización: ${item.organization || "No indicada"}`,
+    `Email: ${item.email}`,
+    `Teléfono: ${item.phone || "No indicado"}`,
+    `Cobertura: ${item.coverageType}`,
+    `Evento: ${item.eventName || "No asociado a un evento"}`,
+    `Desde: ${item.startsAt || "No indicado"}`,
+    `Hasta: ${item.endsAt || "No indicado"}`,
+    `Personas: ${item.peopleCount}`,
+    "",
+    "Detalles:",
+    item.notes || "Sin detalles adicionales.",
+    "",
+    "La cotización debe gestionarse manualmente con el productor/aseguradora.",
+  ].join("\n");
 const cdata = (value: string): string => value.replace(/]]>/g, "]]]]><![CDATA[>");
 const eventScheduleEnd = (event: {
   startsAt?: string | null;
@@ -206,7 +243,8 @@ export const createApp = async (
   platform = new PlatformManager(),
 ) => {
   const app = express();
-  const mailboxManager = mailbox ? new MailboxManager(mailbox, mailer) : undefined;
+  const outboundMailer = mailer ?? new PressMailer();
+  const mailboxManager = mailbox ? new MailboxManager(mailbox, outboundMailer) : undefined;
   const inboundMailbox = mailbox;
   if (users) configureUserDirectory(users);
   const uploadDir = process.env.UPLOAD_DIR ?? path.resolve("uploads");
@@ -811,7 +849,75 @@ export const createApp = async (
     if (request.body?.eventId && !snapshot.events.some((event) => event.id === request.body.eventId))
       return response.status(404).json({ error: "Evento no encontrado" });
     const item = await platform.createInsuranceRequest({ ...request.body, status: "new" });
-    response.status(201).json({ id: item.id, status: item.status, message: "Recibimos la consulta de seguro." });
+    const from = (process.env.INSURANCE_FROM_EMAIL ?? "seguros@afterstage.ar").trim().toLowerCase();
+    const recipients = insuranceRecipients();
+    const eventName = item.eventId ? snapshot.events.find((event) => event.id === item.eventId)?.name : undefined;
+    const text = insuranceNotificationText({ ...item, eventName });
+    const subject = `Nueva solicitud de seguro · ${item.name}`;
+    let mailThreadId = "";
+    let notificationStatus: "sent" | "not_configured" | "failed" = "not_configured";
+
+    if (inboundMailbox) {
+      try {
+        const inboxMessage = await inboundMailbox.ingestInbound({
+          from: item.email,
+          deliveredTo: from,
+          replyTo: recipients[0],
+          to: recipients.length ? recipients : [from],
+          cc: [],
+          subject,
+          text,
+          references: [],
+        });
+        mailThreadId = inboxMessage.threadId;
+      } catch (error) {
+        log("error", "insurance_inbox_failed", {
+          error: error instanceof Error ? error.message : String(error),
+          insuranceRequestId: item.id,
+        });
+      }
+    }
+
+    if (recipients.length) {
+      try {
+        const mail: Mail = {
+          from,
+          to: recipients.join(", "),
+          replyTo: item.email,
+          subject,
+          text,
+          html: `<pre style="font:inherit;white-space:pre-wrap">${escapeHtml(text)}</pre>`,
+        };
+        await outboundMailer.send(mail);
+        notificationStatus = "sent";
+      } catch (error) {
+        notificationStatus = "failed";
+        log("error", "insurance_notification_failed", {
+          error: error instanceof Error ? error.message : String(error),
+          insuranceRequestId: item.id,
+          recipients,
+        });
+      }
+    }
+
+    const updated = await platform.updateInsuranceRequest(item.id, {
+      mailThreadId,
+      notificationStatus,
+      notificationTo: recipients.join(", "),
+    });
+    const message =
+      notificationStatus === "sent"
+        ? "Recibimos la consulta y la enviamos al productor."
+        : notificationStatus === "failed"
+          ? "Recibimos la consulta, pero el aviso por email quedó pendiente de reintento."
+          : "Recibimos la consulta; falta configurar el destinatario de seguros.";
+    response.status(201).json({
+      id: updated?.id ?? item.id,
+      status: updated?.status ?? item.status,
+      notificationStatus,
+      mailThreadId,
+      message,
+    });
   });
   app.get("/api/public/marketplace", async (request, response) => {
     const category = typeof request.query.category === "string" ? request.query.category : undefined;
@@ -1570,6 +1676,18 @@ export const createApp = async (
     requireRole("admin", "editor", "press", "community"),
     async (request, response) =>
       response.json(await platform.updateInsuranceRequest(String(request.params.id), request.body)),
+  );
+  app.post(
+    "/api/platform/insurance-requests/:id/renew",
+    requireRole("admin", "editor", "press", "community"),
+    async (request, response) => {
+      const item = await platform.renewInsuranceRequest(String(request.params.id));
+      if (!item) {
+        response.status(404).json({ error: "insurance_request_not_found" });
+        return;
+      }
+      response.status(201).json({ item });
+    },
   );
   app.patch("/api/platform/forum/threads/:id", requireRole("admin", "editor", "community"), async (request, response) =>
     response.json(await platform.updateForumThread(String(request.params.id), request.body)),

@@ -89,9 +89,10 @@ export class MailboxManager {
     const subject = /^re:/i.test(latestInbound.subject)
       ? latestInbound.subject
       : `Re: ${latestInbound.subject || "(sin asunto)"}`;
+    const recipient = latestInbound.replyTo ?? latestInbound.from;
     const mail: Mail = {
       from: replyFrom,
-      to: latestInbound.from,
+      to: recipient,
       subject,
       text: input.text,
       ...(input.html !== undefined ? { html: input.html } : {}),
@@ -105,7 +106,7 @@ export class MailboxManager {
       threadId: id,
       messageId: result.messageId,
       from: replyFrom,
-      to: [latestInbound.from],
+      to: [recipient],
       subject,
       text: input.text,
       ...(input.html !== undefined ? { html: input.html } : {}),
