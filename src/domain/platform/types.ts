@@ -22,6 +22,7 @@ export const photographerProfileSchema = z.object({
   city: z.string().trim().min(2).max(120),
   specialties: z.array(z.string().trim().min(1).max(60)).max(12).default([]),
   portfolioUrl: optionalUrl.default(""),
+  portfolioUrls: z.array(optionalUrl).max(10).default([]),
   instagram: z.string().trim().max(120).default(""),
   website: optionalUrl.default(""),
   sampleCount: z.number().int().min(0).max(100).default(0),
@@ -50,6 +51,8 @@ export const coverageApplicationSchema = z.object({
   applicantEmail: z.string().email().max(180),
   portfolioUrl: optionalUrl.default(""),
   message: z.string().max(4000).default(""),
+  deliveryUrl: optionalUrl.default(""),
+  deliveryNotes: z.string().max(4000).default(""),
   status: z.enum(coverageApplicationStatuses).default("pending"),
 });
 
@@ -90,6 +93,12 @@ export const insuranceRequestSchema = z.object({
   endsAt: optionalDate,
   peopleCount: z.number().int().min(1).max(100000).default(1),
   notes: z.string().max(4000).default(""),
+  providerName: z.string().max(180).default(""),
+  quoteLabel: z.string().max(500).default(""),
+  quoteUrl: optionalUrl.default(""),
+  policyNumber: z.string().max(180).default(""),
+  policyUrl: optionalUrl.default(""),
+  internalNotes: z.string().max(4000).default(""),
   status: z.enum(insuranceStatuses).default("new"),
 });
 

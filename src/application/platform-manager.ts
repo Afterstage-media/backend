@@ -62,7 +62,20 @@ export class PlatformManager {
     return this.store.createCoverageApplication(parsed);
   }
   async updateCoverageApplication(id: string, input: unknown) {
-    return this.store.updateCoverageApplication(id, parsePatch(coverageApplicationSchema, input));
+    const patch = parsePatch(coverageApplicationSchema, input);
+    const snapshot = await this.store.snapshot();
+    const current = snapshot.coverageApplications.find((item) => item.id === id);
+    if (!current) return undefined;
+
+    if (patch.status === "accepted") {
+      const competing = snapshot.coverageApplications.filter(
+        (item) =>
+          item.requestId === current.requestId && item.id !== id && ["pending", "shortlisted"].includes(item.status),
+      );
+      await Promise.all(competing.map((item) => this.store.updateCoverageApplication(item.id, { status: "rejected" })));
+      await this.store.updateCoverageRequest(current.requestId, { status: "assigned" });
+    }
+    return this.store.updateCoverageApplication(id, patch);
   }
 
   async createTransportOffer(input: unknown) {
@@ -74,15 +87,37 @@ export class PlatformManager {
   async createTransportRequest(input: unknown) {
     const parsed = transportRequestSchema.parse(input);
     const snapshot = await this.store.snapshot();
-    if (
-      parsed.offerId &&
-      !snapshot.transportOffers.some((item) => item.eventId === parsed.eventId && item.id === parsed.offerId)
-    )
-      throw new Error("Traslado no encontrado");
+    if (parsed.offerId) {
+      const offer = snapshot.transportOffers.find(
+        (item) => item.eventId === parsed.eventId && item.id === parsed.offerId && item.status === "open",
+      );
+      if (!offer) throw new Error("Traslado no encontrado");
+      const confirmed = snapshot.transportRequests
+        .filter((item) => item.offerId === offer.id && item.status === "confirmed")
+        .reduce((total, item) => total + item.partySize, 0);
+      if (confirmed + parsed.partySize > offer.seats) throw new Error("No quedan cupos para este traslado");
+    }
     return this.store.createTransportRequest(parsed);
   }
   async updateTransportRequest(id: string, input: unknown) {
-    return this.store.updateTransportRequest(id, parsePatch(transportRequestSchema, input));
+    const patch = parsePatch(transportRequestSchema, input);
+    const snapshot = await this.store.snapshot();
+    const current = snapshot.transportRequests.find((item) => item.id === id);
+    if (!current) return undefined;
+    const nextOfferId = patch.offerId === undefined ? current.offerId : patch.offerId;
+    const nextStatus = patch.status === undefined ? current.status : patch.status;
+    const nextPartySize = patch.partySize === undefined ? current.partySize : patch.partySize;
+    if (nextOfferId && nextStatus === "confirmed") {
+      const offer = snapshot.transportOffers.find(
+        (item) => item.id === nextOfferId && item.eventId === current.eventId && item.status === "open",
+      );
+      if (!offer) throw new Error("Traslado no encontrado");
+      const confirmed = snapshot.transportRequests
+        .filter((item) => item.offerId === offer.id && item.id !== id && item.status === "confirmed")
+        .reduce((total, item) => total + item.partySize, 0);
+      if (confirmed + nextPartySize > offer.seats) throw new Error("No quedan cupos para este traslado");
+    }
+    return this.store.updateTransportRequest(id, patch);
   }
 
   async createInsuranceRequest(input: unknown) {
@@ -134,7 +169,9 @@ export class PlatformManager {
     return this.store
       .snapshot()
       .then(({ coverageRequests }) =>
-        coverageRequests.filter((item) => item.status === "open" && (!eventId || item.eventId === eventId)),
+        coverageRequests
+          .filter((item) => item.status === "open" && (!eventId || item.eventId === eventId))
+          .map(({ requesterEmail: _requesterEmail, ...item }) => item),
       );
   }
 
@@ -150,7 +187,9 @@ export class PlatformManager {
     const snapshot = await this.store.snapshot();
     return {
       event,
-      coverageRequests: snapshot.coverageRequests.filter((item) => item.eventId === event.id && item.status === "open"),
+      coverageRequests: snapshot.coverageRequests
+        .filter((item) => item.eventId === event.id && item.status === "open")
+        .map(({ requesterEmail: _requesterEmail, ...item }) => item),
       transportOffers: snapshot.transportOffers.filter((item) => item.eventId === event.id && item.status === "open"),
       threads: snapshot.forumThreads
         .filter((item) => item.eventId === event.id && item.status === "visible")

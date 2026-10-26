@@ -1538,12 +1538,15 @@ export const createApp = async (
   app.patch("/api/platform/photographers/:id", requireRole("admin", "editor", "directory"), async (request, response) =>
     response.json(await platform.updatePhotographer(String(request.params.id), request.body)),
   );
-  app.patch("/api/platform/coverage-requests/:id", requireRole("admin", "editor", "press"), async (request, response) =>
-    response.json(await platform.updateCoverageRequest(String(request.params.id), request.body)),
+  app.patch(
+    "/api/platform/coverage-requests/:id",
+    requireRole("admin", "editor", "press", "community"),
+    async (request, response) =>
+      response.json(await platform.updateCoverageRequest(String(request.params.id), request.body)),
   );
   app.patch(
     "/api/platform/coverage-applications/:id",
-    requireRole("admin", "editor", "press"),
+    requireRole("admin", "editor", "press", "community"),
     async (request, response) =>
       response.json(await platform.updateCoverageApplication(String(request.params.id), request.body)),
   );
@@ -1564,7 +1567,7 @@ export const createApp = async (
   );
   app.patch(
     "/api/platform/insurance-requests/:id",
-    requireRole("admin", "editor", "community"),
+    requireRole("admin", "editor", "press", "community"),
     async (request, response) =>
       response.json(await platform.updateInsuranceRequest(String(request.params.id), request.body)),
   );
