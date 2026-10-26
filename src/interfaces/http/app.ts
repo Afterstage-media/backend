@@ -6,6 +6,7 @@ import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
 import { ZodError, z } from "zod";
 import { ContentManager, DuplicateContentError } from "../../application/content-manager.js";
+import { PlatformManager } from "../../application/platform-manager.js";
 import { contentStatuses } from "../../domain/content/types.js";
 import { PressManager } from "../../application/press-manager.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
@@ -202,6 +203,7 @@ export const createApp = async (
   mailbox?: MailRepository,
   mailer?: Pick<PressMailer, "send">,
   media?: MediaAssetService,
+  platform = new PlatformManager(),
 ) => {
   const app = express();
   const mailboxManager = mailbox ? new MailboxManager(mailbox, mailer) : undefined;
@@ -766,6 +768,105 @@ export const createApp = async (
     }
     response.json(external);
   });
+  app.get("/api/public/events/:id/hub", async (request, response) => {
+    const snapshot = await press.snapshot();
+    const event = snapshot.events.find((item) => item.id === request.params.id && !isDemoEvent(item));
+    if (!event) return response.status(404).json({ error: "Evento no encontrado" });
+    response.json(await platform.eventHub(event));
+  });
+  app.get("/api/public/photographers", async (request, response) => {
+    const query = typeof request.query.q === "string" ? request.query.q : "";
+    const city = typeof request.query.city === "string" ? request.query.city : "";
+    response.json((await platform.publicPhotographers(query, city)).slice(0, parsePublicLimit(request.query.limit)));
+  });
+  app.post("/api/public/photographers", new RateLimiter(5, 60_000).middleware, async (request, response) => {
+    const profile = await platform.createPhotographer({ ...request.body, status: "pending" });
+    response.status(201).json({
+      id: profile.id,
+      status: profile.status,
+      message: "Recibimos tu perfil. Lo vamos a revisar antes de publicarlo en la red.",
+    });
+  });
+  app.get("/api/public/coverage-requests", async (request, response) => {
+    const eventId = typeof request.query.eventId === "string" ? request.query.eventId : undefined;
+    response.json((await platform.publicCoverageRequests(eventId)).slice(0, parsePublicLimit(request.query.limit)));
+  });
+  app.post("/api/public/coverage-requests", new RateLimiter(5, 60_000).middleware, async (request, response) => {
+    const snapshot = await press.snapshot();
+    if (request.body?.eventId && !snapshot.events.some((event) => event.id === request.body.eventId))
+      return response.status(404).json({ error: "Evento no encontrado" });
+    const item = await platform.createCoverageRequest({ ...request.body, status: "open" });
+    response.status(201).json({ id: item.id, status: item.status, message: "La búsqueda quedó publicada." });
+  });
+  app.post(
+    "/api/public/coverage-requests/:id/applications",
+    new RateLimiter(5, 60_000).middleware,
+    async (request, response) => {
+      const item = await platform.createCoverageApplication({ ...request.body, requestId: String(request.params.id) });
+      response.status(201).json({ id: item.id, status: item.status, message: "Recibimos tu postulación." });
+    },
+  );
+  app.post("/api/public/insurance-requests", new RateLimiter(5, 60_000).middleware, async (request, response) => {
+    const snapshot = await press.snapshot();
+    if (request.body?.eventId && !snapshot.events.some((event) => event.id === request.body.eventId))
+      return response.status(404).json({ error: "Evento no encontrado" });
+    const item = await platform.createInsuranceRequest({ ...request.body, status: "new" });
+    response.status(201).json({ id: item.id, status: item.status, message: "Recibimos la consulta de seguro." });
+  });
+  app.get("/api/public/marketplace", async (request, response) => {
+    const category = typeof request.query.category === "string" ? request.query.category : undefined;
+    response.json(await platform.publicMarketplace(category));
+  });
+  app.get("/api/public/events/:id/forum", async (request, response) => {
+    const snapshot = await press.snapshot();
+    if (!snapshot.events.some((event) => event.id === request.params.id && !isDemoEvent(event)))
+      return response.status(404).json({ error: "Evento no encontrado" });
+    const hub = await platform.eventHub({ id: String(request.params.id) });
+    response.json(hub.threads);
+  });
+  app.post(
+    "/api/public/events/:id/forum/threads",
+    new RateLimiter(10, 60_000).middleware,
+    async (request, response) => {
+      const snapshot = await press.snapshot();
+      if (!snapshot.events.some((event) => event.id === request.params.id && !isDemoEvent(event)))
+        return response.status(404).json({ error: "Evento no encontrado" });
+      const item = await platform.createForumThread({
+        ...request.body,
+        eventId: String(request.params.id),
+        status: "visible",
+      });
+      response.status(201).json({ id: item.id, message: "Abrimos la conversación." });
+    },
+  );
+  app.post("/api/public/forum/threads/:id/posts", new RateLimiter(10, 60_000).middleware, async (request, response) => {
+    const item = await platform.createForumPost({
+      ...request.body,
+      threadId: String(request.params.id),
+      status: "visible",
+    });
+    response.status(201).json({ id: item.id, message: "Sumamos tu respuesta." });
+  });
+  app.get("/api/public/events/:id/transport", async (request, response) => {
+    const snapshot = await press.snapshot();
+    if (!snapshot.events.some((event) => event.id === request.params.id && !isDemoEvent(event)))
+      return response.status(404).json({ error: "Evento no encontrado" });
+    const platformSnapshot = await platform.snapshot();
+    response.json(
+      platformSnapshot.transportOffers.filter((item) => item.eventId === request.params.id && item.status === "open"),
+    );
+  });
+  app.post(
+    "/api/public/events/:id/transport-requests",
+    new RateLimiter(5, 60_000).middleware,
+    async (request, response) => {
+      const snapshot = await press.snapshot();
+      if (!snapshot.events.some((event) => event.id === request.params.id && !isDemoEvent(event)))
+        return response.status(404).json({ error: "Evento no encontrado" });
+      const item = await platform.createTransportRequest({ ...request.body, eventId: String(request.params.id) });
+      response.status(201).json({ id: item.id, status: item.status, message: "Recibimos tu pedido de traslado." });
+    },
+  );
   const publicSubmissionRateLimit = new RateLimiter(5, 60_000).middleware;
   app.post(
     "/api/public/submissions",
@@ -1427,6 +1528,57 @@ export const createApp = async (
   );
   app.patch("/api/press/media-kit", requireRole("admin", "press"), async (request, response) =>
     response.json(await press.updateMediaKit(request.body)),
+  );
+
+  app.get(
+    "/api/platform/snapshot",
+    requireRole("admin", "editor", "press", "community", "auditor"),
+    async (_request, response) => response.json(await platform.snapshot()),
+  );
+  app.patch("/api/platform/photographers/:id", requireRole("admin", "editor", "directory"), async (request, response) =>
+    response.json(await platform.updatePhotographer(String(request.params.id), request.body)),
+  );
+  app.patch("/api/platform/coverage-requests/:id", requireRole("admin", "editor", "press"), async (request, response) =>
+    response.json(await platform.updateCoverageRequest(String(request.params.id), request.body)),
+  );
+  app.patch(
+    "/api/platform/coverage-applications/:id",
+    requireRole("admin", "editor", "press"),
+    async (request, response) =>
+      response.json(await platform.updateCoverageApplication(String(request.params.id), request.body)),
+  );
+  app.post("/api/platform/transport-offers", requireRole("admin", "editor", "community"), async (request, response) =>
+    response.status(201).json(await platform.createTransportOffer(request.body)),
+  );
+  app.patch(
+    "/api/platform/transport-offers/:id",
+    requireRole("admin", "editor", "community"),
+    async (request, response) =>
+      response.json(await platform.updateTransportOffer(String(request.params.id), request.body)),
+  );
+  app.patch(
+    "/api/platform/transport-requests/:id",
+    requireRole("admin", "editor", "community"),
+    async (request, response) =>
+      response.json(await platform.updateTransportRequest(String(request.params.id), request.body)),
+  );
+  app.patch(
+    "/api/platform/insurance-requests/:id",
+    requireRole("admin", "editor", "community"),
+    async (request, response) =>
+      response.json(await platform.updateInsuranceRequest(String(request.params.id), request.body)),
+  );
+  app.patch("/api/platform/forum/threads/:id", requireRole("admin", "editor", "community"), async (request, response) =>
+    response.json(await platform.updateForumThread(String(request.params.id), request.body)),
+  );
+  app.patch("/api/platform/forum/posts/:id", requireRole("admin", "editor", "community"), async (request, response) =>
+    response.json(await platform.updateForumPost(String(request.params.id), request.body)),
+  );
+  app.post("/api/platform/marketplace", requireRole("admin", "editor"), async (request, response) =>
+    response.status(201).json(await platform.createMarketplaceListing(request.body)),
+  );
+  app.patch("/api/platform/marketplace/:id", requireRole("admin", "editor"), async (request, response) =>
+    response.json(await platform.updateMarketplaceListing(String(request.params.id), request.body)),
   );
 
   const errors: ErrorRequestHandler = (error, _request, response, _next) => {
