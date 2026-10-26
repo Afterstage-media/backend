@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { MongoClient, type Collection, type Db } from "mongodb";
 import { ContentManager } from "../../application/content-manager.js";
 import { PressManager } from "../../application/press-manager.js";
+import { PlatformManager } from "../../application/platform-manager.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import {
   slugify,
@@ -41,6 +42,29 @@ import { createInstagramConnectionStore, type MongoInstagramConnectionStore } fr
 import { MongoEditorialVoiceStore } from "./editorial-voice-mongo.js";
 import { MetaPublisher } from "../integrations/meta.js";
 import { MongoMailStore } from "./mail-store.js";
+import {
+  emptyPlatformDatabase,
+  type CoverageApplication,
+  type CoverageApplicationInput,
+  type CoverageRequest,
+  type CoverageRequestInput,
+  type ForumPost,
+  type ForumPostInput,
+  type ForumThread,
+  type ForumThreadInput,
+  type InsuranceRequest,
+  type InsuranceRequestInput,
+  type MarketplaceListing,
+  type MarketplaceListingInput,
+  type PhotographerProfile,
+  type PhotographerProfileInput,
+  type PlatformDatabase,
+  type TransportOffer,
+  type TransportOfferInput,
+  type TransportRequest,
+  type TransportRequestInput,
+} from "../../domain/platform/types.js";
+import type { PlatformRepository } from "./platform-store.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -359,6 +383,131 @@ export class MongoPressStore implements PressRepository {
   }
 }
 
+export class MongoPlatformStore implements PlatformRepository {
+  constructor(private readonly db: Db) {}
+
+  private collection<T extends MongoRecord>(name: string): Collection<T> {
+    return this.db.collection<T>(name);
+  }
+
+  private withoutId<T extends MongoRecord>(document: T): Omit<T, "_id"> {
+    const { _id: _ignored, ...value } = document;
+    return value;
+  }
+
+  async init() {
+    await Promise.all([
+      this.collection<MongoRecord>("platform_photographers").createIndex({ status: 1, city: 1 }),
+      this.collection<MongoRecord>("platform_coverage_requests").createIndex({ status: 1, eventId: 1 }),
+      this.collection<MongoRecord>("platform_coverage_applications").createIndex({ requestId: 1, status: 1 }),
+      this.collection<MongoRecord>("platform_transport_offers").createIndex({ eventId: 1, status: 1 }),
+      this.collection<MongoRecord>("platform_transport_requests").createIndex({ eventId: 1, status: 1 }),
+      this.collection<MongoRecord>("platform_insurance_requests").createIndex({ status: 1, createdAt: -1 }),
+      this.collection<MongoRecord>("platform_forum_threads").createIndex({ eventId: 1, status: 1, createdAt: -1 }),
+      this.collection<MongoRecord>("platform_forum_posts").createIndex({ threadId: 1, createdAt: 1 }),
+      this.collection<MongoRecord>("platform_marketplace").createIndex({ active: 1, category: 1 }),
+    ]);
+  }
+
+  async snapshot(): Promise<PlatformDatabase> {
+    const database = emptyPlatformDatabase();
+    const collectionNames = {
+      photographers: "platform_photographers",
+      coverageRequests: "platform_coverage_requests",
+      coverageApplications: "platform_coverage_applications",
+      transportOffers: "platform_transport_offers",
+      transportRequests: "platform_transport_requests",
+      insuranceRequests: "platform_insurance_requests",
+      forumThreads: "platform_forum_threads",
+      forumPosts: "platform_forum_posts",
+      marketplaceListings: "platform_marketplace",
+    } as const;
+    await Promise.all(
+      (Object.keys(collectionNames) as Array<keyof PlatformDatabase>).map(async (name) => {
+        const documents = await this.collection<MongoRecord>(collectionNames[name])
+          .find()
+          .sort({ updatedAt: -1 })
+          .toArray();
+        (database[name] as unknown[]) = documents.map((document) => this.withoutId(document));
+      }),
+    );
+    return database;
+  }
+
+  private async create<T extends object>(collection: string, input: T) {
+    const now = timestamps();
+    const item = { ...input, id: randomUUID(), createdAt: now, updatedAt: now };
+    await this.collection<MongoRecord>(collection).insertOne({ _id: item.id, ...item });
+    return item;
+  }
+
+  private async update<T extends object>(collection: string, id: string, patch: Partial<T>) {
+    const result = await this.collection<MongoRecord>(collection).findOneAndUpdate(
+      { _id: id },
+      { $set: cleanPatch({ ...patch, updatedAt: timestamps() }) },
+      { returnDocument: "after" },
+    );
+    return result
+      ? (this.withoutId(result) as unknown as T & { id: string; createdAt: string; updatedAt: string })
+      : undefined;
+  }
+
+  createPhotographer(input: PhotographerProfileInput): Promise<PhotographerProfile> {
+    return this.create("platform_photographers", input);
+  }
+  updatePhotographer(id: string, patch: Partial<PhotographerProfileInput>) {
+    return this.update<PhotographerProfileInput>("platform_photographers", id, patch);
+  }
+  createCoverageRequest(input: CoverageRequestInput): Promise<CoverageRequest> {
+    return this.create("platform_coverage_requests", input);
+  }
+  updateCoverageRequest(id: string, patch: Partial<CoverageRequestInput>) {
+    return this.update<CoverageRequestInput>("platform_coverage_requests", id, patch);
+  }
+  createCoverageApplication(input: CoverageApplicationInput): Promise<CoverageApplication> {
+    return this.create("platform_coverage_applications", input);
+  }
+  updateCoverageApplication(id: string, patch: Partial<CoverageApplicationInput>) {
+    return this.update<CoverageApplicationInput>("platform_coverage_applications", id, patch);
+  }
+  createTransportOffer(input: TransportOfferInput): Promise<TransportOffer> {
+    return this.create("platform_transport_offers", input);
+  }
+  updateTransportOffer(id: string, patch: Partial<TransportOfferInput>) {
+    return this.update<TransportOfferInput>("platform_transport_offers", id, patch);
+  }
+  createTransportRequest(input: TransportRequestInput): Promise<TransportRequest> {
+    return this.create("platform_transport_requests", input);
+  }
+  updateTransportRequest(id: string, patch: Partial<TransportRequestInput>) {
+    return this.update<TransportRequestInput>("platform_transport_requests", id, patch);
+  }
+  createInsuranceRequest(input: InsuranceRequestInput): Promise<InsuranceRequest> {
+    return this.create("platform_insurance_requests", input);
+  }
+  updateInsuranceRequest(id: string, patch: Partial<InsuranceRequestInput>) {
+    return this.update<InsuranceRequestInput>("platform_insurance_requests", id, patch);
+  }
+  createForumThread(input: ForumThreadInput): Promise<ForumThread> {
+    return this.create("platform_forum_threads", input);
+  }
+  updateForumThread(id: string, patch: Partial<ForumThreadInput>) {
+    return this.update<ForumThreadInput>("platform_forum_threads", id, patch);
+  }
+  createForumPost(input: ForumPostInput): Promise<ForumPost> {
+    return this.create("platform_forum_posts", input);
+  }
+  updateForumPost(id: string, patch: Partial<ForumPostInput>) {
+    return this.update<ForumPostInput>("platform_forum_posts", id, patch);
+  }
+  createMarketplaceListing(input: MarketplaceListingInput): Promise<MarketplaceListing> {
+    return this.create("platform_marketplace", input);
+  }
+  updateMarketplaceListing(id: string, patch: Partial<MarketplaceListingInput>) {
+    return this.update<MarketplaceListingInput>("platform_marketplace", id, patch);
+  }
+}
+
 export class MongoUserDirectory implements UserDirectory {
   constructor(private readonly collection: Collection<MongoRecord>) {}
   async init() {
@@ -537,6 +686,7 @@ export type MongoPersistence = {
   client: MongoClient;
   content: MongoContentStore;
   press: MongoPressStore;
+  platform: MongoPlatformStore;
   users: MongoUserDirectory;
   directory: MongoDirectoryStore;
   monetization: MongoMonetizationStore;
@@ -564,6 +714,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const db = client.db(process.env.MONGODB_DB ?? "afterstage");
   const content = new MongoContentStore(db.collection<MongoRecord>("contents"));
   const press = new MongoPressStore(db);
+  const platform = new MongoPlatformStore(db);
   const users = new MongoUserDirectory(db.collection<MongoRecord>("users"));
   const directory = new MongoDirectoryStore(db.collection<MongoRecord>("directory"));
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
@@ -575,6 +726,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   await Promise.all([
     content.init(),
     press.init(),
+    platform.init(),
     users.init(),
     directory.init(),
     monetization.init(),
@@ -596,6 +748,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     editorialVoice,
     mail,
     mediaAssets,
+    platform,
   };
 };
 
@@ -609,6 +762,7 @@ export const createManagers = async () => {
       new MetaPublisher(undefined, persistence?.instagramConnections),
     ),
     press: new PressManager(persistence?.press),
+    platform: new PlatformManager(persistence?.platform),
     users: persistence?.users,
     directory: new DirectoryManager(persistence?.directory),
     monetization: new MonetizationManager(persistence?.monetization),

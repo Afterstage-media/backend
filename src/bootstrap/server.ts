@@ -8,6 +8,7 @@ const {
   persistence,
   manager,
   press,
+  platform,
   users,
   directory,
   monetization,
@@ -30,6 +31,7 @@ const app = await createApp(
   mail,
   undefined,
   media,
+  platform,
 );
 
 app.listen(port, () => log("info", "server_started", { port }));
