@@ -100,6 +100,10 @@ test("gestiona perfiles, coberturas, seguros, foro y traslados de la plataforma"
     coverageType: "Accidentes personales",
   });
   assert.equal(insurance.status, "new");
+  const renewedInsurance = await manager.renewInsuranceRequest(insurance.id);
+  assert.equal(renewedInsurance?.renewedFromId, insurance.id);
+  assert.equal(renewedInsurance?.email, insurance.email);
+  assert.equal(renewedInsurance?.contractStatus, "pending");
   const thread = await manager.createForumThread({
     eventId: offer.eventId,
     title: "¿Desde dónde salen?",

@@ -41,7 +41,7 @@ class FakeMailbox implements MailRepository {
   async listThreads(): Promise<MailThreadSummary[]> {
     return [];
   }
-  async getThread() {
+  async getThread(_id?: string) {
     return thread();
   }
   async markRead() {}
@@ -89,4 +89,22 @@ test("responde al último remitente y persiste la salida", async () => {
     inReplyTo: "<incoming@example.com>",
     references: ["<incoming@example.com>"],
   });
+});
+
+test("respeta un destinatario de respuesta explícito del hilo", async () => {
+  const repository = new FakeMailbox();
+  const originalGetThread = repository.getThread.bind(repository);
+  repository.getThread = async (_id: string) => ({
+    ...(await originalGetThread("thread-1")),
+    messages: [{ ...inbound, replyTo: "productor@example.com" }],
+  });
+  const manager = new MailboxManager(repository, {
+    send: async (mail: { to: string }) => {
+      assert.equal(mail.to, "productor@example.com");
+      return { messageId: "<insurance-reply@afterstage.ar>", dryRun: false };
+    },
+  });
+
+  await manager.reply("thread-1", { text: "Adjunto la cotización." });
+  assert.equal(repository.sent[0]?.to[0], "productor@example.com");
 });

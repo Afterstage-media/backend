@@ -6,6 +6,7 @@ export const inboundMailSchema = z.object({
   messageId: z.string().trim().min(1).max(998).optional(),
   from: mailAddressSchema,
   deliveredTo: mailAddressSchema.optional(),
+  replyTo: mailAddressSchema.optional(),
   to: z.array(mailAddressSchema).min(1).max(50),
   cc: z.array(mailAddressSchema).max(50).default([]),
   subject: z.string().max(998).default(""),
@@ -30,6 +31,7 @@ export type MailMessage = {
   direction: "inbound" | "outbound";
   messageId: string;
   deliveredTo?: string;
+  replyTo?: string;
   inReplyTo?: string;
   references: string[];
   from: string;
