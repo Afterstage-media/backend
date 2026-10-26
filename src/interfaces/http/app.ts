@@ -69,6 +69,25 @@ const escapeHtml = (value: string): string =>
       })[character]!,
   );
 
+const publicSitemapPaths = [
+  "/",
+  "/notas",
+  "/agenda",
+  "/como-funciona",
+  "/directorio",
+  "/comunidad",
+  "/red",
+  "/seguros",
+  "/marketplace",
+  "/traslados",
+  "/publicar",
+  "/reemplazos",
+  "/servicios",
+  "/contratar",
+  "/politica-editorial",
+  "/codigo-de-creditos",
+];
+
 const insuranceRecipients = (): string[] =>
   (process.env.INSURANCE_RECIPIENT_EMAIL ?? process.env.INSURANCE_FORWARD_TO ?? "")
     .split(/[;,\s]+/)
@@ -1151,10 +1170,18 @@ export const createApp = async (
     const items = (await manager.store.list("published")).filter(
       (item) => item.channels.includes("website") && !isDemoContent(item),
     );
+    const origin = base || "http://localhost:8787";
+    const staticUrls = publicSitemapPaths.map((route) => `<url><loc>${origin}${route}</loc></url>`).join("");
+    const itemUrls = items
+      .map(
+        (item) =>
+          `<url><loc>${origin}/notas/${encodeURIComponent(item.slug)}</loc><lastmod>${item.updatedAt}</lastmod></url>`,
+      )
+      .join("");
     response
       .type("application/xml")
       .send(
-        `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${base || "http://localhost:8787"}/</loc></url><url><loc>${base || "http://localhost:8787"}/notas</loc></url><url><loc>${base || "http://localhost:8787"}/agenda</loc></url><url><loc>${base || "http://localhost:8787"}/politica-editorial</loc></url><url><loc>${base || "http://localhost:8787"}/codigo-de-creditos</loc></url>${items.map((item) => `<url><loc>${base}/notas/${encodeURIComponent(item.slug)}</loc><lastmod>${item.updatedAt}</lastmod></url>`).join("")}</urlset>`,
+        `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${staticUrls}${itemUrls}</urlset>`,
       );
   });
   app.get("/robots.txt", (_request, response) =>

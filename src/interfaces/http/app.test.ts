@@ -201,7 +201,11 @@ test("expone health, readiness y feed editorial público", async (context) => {
     assert.equal((await submission.json()).accepted, true);
     assert.equal((await fetch(`${base}/api/public/events`)).status, 200);
     assert.equal((await fetch(`${base}/rss.xml`)).status, 200);
-    assert.equal((await fetch(`${base}/sitemap.xml`)).status, 200);
+    const sitemap = await fetch(`${base}/sitemap.xml`);
+    assert.equal(sitemap.status, 200);
+    const sitemapXml = await sitemap.text();
+    assert.match(sitemapXml, /<loc>http:\/\/localhost:8787\/como-funciona<\/loc>/);
+    assert.match(sitemapXml, /<loc>http:\/\/localhost:8787\/marketplace<\/loc>/);
     assert.equal((await fetch(`${base}/robots.txt`)).status, 200);
   });
 });
