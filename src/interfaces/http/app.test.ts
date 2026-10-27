@@ -12,7 +12,14 @@ import { PressManager } from "../../application/press-manager.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
-import { configureUserDirectory, getAuthEncryptionPublicKey, issueAccessToken, type ActiveUser } from "./security.js";
+import {
+  configureUserDirectory,
+  getAuthEncryptionPublicKey,
+  hashPassword,
+  issueAccessToken,
+  type ActiveUser,
+  type UserDirectory,
+} from "./security.js";
 
 const testUsers: Record<string, ActiveUser> = {
   admin: {
@@ -136,6 +143,50 @@ test("rechaza login y registro sin HTTPS y no acepta contraseñas en claro", asy
       });
       assert.notEqual(encrypted.status, 400);
     }
+  });
+});
+
+test("ofrece recuperación de acceso sin revelar si el email existe", async (context) => {
+  const previous = { publicBaseUrl: process.env.PUBLIC_BASE_URL, smtpHost: process.env.SMTP_HOST };
+  process.env.PUBLIC_BASE_URL = "https://afterstage.test";
+  delete process.env.SMTP_HOST;
+  context.after(() => {
+    if (previous.publicBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+    else process.env.PUBLIC_BASE_URL = previous.publicBaseUrl;
+    if (previous.smtpHost === undefined) delete process.env.SMTP_HOST;
+    else process.env.SMTP_HOST = previous.smtpHost;
+    configureUserDirectory({ findActiveUser: async (id) => testUsers[id] });
+  });
+  const passwordHash = await hashPassword("una-clave-segura-123");
+  const user: ActiveUser & { passwordHash: string } = {
+    id: "recovery-user",
+    email: "persona@example.com",
+    roles: ["community"],
+    permissions: [],
+    active: true,
+    passwordHash,
+  };
+  const users: UserDirectory = {
+    findActiveUser: async (id) => (id === user.id ? user : undefined),
+    findByIdentifier: async (identifier) => (identifier === user.email ? user : undefined),
+    createPasswordReset: async () => undefined,
+  };
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-recovery-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const app = await createApp(
+    new ContentManager(new ContentStore(directory)),
+    new PressManager(new PressStore(directory)),
+    undefined,
+    users,
+  );
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/api/auth/recover`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+      body: JSON.stringify({ email: user.email }),
+    });
+    assert.equal(response.status, 200);
+    assert.match((await response.json()).message, /Si la cuenta existe/);
   });
 });
 

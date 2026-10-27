@@ -1,6 +1,6 @@
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
@@ -512,6 +512,69 @@ export const createApp = async (
     (request, response) => response.json({ user: (request as typeof request & { actor?: unknown }).actor }),
   );
   app.get("/api/auth/public-key", (_request, response) => response.json(getAuthEncryptionPublicKey()));
+  const recoveryRateLimit = new RateLimiter(5, 15 * 60_000).middleware;
+  app.post("/api/auth/recover", recoveryRateLimit, requireSecureTransport, async (request, response) => {
+    const input = z.object({ email: z.string().trim().toLowerCase().email().max(180) }).parse(request.body);
+    const genericMessage = "Si la cuenta existe, vas a recibir un enlace para recuperar el acceso.";
+    if (
+      !process.env.JWT_SECRET ||
+      !process.env.PUBLIC_BASE_URL ||
+      !users?.findByIdentifier ||
+      !users.createPasswordReset
+    ) {
+      response.status(503).json({ error: "La recuperación de acceso todavía no está configurada" });
+      return;
+    }
+    const user = await users.findByIdentifier(input.email);
+    if (!user?.email || !process.env.SMTP_HOST) {
+      response.json({ message: genericMessage });
+      return;
+    }
+    const token = randomBytes(32).toString("base64url");
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await users.createPasswordReset(user.id, tokenHash, expiresAt);
+    const resetUrl = `${process.env.PUBLIC_BASE_URL.replace(/\/$/, "")}/acceso?reset=${encodeURIComponent(token)}`;
+    await new PressMailer().send({
+      to: user.email,
+      subject: "Recuperá tu acceso a Afterstage",
+      text: `Recibimos un pedido para cambiar tu contraseña de Afterstage. Abrí este enlace dentro de la próxima hora: ${resetUrl}\n\nSi no fuiste vos, podés ignorar este mensaje.`,
+      html: `<p>Recibimos un pedido para cambiar tu contraseña de Afterstage.</p><p><a href="${resetUrl}">Elegir una contraseña nueva</a></p><p>El enlace vence en una hora. Si no fuiste vos, podés ignorar este mensaje.</p>`,
+      fromName: "Afterstage",
+    });
+    response.json({ message: genericMessage });
+  });
+  app.post("/api/auth/reset", recoveryRateLimit, requireSecureTransport, async (request, response) => {
+    const input = z
+      .object({
+        token: z.string().min(20).max(200),
+        keyId: z.string().length(16),
+        passwordCiphertext: z.string().min(1).max(4096),
+      })
+      .parse(request.body);
+    if (!process.env.JWT_SECRET || !users?.consumePasswordReset || !users.updateUser) {
+      response.status(503).json({ error: "La recuperación de acceso todavía no está configurada" });
+      return;
+    }
+    let password: string;
+    try {
+      password = decryptAuthSecret(input.passwordCiphertext, input.keyId);
+    } catch {
+      response.status(400).json({ error: "Credencial inválida" });
+      return;
+    }
+    if (password.length < 12) {
+      response.status(400).json({ error: "La contraseña debe tener al menos 12 caracteres" });
+      return;
+    }
+    const reset = await users.consumePasswordReset(createHash("sha256").update(input.token).digest("hex"));
+    if (!reset) {
+      response.status(400).json({ error: "El enlace venció o ya fue utilizado" });
+      return;
+    }
+    await users.updateUser(reset.userId, { passwordHash: await hashPassword(password) });
+    response.json({ message: "Contraseña actualizada" });
+  });
   const loginRateLimit = new RateLimiter(10, 60_000).middleware;
   app.post("/api/auth/login", loginRateLimit, requireSecureTransport, async (request, response) => {
     if (!process.env.JWT_SECRET) {
