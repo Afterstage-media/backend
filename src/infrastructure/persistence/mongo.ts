@@ -546,6 +546,7 @@ export class MongoUserDirectory implements UserDirectory {
           roles: user.roles as ActiveUser["roles"],
           permissions: user.permissions as ActiveUser["permissions"],
           active: user.active as boolean | undefined,
+          email: typeof user.email === "string" ? user.email : undefined,
           passwordHash: typeof user.passwordHash === "string" ? user.passwordHash : undefined,
         }
       : undefined;
@@ -609,6 +610,26 @@ export class MongoUserDirectory implements UserDirectory {
       createdAt: new Date().toISOString(),
     });
     return user;
+  }
+
+  async createPasswordReset(userId: string, tokenHash: string, expiresAt: string): Promise<void> {
+    await this.collection.updateOne({ _id: userId, active: { $ne: false } } as never, {
+      $set: { passwordResetTokenHash: tokenHash, passwordResetExpiresAt: expiresAt, updatedAt: timestamps() },
+    });
+  }
+
+  async consumePasswordReset(tokenHash: string): Promise<{ userId: string } | undefined> {
+    const document = await this.collection.findOne({
+      passwordResetTokenHash: tokenHash,
+      passwordResetExpiresAt: { $gt: timestamps() },
+      active: { $ne: false },
+    } as never);
+    if (!document) return undefined;
+    const result = await this.collection.updateOne({ _id: document._id, passwordResetTokenHash: tokenHash } as never, {
+      $unset: { passwordResetTokenHash: "", passwordResetExpiresAt: "" },
+      $set: { updatedAt: timestamps() },
+    });
+    return result.modifiedCount ? { userId: document._id } : undefined;
   }
 }
 

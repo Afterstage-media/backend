@@ -17,7 +17,7 @@ export const permissionNames = ["instagram:read", "instagram:metrics", "instagra
 export type Permission = (typeof permissionNames)[number];
 export type Actor = { id: string; roles: Role[]; permissions: Permission[] };
 
-export type ActiveUser = { id: string; roles: Role[]; permissions: Permission[]; active?: boolean };
+export type ActiveUser = { id: string; roles: Role[]; permissions: Permission[]; active?: boolean; email?: string };
 export type ManagedUser = ActiveUser & {
   username?: string;
   email?: string;
@@ -38,6 +38,8 @@ export type UserDirectory = {
   findActiveUser: (id: string) => Promise<ActiveUser | undefined>;
   findByIdentifier?: (identifier: string) => Promise<(ActiveUser & { passwordHash?: string }) | undefined>;
   createCollaborator?: (email: string, passwordHash: string) => Promise<ActiveUser>;
+  createPasswordReset?: (userId: string, tokenHash: string, expiresAt: string) => Promise<void>;
+  consumePasswordReset?: (tokenHash: string) => Promise<{ userId: string } | undefined>;
   listUsers?: () => Promise<ManagedUser[]>;
   createUser?: (input: ManagedUserInput) => Promise<ManagedUser>;
   updateUser?: (
@@ -158,6 +160,7 @@ export const authenticateUser = async (
     roles: user.roles,
     permissions: user.permissions,
     active: user.active,
+    ...(user.email ? { email: user.email } : {}),
   };
 };
 
