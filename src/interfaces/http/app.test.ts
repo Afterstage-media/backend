@@ -206,6 +206,10 @@ test("expone health, readiness y feed editorial público", async (context) => {
     const sitemapXml = await sitemap.text();
     assert.match(sitemapXml, /<loc>http:\/\/localhost:8787\/como-funciona<\/loc>/);
     assert.match(sitemapXml, /<loc>http:\/\/localhost:8787\/marketplace<\/loc>/);
+    assert.match(sitemapXml, /<loc>http:\/\/localhost:8787\/colaborador<\/loc>/);
+    for (const protectedRoute of ["/directorio", "/publicar", "/reemplazos"]) {
+      assert.doesNotMatch(sitemapXml, new RegExp(`<loc>http:\/\/localhost:8787${protectedRoute}<\\/loc>`));
+    }
     assert.equal((await fetch(`${base}/robots.txt`)).status, 200);
   });
 });
