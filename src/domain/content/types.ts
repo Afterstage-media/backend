@@ -60,6 +60,10 @@ export const contentInputSchema = z.object({
   canonicalUrl: z.string().url().or(z.literal("")).default(""),
   featured: z.boolean().default(false),
   idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  socialTemplateId: z.string().max(120).optional(),
+  socialTemplateVersion: z.number().int().positive().optional(),
+  socialTemplateData: z.record(z.string(), z.string().max(500)).optional(),
+  socialRenderedAt: z.string().datetime().nullable().optional(),
 });
 
 export const contentPatchSchema = contentInputSchema.partial();

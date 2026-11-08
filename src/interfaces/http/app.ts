@@ -1,4 +1,4 @@
-import { mkdir, readFile, unlink } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import cors from "cors";
@@ -7,7 +7,8 @@ import multer from "multer";
 import { ZodError, z } from "zod";
 import { ContentManager, DuplicateContentError } from "../../application/content-manager.js";
 import { PlatformManager } from "../../application/platform-manager.js";
-import { contentStatuses } from "../../domain/content/types.js";
+import { contentStatuses, type ContentItem } from "../../domain/content/types.js";
+import { socialTemplateSchema, type SocialTemplateRepository } from "../../domain/content/social-template.js";
 import { PressManager } from "../../application/press-manager.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { EventsFeed } from "../../infrastructure/integrations/events-feed.js";
@@ -42,6 +43,8 @@ import { mountRemoteMcp } from "../mcp/remote.js";
 import type { McpOAuthStore } from "../mcp/oauth.js";
 import { MEDIA_CONTENT_TYPES, MediaAssetService } from "../../infrastructure/integrations/media-storage.js";
 import { MediaQuotaExceededError } from "../../infrastructure/persistence/mongo-media-assets.js";
+import { MemorySocialTemplateStore } from "../../infrastructure/persistence/social-templates.js";
+import { SocialTemplateRenderer } from "../../infrastructure/integrations/social-template-renderer.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
 import { MailboxManager } from "../../application/mailbox-manager.js";
@@ -332,11 +335,15 @@ export const createApp = async (
   mailer?: Pick<PressMailer, "send">,
   media?: MediaAssetService,
   platform = new PlatformManager(),
+  socialTemplates?: SocialTemplateRepository,
 ) => {
   const app = express();
   const outboundMailer = mailer ?? new PressMailer();
   const mailboxManager = mailbox ? new MailboxManager(mailbox, outboundMailer) : undefined;
   const inboundMailbox = mailbox;
+  const templateStore = socialTemplates ?? new MemorySocialTemplateStore();
+  const templateRenderer = new SocialTemplateRenderer();
+  await templateStore.init();
   if (users) configureUserDirectory(users);
   const uploadDir = process.env.UPLOAD_DIR ?? path.resolve("uploads");
   const mediaRoot = process.env.MEDIA_ROOT ?? uploadDir;
@@ -1502,6 +1509,134 @@ export const createApp = async (
     const status = z.enum(contentStatuses).optional().parse(request.query.status);
     const query = typeof request.query.q === "string" ? request.query.q : "";
     response.json(await manager.search(query, status));
+  });
+  app.get("/api/social-templates", requireRole("admin", "editor"), async (request, response) => {
+    const filters = {
+      section: typeof request.query.section === "string" ? request.query.section : undefined,
+      type: typeof request.query.type === "string" ? request.query.type : undefined,
+      channel: z.enum(["instagram", "facebook"]).optional().parse(request.query.channel),
+    };
+    const actor = (request as typeof request & { actor?: import("./security.js").Actor }).actor;
+    const isAdmin = actor?.roles.includes("admin") ?? false;
+    const requestedStatus = typeof request.query.status === "string" ? request.query.status : "";
+    const status =
+      isAdmin && requestedStatus === "all"
+        ? undefined
+        : isAdmin && ["draft", "published", "archived"].includes(requestedStatus)
+          ? requestedStatus
+          : "published";
+    const all = await templateStore.list({ ...filters, status });
+    response.json(all);
+  });
+  app.post("/api/social-templates", requireRole("admin"), async (request, response) => {
+    const template = socialTemplateSchema.parse(request.body);
+    response.status(201).json(await templateStore.save(template));
+  });
+  app.put("/api/social-templates/:id", requireRole("admin"), async (request, response) => {
+    const template = socialTemplateSchema.parse(request.body);
+    response.status(201).json(await templateStore.save(template, String(request.params.id)));
+  });
+  app.post("/api/content/:id/render-social", requireRole("admin", "editor"), async (request, response) => {
+    const input = z
+      .object({ templateId: z.string().min(1).max(120), data: z.record(z.string(), z.string().max(500)) })
+      .parse(request.body);
+    const item = await manager.required(String(request.params.id));
+    if (!["idea", "draft", "review"].includes(item.status))
+      return response
+        .status(409)
+        .json({ error: "Sólo se pueden generar imágenes para borradores en edición o revisión" });
+    const template = await templateStore.get(input.templateId);
+    if (!template || template.status !== "published")
+      return response.status(404).json({ error: "La plantilla no existe o no está publicada" });
+    if (template.outputType !== item.type)
+      return response
+        .status(400)
+        .json({ error: "El formato de la plantilla debe coincidir con el formato de la publicación" });
+    if (!template.channels.some((channel) => item.channels.includes(channel)))
+      return response
+        .status(400)
+        .json({ error: "La plantilla no está habilitada para los canales de esta publicación" });
+    const fieldByKey = new Map(template.fields.map((field) => [field.key, field]));
+    for (const field of template.fields) {
+      const value = input.data[field.key]?.trim() ?? "";
+      if (field.required && !value) return response.status(400).json({ error: `Completá el campo «${field.label}»` });
+      if (value.length > field.maxLength)
+        return response.status(400).json({ error: `El campo «${field.label}» supera ${field.maxLength} caracteres` });
+    }
+    for (const slide of template.slides) {
+      if (!fieldByKey.has(slide.titleField) || (slide.bodyField && !fieldByKey.has(slide.bodyField)))
+        return response.status(400).json({ error: "La plantilla contiene referencias de campos inválidas" });
+    }
+    const oldGenerated = item.assets.filter((asset) => asset.altText.startsWith("[Plantilla:"));
+    const rendered = await templateRenderer.render(template, item, input.data);
+    const outputAssets: ContentItem["assets"] = [];
+    if (media?.configured) {
+      const grants = await media.createUploadGrants(
+        item.id,
+        rendered.map(({ buffer }, index) => ({
+          name: `${template.slug}-${index + 1}.png`,
+          contentType: "image/png",
+          size: buffer.length,
+        })),
+      );
+      for (const [index, grant] of grants.entries()) {
+        const uploaded = await fetch(grant.uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "image/png" },
+          body: new Uint8Array(rendered[index]!.buffer),
+          signal: AbortSignal.timeout(20_000),
+        });
+        if (!uploaded.ok) throw new Error("No se pudo guardar una imagen generada en el almacenamiento de medios");
+        outputAssets.push({ ...(await media.completeUpload(grant.assetId)), localPath: "" });
+      }
+    } else {
+      const mediaRoot = process.env.MEDIA_ROOT ?? process.env.UPLOAD_DIR ?? path.resolve("uploads");
+      await mkdir(mediaRoot, { recursive: true });
+      const publicBase = (process.env.PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
+      for (const asset of rendered) {
+        const id = randomUUID();
+        const filename = `${id}.png`;
+        await writeFile(path.join(mediaRoot, filename), asset.buffer, { flag: "wx" });
+        outputAssets.push({
+          id,
+          url: `${publicBase}/media/${filename}`,
+          localPath: filename,
+          mediaType: "image",
+          altText: asset.altText,
+          credit: asset.credit,
+          storage: "local",
+        });
+      }
+    }
+    const oldIds = new Set(oldGenerated.map((asset) => asset.id));
+    const updated = await manager.store.update(item.id, {
+      assets: [
+        ...item.assets.filter((asset) => !oldIds.has(asset.id)),
+        ...outputAssets.map((asset, index) => ({
+          ...asset,
+          altText: `[Plantilla:${template.slug}] ${rendered[index]!.altText}`,
+          credit: rendered[index]!.credit,
+        })),
+      ],
+      socialTemplateId: template.id,
+      socialTemplateVersion: template.templateVersion,
+      socialTemplateData: input.data,
+      socialRenderedAt: new Date().toISOString(),
+    });
+    if (!updated) return response.status(404).json({ error: "Contenido no encontrado" });
+    if (media) await media.syncContentAssets(item.id, updated.assets);
+    for (const asset of oldGenerated) {
+      if (asset.storage !== "r2" && asset.url) {
+        const filename = path.basename(new URL(asset.url).pathname);
+        await unlink(
+          path.join(process.env.MEDIA_ROOT ?? process.env.UPLOAD_DIR ?? path.resolve("uploads"), filename),
+        ).catch(() => undefined);
+      }
+    }
+    response.json({
+      content: updated,
+      assets: updated.assets.filter((asset) => asset.altText.startsWith(`[Plantilla:${template.slug}]`)),
+    });
   });
   app.post("/api/content/duplicates", requireRole("admin", "editor", "auditor"), async (request, response) =>
     response.json(
