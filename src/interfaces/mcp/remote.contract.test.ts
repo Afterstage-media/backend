@@ -90,11 +90,14 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.deepEqual(
       tools.tools.map((tool) => tool.name).sort(),
       [
+        "actualizar_ruta_correo",
         "actualizar_nota",
         "agregar_imagenes_nota",
         "cambiar_estado_nota",
         "crear_contacto",
         "crear_nota",
+        "crear_ruta_correo",
+        "eliminar_ruta_correo",
         "crear_evento",
         "buscar_directorio",
         "consultar_borradores",
@@ -105,6 +108,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "listar_agenda",
         "listar_notas",
         "listar_plantillas_sociales",
+        "listar_rutas_correo",
         "listar_reemplazos",
         "modificar_nota",
         "actualizar_contacto",
