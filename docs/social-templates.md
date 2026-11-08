@@ -1,13 +1,13 @@
 # Carruseles de Instagram por MCP
 
-Afterstage no llama a un proveedor de IA para este flujo. La IA externa invoca el MCP de Afterstage con la plantilla que eligió, las imágenes y el texto de cada lámina. Afterstage valida, compone y guarda los archivos.
+Afterstage no llama a un proveedor de IA para este flujo. La misma operación está disponible desde el front de redes y desde una IA externa que invoca el MCP. En ambos casos se elige una plantilla, se envían las imágenes y el texto de cada lámina, se obtiene un borrador con URLs y se pueden reemplazar láminas.
 
 ## Flujo
 
-1. `listar_plantillas_sociales` devuelve las plantillas publicadas para carrusel de Instagram almacenadas en MongoDB.
-2. `crear_carrusel_instagram` recibe `templateId`, título, texto del post y entre 2 y 9 objetos `slides`; cada objeto incluye una imagen y el texto que debe verse en esa lámina.
-3. El servidor renderiza las imágenes con el tamaño y estilo de la plantilla, guarda una publicación `draft` y devuelve su ID y las URLs de todas las imágenes.
-4. La IA puede abrir/revisar esas URLs. Si una lámina necesita cambios, invoca `corregir_lamina_instagram` con el ID del borrador, número de lámina e imagen corregida. La herramienta reemplaza esa imagen en la misma publicación y devuelve las URLs vigentes.
+1. El front consulta `GET /api/social-templates?type=carousel&channel=instagram`; MCP usa `listar_plantillas_sociales`. Ambos reciben las plantillas publicadas de MongoDB.
+2. El front `POST /api/social-carousel`; MCP usa `crear_carrusel_instagram`. Ambas entradas aceptan `templateId`, título, texto del post y entre 2 y 9 objetos `slides`; cada objeto incluye una imagen y el texto que debe verse en esa lámina.
+3. El servidor renderiza las imágenes con el tamaño y estilo de la plantilla, guarda una publicación `draft` y devuelve su ID y las URLs de todas las imágenes. El front las previsualiza; MCP devuelve las URLs al agente para que las abra/revise.
+4. Para corregir, el front envía `PUT /api/social-carousel/:id/slides/:slide`; MCP usa `corregir_lamina_instagram`. Ambas operaciones reciben la imagen corregida, reemplazan esa imagen en la misma publicación y devuelven las URLs vigentes.
 
 No se publica ni programa automáticamente. Las correcciones no crean publicaciones duplicadas.
 
