@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AiWriter, type GenerationKind } from "../infrastructure/integrations/ai.js";
 import { MetaPublisher } from "../infrastructure/integrations/meta.js";
 import { ContentStore, type ContentRepository } from "../infrastructure/persistence/content-store.js";
@@ -10,11 +11,20 @@ import {
   type ContentItem,
   type ContentPatch,
   type ContentStatus,
+  slugify,
 } from "../domain/content/types.js";
 import { parsePatch } from "../domain/parse-patch.js";
 import { assertTransition } from "../domain/content/workflow.js";
 import { detectDuplicates, type DuplicateMatch } from "../domain/content/duplicate-detector.js";
 import { MediaAssetStore } from "../infrastructure/persistence/media-assets.js";
+import { InstagramCarouselRenderer } from "../infrastructure/integrations/instagram-carousel-renderer.js";
+import {
+  correctedCarouselImageSchema,
+  instagramCarouselInputSchema,
+  type InstagramCarouselInput,
+} from "../domain/content/social-carousel.js";
+import type { SocialTemplate } from "../domain/content/social-template.js";
+import { MediaAssetService } from "../infrastructure/integrations/media-storage.js";
 
 export class DuplicateContentError extends Error {
   constructor(readonly matches: DuplicateMatch[]) {
@@ -29,7 +39,57 @@ export class ContentManager {
     private readonly ai = new AiWriter(),
     private readonly publisher = new MetaPublisher(),
     private readonly media = new MediaAssetStore(),
+    private readonly carouselRenderer = new InstagramCarouselRenderer(),
+    private readonly mediaStorage?: MediaAssetService,
   ) {}
+
+  private async persistCarouselImages(
+    contentId: string,
+    images: Awaited<ReturnType<InstagramCarouselRenderer["render"]>>,
+  ) {
+    if (this.mediaStorage?.configured) {
+      const grants = await this.mediaStorage.createUploadGrants(
+        contentId,
+        images.map((image, index) => ({
+          name: `afterstage-carrusel-${index + 1}.png`,
+          contentType: "image/png",
+          size: image.buffer.length,
+        })),
+      );
+      const assets: ContentItem["assets"] = [];
+      try {
+        for (const [index, grant] of grants.entries()) {
+          const uploaded = await fetch(grant.uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": "image/png" },
+            body: new Uint8Array(images[index]!.buffer),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!uploaded.ok) throw new Error("No se pudo guardar una lámina en el almacenamiento de medios");
+          assets.push({
+            ...(await this.mediaStorage.completeUpload(grant.assetId)),
+            localPath: "",
+            altText: images[index]!.altText,
+            credit: images[index]!.credit,
+          });
+        }
+        return assets;
+      } catch (error) {
+        await Promise.all(grants.map((grant) => this.mediaStorage!.removeAsset(grant.assetId).catch(() => undefined)));
+        throw error;
+      }
+    }
+
+    return this.media.createImages(
+      images.map((image, index) => ({
+        base64: image.buffer.toString("base64"),
+        mimeType: "image/png" as const,
+        filename: `afterstage-carrusel-${index + 1}.png`,
+        altText: image.altText,
+        credit: image.credit,
+      })),
+    );
+  }
 
   async create(input: unknown): Promise<ContentItem> {
     const parsed = contentInputSchema.parse(input);
@@ -93,6 +153,118 @@ export class ContentManager {
       return updated;
     } catch (error) {
       await this.media.remove(assets);
+      throw error;
+    }
+  }
+
+  async createInstagramCarousel(input: unknown, actorId: string, template: SocialTemplate): Promise<ContentItem> {
+    const parsed = instagramCarouselInputSchema.parse(input) as InstagramCarouselInput;
+    if (parsed.templateId !== template.id)
+      throw new Error("La plantilla seleccionada no coincide con el identificador enviado");
+    if (
+      template.status !== "published" ||
+      template.outputType !== "carousel" ||
+      !template.channels.includes("instagram")
+    ) {
+      throw new Error("La plantilla no está publicada para carruseles de Instagram");
+    }
+
+    const fingerprint = createHash("sha256")
+      .update(
+        JSON.stringify({
+          templateId: template.id,
+          title: parsed.title,
+          instagramCopy: parsed.instagramCopy,
+          slides: parsed.slides.map((slide) => ({
+            image: createHash("sha256").update(slide.image.base64).digest("hex"),
+            text: slide.text,
+          })),
+        }),
+      )
+      .digest("hex");
+    const idempotencyKey = `instagram-carousel:${actorId}:${fingerprint}`;
+    const existing = await this.store.findByIdempotencyKey(idempotencyKey);
+    if (existing) return existing;
+
+    const rendered = await this.carouselRenderer.render(template, parsed.title, parsed.slides);
+    const shell = await this.store.create(
+      contentInputSchema.parse({
+        type: "carousel",
+        title: parsed.title,
+        slug: `instagram-${slugify(parsed.title).slice(0, 185)}-${fingerprint.slice(0, 8)}`,
+        summary: parsed.slides[0]!.text,
+        body: parsed.slides.map((slide, index) => `Lámina ${index + 1}: ${slide.text}`).join("\n\n"),
+        status: "draft",
+        channels: ["instagram"],
+        assets: [],
+        instagramCopy: parsed.instagramCopy,
+        tags: parsed.tags,
+        source: parsed.source,
+        author: parsed.author,
+        photographer: parsed.photographer,
+        socialTemplateId: template.id,
+        socialTemplateVersion: template.templateVersion,
+        socialRenderedAt: null,
+        idempotencyKey,
+      }),
+    );
+    if (shell.assets.length) return shell;
+
+    let assets: ContentItem["assets"] = [];
+    try {
+      assets = await this.persistCarouselImages(shell.id, rendered);
+      const updated = await this.store.update(shell.id, {
+        assets,
+        socialRenderedAt: new Date().toISOString(),
+      });
+      if (!updated) throw new Error("No se pudo completar el borrador del carrusel");
+      if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(shell.id, updated.assets);
+      return updated;
+    } catch (error) {
+      if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(shell.id, []).catch(() => undefined);
+      else await this.media.remove(assets);
+      await this.store.remove(shell.id);
+      throw error;
+    }
+  }
+
+  async replaceInstagramCarouselImage(
+    publicationId: string,
+    slideNumber: number,
+    input: unknown,
+    template: SocialTemplate,
+  ): Promise<ContentItem> {
+    const parsed = correctedCarouselImageSchema.parse(input);
+    const item = await this.required(publicationId);
+    if (item.type !== "carousel" || !item.channels.includes("instagram") || item.status !== "draft") {
+      throw new Error("Solo se pueden corregir láminas de un borrador de Instagram");
+    }
+    if (item.socialTemplateId !== template.id) throw new Error("La plantilla no coincide con el carrusel");
+    const index = slideNumber - 1;
+    const previous = item.assets[index];
+    if (!Number.isInteger(slideNumber) || !previous || previous.mediaType !== "image") {
+      throw new Error("El número de lámina no existe en este carrusel");
+    }
+    const buffer = await this.carouselRenderer.normalizeCorrection(template, parsed.image);
+    const replacement = await this.persistCarouselImages(publicationId, [
+      { buffer, altText: previous.altText, credit: previous.credit },
+    ]);
+    try {
+      const assets = [...item.assets];
+      assets[index] = replacement[0]!;
+      const updated = await this.store.update(publicationId, {
+        assets,
+        socialRenderedAt: new Date().toISOString(),
+      });
+      if (!updated) throw new Error("No se pudo reemplazar la lámina");
+      if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(publicationId, updated.assets);
+      else await this.media.remove([previous]);
+      return updated;
+    } catch (error) {
+      await this.store.update(publicationId, { assets: item.assets }).catch(() => undefined);
+      if (this.mediaStorage?.configured)
+        await this.mediaStorage.syncContentAssets(publicationId, item.assets).catch(() => undefined);
+      else await this.media.remove(replacement);
       throw error;
     }
   }
