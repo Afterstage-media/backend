@@ -122,27 +122,32 @@ export class MetaPublisher {
     dryRun = false,
     onContainerCreated?: (containerId: string) => Promise<void>,
   ): Promise<MetaResult> {
-    if (item.channels.includes("instagram") && !item.assets.length) {
+    const publication = item.socialTemplateId
+      ? { ...item, assets: item.assets.filter((asset) => asset.altText.startsWith("[Plantilla:")) }
+      : item;
+    if (publication.channels.includes("instagram") && !publication.assets.length) {
       throw new Error("Instagram requiere al menos una imagen con URL pública");
     }
-    if (item.channels.includes("instagram") && item.type === "story" && item.assets.length !== 1) {
+    if (publication.channels.includes("instagram") && publication.type === "story" && publication.assets.length !== 1) {
       throw new Error("Las Stories de Instagram requieren un único medio");
     }
     if (
-      item.channels.includes("instagram") &&
-      item.type === "reel" &&
-      (item.assets.length !== 1 || item.assets[0]?.mediaType !== "video")
+      publication.channels.includes("instagram") &&
+      publication.type === "reel" &&
+      (publication.assets.length !== 1 || publication.assets[0]?.mediaType !== "video")
     ) {
       throw new Error("Los Reels de Instagram requieren un único video");
     }
     if (dryRun) {
       return Object.fromEntries(
-        item.channels.filter((channel) => channel !== "website").map((channel) => [channel, `dry-run-${item.id}`]),
+        publication.channels
+          .filter((channel) => channel !== "website")
+          .map((channel) => [channel, `dry-run-${item.id}`]),
       );
     }
 
-    const needsRemoteMedia = item.channels.includes("instagram") || item.channels.includes("facebook");
-    const prepared = needsRemoteMedia ? await this.media.resolveAssets(item) : item;
+    const needsRemoteMedia = publication.channels.includes("instagram") || publication.channels.includes("facebook");
+    const prepared = needsRemoteMedia ? await this.media.resolveAssets(publication) : publication;
     if (needsRemoteMedia) await this.media.validateAssets(prepared);
     if (!needsRemoteMedia) return {};
 

@@ -65,6 +65,7 @@ import {
   type TransportRequestInput,
 } from "../../domain/platform/types.js";
 import type { PlatformRepository } from "./platform-store.js";
+import { MongoSocialTemplateStore } from "./social-templates.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -716,6 +717,7 @@ export type MongoPersistence = {
   instagramConnections: MongoInstagramConnectionStore;
   editorialVoice: MongoEditorialVoiceStore;
   mail: MongoMailStore;
+  socialTemplates: MongoSocialTemplateStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -744,6 +746,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const instagramConnections = createInstagramConnectionStore(db);
   const editorialVoice = new MongoEditorialVoiceStore(db.collection("editorial_voices"));
   const mail = new MongoMailStore(db);
+  const socialTemplates = new MongoSocialTemplateStore(db.collection<MongoRecord>("social_templates"));
   await Promise.all([
     content.init(),
     press.init(),
@@ -756,6 +759,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     instagramConnections.init(),
     editorialVoice.init(),
     mail.init(),
+    socialTemplates.init(),
   ]);
   return {
     client,
@@ -768,6 +772,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     instagramConnections,
     editorialVoice,
     mail,
+    socialTemplates,
     mediaAssets,
     platform,
   };
@@ -789,6 +794,7 @@ export const createManagers = async () => {
     monetization: new MonetizationManager(persistence?.monetization),
     mcpOAuth: persistence?.mcpOAuth,
     media: persistence ? new MediaAssetService(persistence.mediaAssets, new MediaGatewayClient()) : undefined,
+    socialTemplates: persistence?.socialTemplates,
     instagramConnections: persistence?.instagramConnections,
     editorialVoice: persistence?.editorialVoice,
     mail: persistence?.mail,

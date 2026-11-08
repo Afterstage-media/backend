@@ -17,6 +17,7 @@ const {
   editorialVoice,
   mail,
   media,
+  socialTemplates,
 } = await createManagers();
 const app = await createApp(
   manager,
@@ -32,6 +33,7 @@ const app = await createApp(
   undefined,
   media,
   platform,
+  socialTemplates,
 );
 
 app.listen(port, () => log("info", "server_started", { port }));
