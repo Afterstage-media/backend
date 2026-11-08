@@ -780,12 +780,16 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
 
 export const createManagers = async () => {
   const persistence = await createMongoPersistence();
+  const media = persistence ? new MediaAssetService(persistence.mediaAssets, new MediaGatewayClient()) : undefined;
   return {
     persistence,
     manager: new ContentManager(
       persistence?.content,
       undefined,
       new MetaPublisher(undefined, persistence?.instagramConnections),
+      undefined,
+      undefined,
+      media,
     ),
     press: new PressManager(persistence?.press),
     platform: new PlatformManager(persistence?.platform),
@@ -793,7 +797,7 @@ export const createManagers = async () => {
     directory: new DirectoryManager(persistence?.directory),
     monetization: new MonetizationManager(persistence?.monetization),
     mcpOAuth: persistence?.mcpOAuth,
-    media: persistence ? new MediaAssetService(persistence.mediaAssets, new MediaGatewayClient()) : undefined,
+    media,
     socialTemplates: persistence?.socialTemplates,
     instagramConnections: persistence?.instagramConnections,
     editorialVoice: persistence?.editorialVoice,

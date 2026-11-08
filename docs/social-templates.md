@@ -1,29 +1,26 @@
-# Plantillas de redes
+# Carruseles de Instagram por MCP
 
-Afterstage mantiene las definiciones versionadas en MongoDB (`social_templates`). En el primer arranque se insertan seis plantillas iniciales si la colección está vacía. Cada cambio se guarda como nueva versión; las piezas conservan el ID y la versión usados.
+Afterstage no llama a un proveedor de IA para este flujo. La IA externa invoca el MCP de Afterstage con la plantilla que eligió, las imágenes y el texto de cada lámina. Afterstage valida, compone y guarda los archivos.
 
 ## Flujo
 
-1. El frontend consulta `GET /api/social-templates?type=carousel` y ofrece las plantillas publicadas compatibles.
-2. Se crea un borrador en el flujo editorial existente.
-3. En el editor se completan los campos de la plantilla y se pueden adjuntar fotografías desde el bloque de medios.
-4. `POST /api/content/:id/render-social` valida los campos, genera un PNG por slide en el servidor y adjunta los archivos al borrador.
-5. El contenido continúa por los estados de revisión, aprobación y publicación ya existentes. El renderer no publica.
+1. `listar_plantillas_sociales` devuelve las plantillas publicadas para carrusel de Instagram almacenadas en MongoDB.
+2. `crear_carrusel_instagram` recibe `templateId`, título, texto del post y entre 2 y 9 objetos `slides`; cada objeto incluye una imagen y el texto que debe verse en esa lámina.
+3. El servidor renderiza las imágenes con el tamaño y estilo de la plantilla, guarda una publicación `draft` y devuelve su ID y las URLs de todas las imágenes.
+4. La IA puede abrir/revisar esas URLs. Si una lámina necesita cambios, invoca `corregir_lamina_instagram` con el ID del borrador, número de lámina e imagen corregida. La herramienta reemplaza esa imagen en la misma publicación y devuelve las URLs vigentes.
 
-## Administración
+No se publica ni programa automáticamente. Las correcciones no crean publicaciones duplicadas.
 
-- `GET /api/social-templates`: catálogo compatible; admin ve el último estado de cada plantilla y editor sólo las publicadas.
-- `POST /api/social-templates` (admin): crea una plantilla/version.
-- `PUT /api/social-templates/:id` (admin): guarda una nueva versión. Enviar `status: "archived"` para retirar una plantilla del catálogo de selección.
+## Entrada y render
 
-Las definiciones se validan con un esquema tipado. Los campos permitidos son textos; las diapositivas sólo admiten fondo, acento, eyebrow y referencias a campos existentes. No se interpreta HTML o código de la base de datos.
+- Imágenes de entrada: JPEG, PNG o WebP en base64 o data URL; hasta 2,5 MiB por imagen.
+- Cada carrusel contiene de 2 a 9 láminas. Cada lámina recibe su propia imagen y texto (hasta 180 caracteres).
+- Texto del post: hasta 2.200 caracteres.
+- La definición de plantilla es información estructurada en MongoDB, no código ejecutable. El servidor hace el recorte y la composición final.
+- Las imágenes renderizadas se guardan en el almacenamiento configurado y el borrador conserva el ID y versión de la plantilla.
 
-## Medios
+## Origen editorial
 
-En producción, los renders se cargan mediante grants al almacenamiento R2 del servicio de medios. En instalaciones sin R2 configurado se guardan en `MEDIA_ROOT` (por defecto `UPLOAD_DIR`) y se sirven desde `/media`. Para usar fotografías fuentes, sus URLs deben pertenecer al origen configurado en `MEDIA_PUBLIC_BASE_URL` o `PUBLIC_BASE_URL`; se limitan a 8 MiB y tipos de imagen admitidos. Las imágenes generadas se distinguen con `altText` prefijado `[Plantilla:slug]` y son los únicos medios que se envían a Meta en publicaciones que tienen `socialTemplateId`.
+El resumen de reunión propone anuncios/calendarios de shows, crónicas post-evento, descubrimiento de bandas under, curiosidades/efemérides y noticias musicales; sugiere ganchos iniciales, fotos propias, overlays legibles y generalmente 5–9 láminas. Son lineamientos editoriales para elegir o diseñar plantillas, no instrucciones técnicas automáticas ni datos que el servidor invente. La cantidad permitida por el MCP es 2–9 para aceptar también publicaciones breves.
 
-Variables ya existentes que afectan este flujo: `MONGODB_URI`, `MEDIA_GATEWAY_URL`, `MEDIA_GATEWAY_SERVICE_TOKEN`, `MEDIA_PUBLIC_BASE_URL`, `PUBLIC_BASE_URL`, `MEDIA_ROOT` y `UPLOAD_DIR`.
-
-## Plantillas iniciales
-
-Agenda mensual, anuncio de show, crónica post-show, descubrimiento de banda, noticia musical y efeméride/curiosidad. Los formatos disponibles son post, carrusel y story; Reels siguen usando el flujo de video existente.
+La referencia visual indicada por el usuario es un carrusel fotográfico con portada de titular destacado y texto corto por foto en una banda oscura. Los detalles deben configurarse en una plantilla publicada.
