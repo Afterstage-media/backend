@@ -4,9 +4,10 @@ const imageInput = z.object({
   base64: z.string().trim().min(1).max(3_500_000),
   mimeType: z.enum(["image/jpeg", "image/png", "image/webp"]).optional(),
   filename: z.string().trim().max(255).optional(),
-  altText: z.string().max(500).default(""),
+  altText: z.string().trim().min(1).max(500),
   credit: z.string().max(500).default(""),
 });
+const correctedImageInput = imageInput.extend({ altText: z.string().max(500).optional() });
 
 export const instagramCarouselInputSchema = z.object({
   templateId: z.string().trim().min(1).max(120),
@@ -22,12 +23,12 @@ export const instagramCarouselInputSchema = z.object({
     .min(2)
     .max(9),
   tags: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
-  source: z.string().trim().max(500).default(""),
+  source: z.string().trim().min(1).max(500),
   author: z.string().trim().max(180).default(""),
   photographer: z.string().trim().max(180).default(""),
 });
 
-export const correctedCarouselImageSchema = z.object({ image: imageInput });
+export const correctedCarouselImageSchema = z.object({ image: correctedImageInput });
 
 export type InstagramCarouselInput = z.infer<typeof instagramCarouselInputSchema>;
 export type CarouselSlideInput = InstagramCarouselInput["slides"][number];

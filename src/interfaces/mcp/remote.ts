@@ -16,6 +16,7 @@ import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
 import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
 import { correctedCarouselImageSchema, instagramCarouselInputSchema } from "../../domain/content/social-carousel.js";
+import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import type { SocialTemplateRepository } from "../../domain/content/social-template.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
@@ -107,7 +108,23 @@ const noteMutationOutputSchema = z
     updatedBy: z.string(),
   })
   .passthrough();
+const socialEditorialGuidanceSchema = z.object({
+  purpose: z.string(),
+  angle: z.string(),
+  verify: z.array(z.string()),
+  slidePlan: z.array(z.string()),
+  caption: z.string(),
+  voice: z.string(),
+  avoid: z.array(z.string()),
+});
 const socialTemplatesOutputSchema = z.object({
+  editorialStandards: z.object({
+    purpose: z.string(),
+    accuracy: z.array(z.string()),
+    writing: z.array(z.string()),
+    images: z.array(z.string()),
+    finalCheck: z.array(z.string()),
+  }),
   templates: z.array(
     z.object({
       id: z.string(),
@@ -118,8 +135,20 @@ const socialTemplatesOutputSchema = z.object({
       outputType: z.string(),
       channels: z.array(z.string()),
       templateVersion: z.number().int().positive(),
+      guidanceVersion: z.number().int().nonnegative(),
       canvas: z.object({ width: z.number().int(), height: z.number().int() }),
       style: z.object({ eyebrow: z.string(), accent: z.string(), background: z.string() }),
+      fields: z.array(z.object({ key: z.string(), label: z.string(), required: z.boolean(), maxLength: z.number() })),
+      slides: z.array(
+        z.object({
+          eyebrow: z.string(),
+          titleField: z.string(),
+          bodyField: z.string().optional(),
+          accent: z.string(),
+          background: z.string(),
+        }),
+      ),
+      editorialGuidance: socialEditorialGuidanceSchema,
     }),
   ),
   total: z.number().int().nonnegative(),
@@ -805,7 +834,7 @@ export const createRemoteMcpServer = (
     {
       title: "Crear carrusel de Instagram",
       description:
-        "La IA que invoca Afterstage MCP envía varias imágenes y el texto de cada una, el texto del post y la plantilla elegida. Afterstage solo compone y guarda las imágenes; devuelve sus URLs para revisión. Crea un borrador y nunca publica automáticamente.",
+        "Antes de redactar, consultá listar_plantillas_sociales y seguí sus reglas editoriales y la estructura de la plantilla elegida. No inventes datos; si faltan hechos esenciales, pedí fuentes o excluilos. Recibe fotos, texto por lámina, caption, fuente y créditos; renderiza y guarda un borrador con URLs para revisión. Nunca publica automáticamente.",
       inputSchema: instagramCarouselInputSchema.shape,
       outputSchema: carouselOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: true },
@@ -826,7 +855,7 @@ export const createRemoteMcpServer = (
     {
       title: "Listar plantillas sociales",
       description:
-        "Devuelve las plantillas publicadas disponibles para carruseles de Instagram. Elegí una y enviá su ID al crear el carrusel.",
+        "Primer paso obligatorio antes de crear una publicación: devuelve estándares editoriales del medio, plantillas publicadas, propósito, enfoque, hechos que verificar, orden sugerido de láminas, guía de caption, voz y errores que evitar. Usá esta guía para redactar una pieza periodística verificable; no inventes los datos faltantes.",
       inputSchema: {},
       outputSchema: socialTemplatesOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false },
@@ -848,8 +877,12 @@ export const createRemoteMcpServer = (
         templateVersion: template.templateVersion,
         canvas: template.canvas,
         style: template.slides[0]!,
+        guidanceVersion: template.guidanceVersion,
+        fields: template.fields,
+        slides: template.slides,
+        editorialGuidance: template.editorialGuidance,
       }));
-      return textResult({ templates, total: templates.length });
+      return textResult({ editorialStandards: socialEditorialStandards, templates, total: templates.length });
     },
   );
 

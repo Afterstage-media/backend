@@ -10,6 +10,7 @@ import { PlatformManager } from "../../application/platform-manager.js";
 import { contentStatuses, type ContentItem } from "../../domain/content/types.js";
 import { socialTemplateSchema, type SocialTemplateRepository } from "../../domain/content/social-template.js";
 import { correctedCarouselImageSchema, instagramCarouselInputSchema } from "../../domain/content/social-carousel.js";
+import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import { PressManager } from "../../application/press-manager.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { EventsFeed } from "../../infrastructure/integrations/events-feed.js";
@@ -1538,7 +1539,7 @@ export const createApp = async (
           ? requestedStatus
           : "published";
     const all = await templateStore.list({ ...filters, status });
-    response.json(all);
+    response.json(all.map((template) => ({ ...template, editorialStandards: socialEditorialStandards })));
   });
   app.post("/api/social-carousel", requireRole("admin", "editor"), async (request, response) => {
     const input = instagramCarouselInputSchema.parse(request.body);
