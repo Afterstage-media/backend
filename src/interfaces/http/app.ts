@@ -464,6 +464,7 @@ export const createApp = async (
         new URL(publicUrl),
         editorialVoice,
         templateStore,
+        mailbox,
       );
   }
   app.use(
