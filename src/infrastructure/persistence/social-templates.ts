@@ -15,6 +15,32 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "agenda-mensual",
     name: "Agenda mensual de shows",
     description: "Fechas confirmadas para guardar y compartir.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Ayudar a la audiencia a planificar recitales del mes con información útil y confirmada.",
+      angle:
+        "Ordená las fechas por cercanía y relevancia para la escena; agrupá por semana o zona solo si facilita decidir.",
+      verify: [
+        "Día de la semana y fecha completa con año",
+        "Artista, venue y ciudad",
+        "Horario, entradas, precio y enlace oficial si están disponibles",
+        "Que la fecha siga vigente y no haya sido reprogramada",
+      ],
+      slidePlan: [
+        "Portada: mes/año y una promesa concreta de la agenda",
+        "Bloques de fechas en orden cronológico, con artista, venue y ciudad",
+        "Si hace falta, separar por semana o zona sin duplicar fechas",
+        "Cierre con fuente y fecha de última actualización",
+      ],
+      caption:
+        "Abrí con el mes y el criterio de selección. Incluí cómo consultar entradas y aclarar que precios, disponibilidad o horarios pueden cambiar cuando corresponda. Enlazá la fuente oficial.",
+      voice: "Práctica, clara y útil; priorizá fechas y datos por encima de adjetivos promocionales.",
+      avoid: [
+        "No completar horarios, precios o disponibilidad ausentes",
+        "No presentar la agenda como exhaustiva si es una selección",
+        "No mezclar fechas pasadas y futuras",
+      ],
+    },
     editorialSection: "show-calendar",
     outputType: "carousel",
     channels: ["instagram", "facebook"],
@@ -36,6 +62,31 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "anuncio-show",
     name: "Anuncio de show",
     description: "Una fecha con la información esencial y su fuente.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Informar una fecha de show con lo necesario para entender qué se anunció y dónde confirmarlo.",
+      angle: "El dato principal es el anuncio; el gancho debe contar qué vuelve, debuta o sucede, sin exagerar.",
+      verify: [
+        "Artista y nombre oficial del evento",
+        "Fecha, horario, venue y ciudad",
+        "Estado de venta, precio y enlace de tickets",
+        "Fuente oficial del anuncio y vigencia de la información",
+      ],
+      slidePlan: [
+        "Titular específico del anuncio",
+        "Fecha, venue y ciudad con jerarquía legible",
+        "Entradas/precio solo si la fuente lo confirma",
+        "Crédito visual cuando corresponda",
+      ],
+      caption:
+        "Resumí el anuncio en la primera línea; después agregá datos de acceso, venta y fuente oficial. No prometas información que no figure en el anuncio.",
+      voice: "Informativa y directa; separá datos confirmados de información pendiente.",
+      avoid: [
+        "No usar lenguaje de venta como si fuera comunicación del organizador",
+        "No inventar line-up, horarios ni precios",
+        "No usar urgencia artificial",
+      ],
+    },
     editorialSection: "show-announcement",
     outputType: "post",
     channels: ["instagram", "facebook"],
@@ -54,6 +105,34 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "cronica-show",
     name: "Crónica post-show",
     description: "Secuencia visual para contar lo que pasó en vivo.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Contar qué ocurrió en el show mediante una observación concreta y una secuencia visual con contexto.",
+      angle:
+        "Elegí un hilo narrativo real —un regreso, una decisión musical, un momento del repertorio— sustentado por notas y fotos.",
+      verify: [
+        "Artista, fecha, venue y ciudad",
+        "Canciones, invitados, duración y hechos puntuales contra notas o fuentes",
+        "Identidad y contexto de las fotos y crédito autorizado",
+        "Distinguir observación del cronista de citas o declaraciones",
+      ],
+      slidePlan: [
+        "Portada: hecho o escena que sintetiza la crónica",
+        "Contexto breve del show y del momento",
+        "Uno o dos momentos concretos en secuencia",
+        "Detalle musical o visual que explique por qué importó",
+        "Cierre que devuelva la historia al presente, sin conclusión genérica",
+      ],
+      caption:
+        "Usá una bajada que aporte contexto y no repita la portada. Atribuí declaraciones con exactitud, agregá crédito fotográfico y enlazá la crónica completa si existe.",
+      voice:
+        "Observacional, precisa y con ritmo narrativo. Solo usa primera persona si la cobertura y las notas acreditan presencia directa.",
+      avoid: [
+        "No inventar reacciones del público, citas, setlist ni detalles de producción",
+        "No afirmar que una noche fue histórica o única sin evidencia",
+        "No convertir impresiones personales en hechos",
+      ],
+    },
     editorialSection: "show-recap",
     outputType: "carousel",
     channels: ["instagram", "facebook"],
@@ -79,6 +158,32 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "descubrimiento-banda",
     name: "Descubrimiento de banda",
     description: "Perfil breve para descubrir un proyecto de la escena.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Presentar un proyecto musical y darle a la audiencia razones concretas para escucharlo.",
+      angle: "Definí qué distingue su sonido o recorrido con ejemplos verificables, no con etiquetas vacías.",
+      verify: [
+        "Nombre, integrantes y ciudad de origen con fuente vigente",
+        "Años de actividad, lanzamientos y descripción del sonido",
+        "Próxima fecha, venue y venta desde canal oficial",
+        "Pronombres, citas y créditos según fuentes originales",
+      ],
+      slidePlan: [
+        "Portada: rasgo distintivo y nombre de la banda",
+        "Origen o contexto de la escena",
+        "Cómo suena, con referencias musicales concretas",
+        "Lanzamiento o canción para empezar a escuchar",
+        "Próximo show confirmado o pregunta genuina para la audiencia",
+      ],
+      caption:
+        "Presentá el proyecto sin biografía promocional copiada; incluí enlaces a música y fuente de la información, y una pregunta que invite a descubrir, no a validar el gusto.",
+      voice: "Curiosa, respetuosa y específica; evita jerarquías de popularidad como sustituto del análisis.",
+      avoid: [
+        "No llamar emergente a una banda sin contexto",
+        "No asignar género como verdad absoluta si la banda lo describe distinto",
+        "No inventar trayectoria, integrantes ni fechas",
+      ],
+    },
     editorialSection: "discovery",
     outputType: "carousel",
     channels: ["instagram"],
@@ -102,6 +207,33 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "noticia-musical",
     name: "Noticia musical",
     description: "Novedad breve con contexto y fuente verificable.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Explicar una novedad musical con contexto suficiente para que se entienda su relevancia.",
+      angle:
+        "Respondé qué pasó, quién está involucrado, cuándo y qué cambia; priorizá el hecho sobre el juego de palabras.",
+      verify: [
+        "Hecho, fecha y protagonistas desde fuente primaria",
+        "Declaraciones textuales contra publicación original",
+        "Contexto anterior y consecuencias sin especular",
+        "Enlace y fecha de consulta de la fuente",
+      ],
+      slidePlan: [
+        "Portada: el hecho central en una frase concreta",
+        "Qué ocurrió y cuándo",
+        "Contexto que ayude a entenderlo",
+        "Qué se sabe y qué falta confirmar",
+        "Fuente original o siguiente paso confirmado",
+      ],
+      caption:
+        "Diferenciá hechos, declaraciones atribuidas y contexto. Incluí fuente directa. Si la noticia evoluciona, señalá cuándo se actualizó.",
+      voice: "Sobria, clara y proporcional a la evidencia disponible.",
+      avoid: [
+        "No amplificar rumores ni trascendidos como noticia",
+        "No convertir coincidencia temporal en causalidad",
+        "En muertes, separaciones o acusaciones, usar confirmación directa y lenguaje preciso",
+      ],
+    },
     editorialSection: "news",
     outputType: "post",
     channels: ["instagram", "facebook"],
@@ -119,6 +251,32 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "efemeride-curiosidad",
     name: "Efeméride o curiosidad",
     description: "Un dato cultural con contexto y fuente.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Recuperar un dato musical interesante y explicar por qué importa hoy.",
+      angle: "Elegí un dato preciso que cambie o enriquezca la lectura de una canción, disco o trayectoria.",
+      verify: [
+        "Fecha exacta y evento al que refiere",
+        "Créditos, autoría, grabación y citas en fuente primaria o archivo confiable",
+        "Contexto histórico y alcance de la afirmación",
+        "Fuente que permita comprobar el dato",
+      ],
+      slidePlan: [
+        "Portada: pregunta o dato específico sin exageración",
+        "El dato central, con fecha y protagonistas",
+        "Contexto que lo vuelve significativo",
+        "Consecuencia, legado o matiz documentado",
+        "Fuente y pregunta final si aporta conversación",
+      ],
+      caption:
+        "Añadí el contexto que no entra en la lámina y una fuente identificable. Aclará discrepancias entre fuentes en lugar de ocultarlas.",
+      voice: "Didáctica y curiosa, sin tono escolar ni mito repetido como hecho.",
+      avoid: [
+        "No usar ‘primero’, ‘único’ o ‘nunca’ sin evidencia amplia",
+        "No repetir anécdotas sin fuente",
+        "No forzar efemérides solo porque coinciden con la fecha",
+      ],
+    },
     editorialSection: "curiosity",
     outputType: "carousel",
     channels: ["instagram"],
@@ -146,8 +304,19 @@ export class MongoSocialTemplateStore implements SocialTemplateRepository {
       this.collection.createIndex({ slug: 1, templateVersion: 1 }, { unique: true }),
       this.collection.createIndex({ status: 1, editorialSection: 1, outputType: 1 }),
     ]);
-    const count = await this.collection.countDocuments({});
-    if (!count) for (const template of starterSocialTemplates) await this.save(template);
+    for (const template of starterSocialTemplates) {
+      const current = await this.findBySlug(template.slug);
+      if (!current) {
+        await this.save(template);
+      } else if (current.guidanceVersion < (template.guidanceVersion ?? 0)) {
+        const { id: _id, ...existing } = current;
+        await this.save({
+          ...existing,
+          guidanceVersion: template.guidanceVersion ?? 0,
+          editorialGuidance: template.editorialGuidance,
+        });
+      }
+    }
   }
   private normalize(doc: RecordDoc): SocialTemplate {
     const { _id, ...data } = doc;
@@ -207,8 +376,19 @@ export class MongoSocialTemplateStore implements SocialTemplateRepository {
 export class MemorySocialTemplateStore implements SocialTemplateRepository {
   private templates: SocialTemplate[] = [];
   async init() {
-    if (!this.templates.length)
-      this.templates = await Promise.all(starterSocialTemplates.map((template) => this.save(template)));
+    for (const template of starterSocialTemplates) {
+      const current = await this.findBySlug(template.slug);
+      if (!current) {
+        await this.save(template);
+      } else if (current.guidanceVersion < (template.guidanceVersion ?? 0)) {
+        const { id: _id, ...existing } = current;
+        await this.save({
+          ...existing,
+          guidanceVersion: template.guidanceVersion ?? 0,
+          editorialGuidance: template.editorialGuidance,
+        });
+      }
+    }
   }
   async list(filters: { section?: string; type?: string; status?: string; channel?: string } = {}) {
     const candidates = this.templates.filter(

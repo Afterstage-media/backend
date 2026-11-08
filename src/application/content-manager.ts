@@ -245,9 +245,14 @@ export class ContentManager {
     if (!Number.isInteger(slideNumber) || !previous || previous.mediaType !== "image") {
       throw new Error("El número de lámina no existe en este carrusel");
     }
-    const buffer = await this.carouselRenderer.normalizeCorrection(template, parsed.image);
+    const correctionImage = {
+      ...parsed.image,
+      altText: parsed.image.altText?.trim() || previous.altText,
+      credit: parsed.image.credit || previous.credit,
+    };
+    const buffer = await this.carouselRenderer.normalizeCorrection(template, correctionImage);
     const replacement = await this.persistCarouselImages(publicationId, [
-      { buffer, altText: previous.altText, credit: previous.credit },
+      { buffer, altText: correctionImage.altText, credit: correctionImage.credit },
     ]);
     try {
       const assets = [...item.assets];

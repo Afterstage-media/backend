@@ -27,6 +27,18 @@ export const socialTemplateSchema = z.object({
   status: z.enum(socialTemplateStatus).default("draft"),
   schemaVersion: z.number().int().positive().default(1),
   templateVersion: z.number().int().positive().default(1),
+  guidanceVersion: z.number().int().nonnegative().default(0),
+  editorialGuidance: z
+    .object({
+      purpose: z.string().max(500).default(""),
+      angle: z.string().max(500).default(""),
+      verify: z.array(z.string().max(300)).max(12).default([]),
+      slidePlan: z.array(z.string().max(300)).max(9).default([]),
+      caption: z.string().max(800).default(""),
+      voice: z.string().max(500).default(""),
+      avoid: z.array(z.string().max(300)).max(12).default([]),
+    })
+    .default({ purpose: "", angle: "", verify: [], slidePlan: [], caption: "", voice: "", avoid: [] }),
   canvas: z.object({ width: z.number().int().min(640).max(2160), height: z.number().int().min(640).max(2160) }),
   fields: z
     .array(

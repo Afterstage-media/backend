@@ -1,26 +1,41 @@
-# Carruseles de Instagram por MCP
+# Publicaciones sociales editoriales: front y MCP
 
-Afterstage no llama a un proveedor de IA para este flujo. La misma operación está disponible desde el front de redes y desde una IA externa que invoca el MCP. En ambos casos se elige una plantilla, se envían las imágenes y el texto de cada lámina, se obtiene un borrador con URLs y se pueden reemplazar láminas.
+Afterstage no invoca una IA. La IA externa prepara el contenido con las reglas editoriales y la plantilla consultadas a Afterstage; una persona puede completar el mismo flujo desde el front. Ambos canales comparten plantillas de MongoDB, validación, render, almacenamiento y transiciones de borrador.
 
-## Flujo
+## Contrato para la IA
 
-1. El front consulta `GET /api/social-templates?type=carousel&channel=instagram`; MCP usa `listar_plantillas_sociales`. Ambos reciben las plantillas publicadas de MongoDB.
-2. El front `POST /api/social-carousel`; MCP usa `crear_carrusel_instagram`. Ambas entradas aceptan `templateId`, título, texto del post y entre 2 y 9 objetos `slides`; cada objeto incluye una imagen y el texto que debe verse en esa lámina.
-3. El servidor renderiza las imágenes con el tamaño y estilo de la plantilla, guarda una publicación `draft` y devuelve su ID y las URLs de todas las imágenes. El front las previsualiza; MCP devuelve las URLs al agente para que las abra/revise.
-4. Para corregir, el front envía `PUT /api/social-carousel/:id/slides/:slide`; MCP usa `corregir_lamina_instagram`. Ambas operaciones reciben la imagen corregida, reemplazan esa imagen en la misma publicación y devuelven las URLs vigentes.
+`listar_plantillas_sociales` es la consulta inicial. Devuelve estándares editoriales del medio y, para cada plantilla publicada de carrusel de Instagram: propósito, enfoque, hechos a verificar, estructura narrativa sugerida, guía del caption, voz, errores que evitar, campos, estilos, tamaño y versión. La IA debe aplicar esa guía antes de redactar.
 
-No se publica ni programa automáticamente. Las correcciones no crean publicaciones duplicadas.
+Los estándares definen una barra de redacción de medio digital:
 
-## Entrada y render
+- No inventar ni inferir nombres, fechas, lugares, horarios, precios, canciones, citas, cifras, reacciones o derechos fotográficos.
+- Distinguir hechos comprobados, citas atribuidas y observación propia; pedir fuentes o excluir datos inciertos. Nunca publicar `[VERIFICAR]`.
+- Usar fuentes primarias para anuncios, noticias sensibles y hechos de última hora; no convertir rumores en hechos.
+- Redactar en español rioplatense claro, con un dato concreto como gancho, una idea por lámina y progresión narrativa. Evitar clickbait, clichés y grandilocuencia.
+- Hacer que el caption aporte contexto, atribución, fuente/enlace y créditos, sin repetir las láminas.
+- Usar 5–9 láminas cuando el material sostiene la historia; menos si la pieza es breve, sin rellenar. Máximo técnico: 9; 180 caracteres por lámina.
+- Incluir texto alternativo descriptivo y crédito fotográfico cuando se conozcan; no inventar autoría.
+- Antes de crear el borrador, comprobar exactitud, enfoque, repetición, fuentes, nombres, fechas, citas, enlaces, créditos y accesibilidad. Si un hecho central queda sin verificar, pedir aclaración.
 
-- Imágenes de entrada: JPEG, PNG o WebP en base64 o data URL; hasta 2,5 MiB por imagen.
-- Cada carrusel contiene de 2 a 9 láminas. Cada lámina recibe su propia imagen y texto (hasta 180 caracteres).
-- Texto del post: hasta 2.200 caracteres.
-- La definición de plantilla es información estructurada en MongoDB, no código ejecutable. El servidor hace el recorte y la composición final.
-- Las imágenes renderizadas se guardan en el almacenamiento configurado y el borrador conserva el ID y versión de la plantilla.
+Cada tipo de plantilla añade sus propios criterios y secuencia narrativa. Por ejemplo: una crónica se basa en notas de cobertura y hechos observados; una agenda exige verificar vigencia, orden cronológico, venue, ciudad y venta; una noticia separa qué se sabe de lo que falta confirmar; un perfil de banda necesita referencias concretas sobre sonido y trayectoria.
+
+## Flujo equivalente
+
+1. Front: `GET /api/social-templates?type=carousel&channel=instagram`. MCP: `listar_plantillas_sociales`. Ambos devuelven estándares y guía completa para las plantillas disponibles.
+2. Front: formulario de título, caption, fuentes, autoría, fotos, texto/alt text/crédito por lámina y selector de plantilla. MCP: `crear_carrusel_instagram` recibe `templateId`, esos datos y entre 2 y 9 láminas.
+3. El servidor renderiza, guarda una publicación `draft` y devuelve sus URLs. El front muestra una vista previa; MCP entrega las URLs para inspección de la IA.
+4. Para corregir una imagen, el front usa `PUT /api/social-carousel/:id/slides/:slide`; MCP usa `corregir_lamina_instagram`. Ambas reemplazan el archivo de la lámina en el mismo borrador y devuelven las URLs actualizadas.
+
+No se publica ni programa automáticamente. Las correcciones solo aceptan publicaciones en borrador.
+
+## Límites técnicos
+
+- JPEG, PNG o WebP en base64/data URL; hasta 2,5 MiB por archivo.
+- Una fuente/referencia y un texto alternativo descriptivo son obligatorios al crear. El crédito fotográfico se incluye cuando corresponda; una corrección conserva los metadatos de la lámina si no se vuelven a enviar.
+- Texto por lámina: máximo 180 caracteres. Caption de Instagram: máximo 2.200 caracteres.
+- Plantillas estructuradas, no código ejecutable. Incluyen `guidanceVersion` y los metadatos editoriales se versionan con la plantilla.
+- La migración de inicio crea nuevas versiones de plantillas existentes para incorporar guía editorial, conservando sus datos visuales y estado.
 
 ## Origen editorial
 
-El resumen de reunión propone anuncios/calendarios de shows, crónicas post-evento, descubrimiento de bandas under, curiosidades/efemérides y noticias musicales; sugiere ganchos iniciales, fotos propias, overlays legibles y generalmente 5–9 láminas. Son lineamientos editoriales para elegir o diseñar plantillas, no instrucciones técnicas automáticas ni datos que el servidor invente. La cantidad permitida por el MCP es 2–9 para aceptar también publicaciones breves.
-
-La referencia visual indicada por el usuario es un carrusel fotográfico con portada de titular destacado y texto corto por foto en una banda oscura. Los detalles deben configurarse en una plantilla publicada.
+El resumen de reunión propone anuncios/calendarios de shows, crónicas post-evento, descubrimiento de bandas under, curiosidades/efemérides y noticias musicales; sugiere ganchos, fotos propias, overlays legibles y normalmente 5–9 láminas. Estos son criterios editoriales y no hechos que la IA o el servidor puedan completar por su cuenta.
