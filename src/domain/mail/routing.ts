@@ -7,7 +7,7 @@ export const mailRouteInputSchema = z.object({
   address: routeAddress,
   label: z.string().trim().min(1).max(80),
   kind: mailRouteKindSchema,
-  destinations: z.array(routeAddress).min(1).max(50),
+  destinations: z.array(routeAddress).max(50).default([]),
 });
 export const mailRoutePatchSchema = mailRouteInputSchema.omit({ address: true }).partial();
 

@@ -280,6 +280,7 @@ Para incluir una imagen en `crear_nota`, el agente puede enviar una entrada como
 - `GET /api/mail/threads` — bandeja autenticada para admin, editor, prensa y comunidad.
 - `GET /api/mail/threads/:id` — conversación autenticada; la marca como leída.
 - `POST /api/mail/threads/:id/reply` — envía y persiste una respuesta por SMTP.
+- `GET/POST/PATCH/DELETE /api/mail/routes` — administra alias y rutas de correo; una ruta con `destinations: []` archiva en la bandeja sin reenviar.
 - `GET /health`
 - `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, devuelve un JWT de acceso y establece la sesión de navegador segura.
 - `GET /api/auth/me` — devuelve la identidad, roles y permisos del JWT actual.

@@ -26,6 +26,8 @@ export const mcpScopes = [
   "replacements:read",
   "voice:read",
   "voice:write",
+  "mail:read",
+  "mail:write",
 ] as const;
 export type McpScope = (typeof mcpScopes)[number];
 
@@ -39,6 +41,8 @@ export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
   "replacements:read": ["admin", "press", "auditor"],
   "voice:read": ["admin", "editor", "press", "auditor"],
   "voice:write": ["admin", "editor", "press"],
+  "mail:read": ["admin", "editor"],
+  "mail:write": ["admin", "editor"],
 };
 
 type PendingAuthorization = {

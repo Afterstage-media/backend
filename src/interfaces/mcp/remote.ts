@@ -17,6 +17,9 @@ import { ContentManager } from "../../application/content-manager.js";
 import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
+import { MailboxManager } from "../../application/mailbox-manager.js";
+import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
+import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import { editorialVoiceInputSchema } from "../../domain/editorial-voice/types.js";
 import {
   MemoryEditorialVoiceStore,
@@ -143,6 +146,14 @@ const editorialVoiceOutputSchema = z.object({
   updatedAt: z.string().nullable(),
   updatedBy: z.string().nullable(),
 });
+const mailRouteOutputSchema = z.object({
+  id: z.string(),
+  address: z.string(),
+  label: z.string(),
+  kind: z.enum(["personal", "distribution"]),
+  destinations: z.array(z.string()),
+});
+const mailRoutesOutputSchema = z.object({ routes: z.array(mailRouteOutputSchema) });
 
 const readNotesRoles = ["admin", "editor", "press", "auditor"] as const;
 const writeNotesRoles = ["admin", "editor"] as const;
@@ -152,6 +163,8 @@ const writeDirectoryRoles = ["admin", "editor", "press", "directory"] as const;
 const readReplacementsRoles = ["admin", "press", "auditor"] as const;
 const readEditorialVoiceRoles = ["admin", "editor", "press", "auditor"] as const;
 const writeEditorialVoiceRoles = ["admin", "editor", "press"] as const;
+const readMailRoles = ["admin", "editor"] as const;
+const writeMailRoles = ["admin", "editor"] as const;
 const toolScopes: Record<string, readonly McpScope[]> = {
   get_profile: ["notes:read"],
   obtener_nota: ["notes:read"],
@@ -172,6 +185,10 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   cambiar_estado_nota: ["notes:write"],
   obtener_voz_notero: ["voice:read"],
   actualizar_voz_notero: ["voice:write"],
+  listar_rutas_correo: ["mail:read"],
+  crear_ruta_correo: ["mail:write"],
+  actualizar_ruta_correo: ["mail:write"],
+  eliminar_ruta_correo: ["mail:write"],
 };
 
 const toolsAllowedForRoles = (roles: readonly string[]): Set<string> =>
@@ -206,12 +223,14 @@ export const createRemoteMcpServer = (
   directory: DirectoryManager = new DirectoryManager(),
   roles?: readonly string[],
   editorialVoice: EditorialVoiceRepository = new MemoryEditorialVoiceStore(),
+  mailbox?: MailRepository,
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
     version: "1.0.0",
   });
   const allowedTools = roles ? toolsAllowedForRoles(roles) : undefined;
+  const mailboxManager = mailbox ? new MailboxManager(mailbox) : undefined;
   const registerTool = <
     OutputArgs extends ZodRawShapeCompat | AnySchema,
     InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined,
@@ -795,6 +814,93 @@ export const createRemoteMcpServer = (
     },
   );
 
+  registerTool(
+    "listar_rutas_correo",
+    {
+      title: "Listar rutas de correo",
+      description:
+        "Consulta las direcciones de Afterstage y sus destinatarios de reenvío. Una ruta sin destinatarios solo archiva los mensajes en la bandeja de Afterstage.",
+      inputSchema: {},
+      outputSchema: mailRoutesOutputSchema,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "mail:read", readMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      return textResult({ routes: await mailboxManager.listRoutes() });
+    },
+  );
+
+  registerTool(
+    "crear_ruta_correo",
+    {
+      title: "Crear ruta de correo",
+      description:
+        "Crea una dirección grupal de Afterstage. Dejá destinations vacío para guardar los mensajes solo en la bandeja interna, sin reenviarlos.",
+      inputSchema: {
+        address: z.string().trim().email().max(180),
+        label: z.string().trim().min(1).max(80),
+        kind: z.enum(["personal", "distribution"]).default("distribution"),
+        destinations: z.array(z.string().trim().email().max(180)).max(50).default([]),
+      },
+      outputSchema: z.object({ route: mailRouteOutputSchema }),
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "mail:write", writeMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      return textResult({ route: await mailboxManager.createRoute(mailRouteInputSchema.parse(input)) });
+    },
+  );
+
+  registerTool(
+    "actualizar_ruta_correo",
+    {
+      title: "Actualizar ruta de correo",
+      description:
+        "Actualiza una ruta existente. Enviá destinations como [] para dejarla en modo archivo interno sin reenvíos.",
+      inputSchema: {
+        address: z.string().trim().email().max(180),
+        label: z.string().trim().min(1).max(80).optional(),
+        kind: z.enum(["personal", "distribution"]).optional(),
+        destinations: z.array(z.string().trim().email().max(180)).max(50).optional(),
+      },
+      outputSchema: z.object({ route: mailRouteOutputSchema }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:write"] }] },
+    },
+    async ({ address, ...patch }, extra) => {
+      authFromExtra(extra, "mail:write", writeMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      const parsed = mailRoutePatchSchema.parse(patch);
+      if (!Object.keys(parsed).length) throw new Error("Enviá al menos un campo para actualizar la ruta");
+      const route = await mailboxManager.updateRoute(address, parsed);
+      if (!route) throw new Error("Ruta de correo no encontrada");
+      return textResult({ route });
+    },
+  );
+
+  registerTool(
+    "eliminar_ruta_correo",
+    {
+      title: "Eliminar ruta de correo",
+      description:
+        "Elimina una dirección grupal. Los mensajes futuros enviados a esa dirección dejarán de procesarse por esa ruta.",
+      inputSchema: { address: z.string().trim().email().max(180) },
+      outputSchema: z.object({ address: z.string(), deleted: z.literal(true) }),
+      annotations: { destructiveHint: true, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:write"] }] },
+    },
+    async ({ address }, extra) => {
+      authFromExtra(extra, "mail:write", writeMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      if (!(await mailboxManager.deleteRoute(address))) throw new Error("Ruta de correo no encontrada");
+      return textResult({ address: address.trim().toLowerCase(), deleted: true });
+    },
+  );
+
   return server;
 };
 
@@ -807,6 +913,7 @@ export const mountRemoteMcp = (
   users: UserDirectory,
   publicUrl: URL,
   editorialVoice?: EditorialVoiceRepository,
+  mailbox?: MailRepository,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
   const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
@@ -958,7 +1065,7 @@ export const mountRemoteMcp = (
       const roles = Array.isArray(request.auth?.extra?.roles)
         ? request.auth.extra.roles.filter((role): role is string => typeof role === "string")
         : [];
-      const server = createRemoteMcpServer(manager, press, directory, roles, editorialVoice);
+      const server = createRemoteMcpServer(manager, press, directory, roles, editorialVoice, mailbox);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
       await transport.handleRequest(request, response, request.body);

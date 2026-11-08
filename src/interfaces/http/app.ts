@@ -454,7 +454,7 @@ export const createApp = async (
   if (mcpOAuthStore && users) {
     const publicUrl = process.env.MCP_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
     if (publicUrl)
-      mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl), editorialVoice);
+      mountRemoteMcp(app, manager, press, directory, mcpOAuthStore, users, new URL(publicUrl), editorialVoice, mailbox);
   }
   app.use(
     "/media",
