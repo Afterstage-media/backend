@@ -15,6 +15,8 @@ import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
 import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
+import { correctedCarouselImageSchema, instagramCarouselInputSchema } from "../../domain/content/social-carousel.js";
+import type { SocialTemplateRepository } from "../../domain/content/social-template.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
 import { MailboxManager } from "../../application/mailbox-manager.js";
@@ -72,6 +74,21 @@ const textResult = (value: Record<string, unknown>) => ({
   structuredContent: value,
 });
 const publicNote = ({ idempotencyKey: _idempotencyKey, ...note }: ContentItem) => note;
+const publicCarousel = (note: ContentItem, createdBy: string) => ({
+  id: note.id,
+  status: note.status,
+  createdBy,
+  title: note.title,
+  instagramCopy: note.instagramCopy,
+  templateId: note.socialTemplateId ?? "",
+  templateVersion: note.socialTemplateVersion ?? 1,
+  images: note.assets.map((asset, index) => ({
+    slide: index + 1,
+    url: asset.url,
+    altText: asset.altText,
+    credit: asset.credit,
+  })),
+});
 
 const profileOutputSchema = z.object({
   userId: z.string(),
@@ -90,6 +107,35 @@ const noteMutationOutputSchema = z
     updatedBy: z.string(),
   })
   .passthrough();
+const socialTemplatesOutputSchema = z.object({
+  templates: z.array(
+    z.object({
+      id: z.string(),
+      slug: z.string(),
+      name: z.string(),
+      description: z.string(),
+      editorialSection: z.string(),
+      outputType: z.string(),
+      channels: z.array(z.string()),
+      templateVersion: z.number().int().positive(),
+      canvas: z.object({ width: z.number().int(), height: z.number().int() }),
+      style: z.object({ eyebrow: z.string(), accent: z.string(), background: z.string() }),
+    }),
+  ),
+  total: z.number().int().nonnegative(),
+});
+const carouselOutputSchema = z.object({
+  id: z.string(),
+  status: z.enum(contentStatuses),
+  createdBy: z.string(),
+  title: z.string(),
+  instagramCopy: z.string(),
+  templateId: z.string(),
+  templateVersion: z.number().int().positive(),
+  images: z.array(
+    z.object({ slide: z.number().int().positive(), url: z.string().url(), altText: z.string(), credit: z.string() }),
+  ),
+});
 const noteOutputSchema = z.object({ id: z.string(), status: z.enum(contentStatuses) }).passthrough();
 const noteUpdateFields = {
   type: z.enum(["article", "post", "carousel", "reel", "story"]).optional(),
@@ -179,6 +225,9 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   actualizar_contacto: ["directory:write"],
   listar_reemplazos: ["replacements:read"],
   crear_nota: ["notes:write"],
+  crear_carrusel_instagram: ["notes:write"],
+  listar_plantillas_sociales: ["notes:read"],
+  corregir_lamina_instagram: ["notes:write"],
   agregar_imagenes_nota: ["notes:write"],
   modificar_nota: ["notes:write"],
   actualizar_nota: ["notes:write"],
@@ -223,6 +272,7 @@ export const createRemoteMcpServer = (
   directory: DirectoryManager = new DirectoryManager(),
   roles?: readonly string[],
   editorialVoice: EditorialVoiceRepository = new MemoryEditorialVoiceStore(),
+  socialTemplates?: SocialTemplateRepository,
   mailbox?: MailRepository,
 ) => {
   const server = new McpServer({
@@ -751,6 +801,86 @@ export const createRemoteMcpServer = (
   );
 
   registerTool(
+    "crear_carrusel_instagram",
+    {
+      title: "Crear carrusel de Instagram",
+      description:
+        "La IA que invoca Afterstage MCP envía varias imágenes y el texto de cada una, el texto del post y la plantilla elegida. Afterstage solo compone y guarda las imágenes; devuelve sus URLs para revisión. Crea un borrador y nunca publica automáticamente.",
+      inputSchema: instagramCarouselInputSchema.shape,
+      outputSchema: carouselOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async (input, extra) => {
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
+      const template = await socialTemplates.get(input.templateId);
+      if (!template) throw new Error("No se encontró la plantilla seleccionada");
+      const note = await manager.createInstagramCarousel(input, actor.userId, template);
+      return textResult(publicCarousel(note, actor.userId));
+    },
+  );
+
+  registerTool(
+    "listar_plantillas_sociales",
+    {
+      title: "Listar plantillas sociales",
+      description:
+        "Devuelve las plantillas publicadas disponibles para carruseles de Instagram. Elegí una y enviá su ID al crear el carrusel.",
+      inputSchema: {},
+      outputSchema: socialTemplatesOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
+      const templates = (
+        await socialTemplates.list({ status: "published", type: "carousel", channel: "instagram" })
+      ).map((template) => ({
+        id: template.id,
+        slug: template.slug,
+        name: template.name,
+        description: template.description,
+        editorialSection: template.editorialSection,
+        outputType: template.outputType,
+        channels: template.channels,
+        templateVersion: template.templateVersion,
+        canvas: template.canvas,
+        style: template.slides[0]!,
+      }));
+      return textResult({ templates, total: templates.length });
+    },
+  );
+
+  registerTool(
+    "corregir_lamina_instagram",
+    {
+      title: "Reemplazar lámina del carrusel",
+      description:
+        "Recibe la imagen corregida y reemplaza la lámina indicada dentro del mismo borrador. Devuelve las URLs actuales para volver a revisarlas.",
+      inputSchema: {
+        publicationId: z.string().trim().min(1).max(180),
+        slide: z.number().int().positive(),
+        image: correctedCarouselImageSchema.shape.image,
+      },
+      outputSchema: carouselOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ publicationId, slide, image }, extra) => {
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
+      const current = await manager.required(publicationId);
+      if (!current.socialTemplateId) throw new Error("El borrador no tiene una plantilla social asociada");
+      const template = await socialTemplates.get(current.socialTemplateId);
+      if (!template) throw new Error("No se encontró la plantilla del borrador");
+      const updated = await manager.replaceInstagramCarouselImage(publicationId, slide, { image }, template);
+      return textResult(publicCarousel(updated, actor.userId));
+    },
+  );
+
+  registerTool(
     "modificar_nota",
     {
       title: "Modificar nota",
@@ -913,6 +1043,7 @@ export const mountRemoteMcp = (
   users: UserDirectory,
   publicUrl: URL,
   editorialVoice?: EditorialVoiceRepository,
+  socialTemplates?: SocialTemplateRepository,
   mailbox?: MailRepository,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
@@ -1065,7 +1196,7 @@ export const mountRemoteMcp = (
       const roles = Array.isArray(request.auth?.extra?.roles)
         ? request.auth.extra.roles.filter((role): role is string => typeof role === "string")
         : [];
-      const server = createRemoteMcpServer(manager, press, directory, roles, editorialVoice, mailbox);
+      const server = createRemoteMcpServer(manager, press, directory, roles, editorialVoice, socialTemplates, mailbox);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
       await transport.handleRequest(request, response, request.body);
