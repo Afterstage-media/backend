@@ -9,7 +9,11 @@ import { ContentManager, DuplicateContentError } from "../../application/content
 import { PlatformManager } from "../../application/platform-manager.js";
 import { contentStatuses, type ContentItem } from "../../domain/content/types.js";
 import { socialTemplateSchema, type SocialTemplateRepository } from "../../domain/content/social-template.js";
-import { correctedCarouselImageSchema, instagramCarouselInputSchema } from "../../domain/content/social-carousel.js";
+import {
+  correctedCarouselImageSchema,
+  instagramCarouselInputSchema,
+  instagramCarouselUpdateSchema,
+} from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import { PressManager } from "../../application/press-manager.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
@@ -1585,6 +1589,42 @@ export const createApp = async (
         altText: asset.altText,
         credit: asset.credit,
       })),
+      slides: (item.socialSlides ?? []).map((slide, index) => ({
+        slide: index + 1,
+        sourceAssetId: slide.source.id,
+        imageUrl: slide.source.url,
+        text: slide.text,
+        altText: slide.source.altText,
+        credit: slide.source.credit,
+      })),
+    });
+  });
+  app.put("/api/social-carousel/:id", requireRole("admin", "editor"), async (request, response) => {
+    const input = instagramCarouselUpdateSchema.parse(request.body);
+    const template = await templateStore.get(input.templateId);
+    if (!template) return response.status(404).json({ error: "No se encontró la plantilla seleccionada" });
+    const updated = await manager.updateInstagramCarousel(String(request.params.id), input, template);
+    response.json({
+      id: updated.id,
+      status: updated.status,
+      title: updated.title,
+      instagramCopy: updated.instagramCopy,
+      templateId: updated.socialTemplateId,
+      templateVersion: updated.socialTemplateVersion,
+      images: updated.assets.map((asset, index) => ({
+        slide: index + 1,
+        url: asset.url,
+        altText: asset.altText,
+        credit: asset.credit,
+      })),
+      slides: (updated.socialSlides ?? []).map((slide, index) => ({
+        slide: index + 1,
+        sourceAssetId: slide.source.id,
+        imageUrl: slide.source.url,
+        text: slide.text,
+        altText: slide.source.altText,
+        credit: slide.source.credit,
+      })),
     });
   });
   app.put("/api/social-carousel/:id/slides/:slide", requireRole("admin", "editor"), async (request, response) => {
@@ -1608,6 +1648,14 @@ export const createApp = async (
         url: asset.url,
         altText: asset.altText,
         credit: asset.credit,
+      })),
+      slides: (updated.socialSlides ?? []).map((slide, index) => ({
+        slide: index + 1,
+        sourceAssetId: slide.source.id,
+        imageUrl: slide.source.url,
+        text: slide.text,
+        altText: slide.source.altText,
+        credit: slide.source.credit,
       })),
     });
   });

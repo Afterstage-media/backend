@@ -30,6 +30,20 @@ export const instagramCarouselInputSchema = z.object({
 
 export const correctedCarouselImageSchema = z.object({ image: correctedImageInput });
 
+export const instagramCarouselUpdateSchema = instagramCarouselInputSchema.extend({
+  slides: z
+    .array(
+      z.object({
+        image: imageInput.optional(),
+        sourceAssetId: z.string().trim().min(1).max(180).optional(),
+        text: z.string().trim().min(1).max(180),
+      }),
+    )
+    .min(2)
+    .max(9),
+});
+
 export type InstagramCarouselInput = z.infer<typeof instagramCarouselInputSchema>;
+export type InstagramCarouselUpdate = z.infer<typeof instagramCarouselUpdateSchema>;
 export type CarouselSlideInput = InstagramCarouselInput["slides"][number];
 export type CarouselImageInput = z.infer<typeof imageInput>;
