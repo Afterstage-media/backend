@@ -1,20 +1,19 @@
+import type { InstagramConnectionStore } from "../persistence/instagram-connections.js";
 import type { InstagramTrustedCollaboratorStore } from "../persistence/instagram-trusted-collaborators.js";
 
 type GraphObject = Record<string, unknown>;
 type GraphPage = { data?: GraphObject[]; paging?: { next?: string } };
+type Credentials = { accountId: string; token: string; base: string };
 
-const apiBase = () => `https://graph.facebook.com/${process.env.META_API_VERSION ?? "v24.0"}`;
-const accessToken = () => {
-  const token = process.env.META_ACCESS_TOKEN;
-  if (!token) throw new Error("META_ACCESS_TOKEN no está configurada");
-  return token;
-};
-
-const graphRequest = async (path: string, method: "GET" | "POST", fields: Record<string, string> = {}) => {
-  const url = new URL(`${apiBase()}/${path.replace(/^\//, "")}`);
-  const token = accessToken();
+const graphRequest = async (
+  credentials: Credentials,
+  path: string,
+  method: "GET" | "POST",
+  fields: Record<string, string> = {},
+) => {
+  const url = new URL(`${credentials.base}/${path.replace(/^\//, "")}`);
   if (method === "GET") {
-    url.searchParams.set("access_token", token);
+    url.searchParams.set("access_token", credentials.token);
     for (const [key, value] of Object.entries(fields)) url.searchParams.set(key, value);
   }
   const response = await fetch(url, {
@@ -22,7 +21,7 @@ const graphRequest = async (path: string, method: "GET" | "POST", fields: Record
     ...(method === "POST"
       ? {
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ ...fields, access_token: token }),
+          body: new URLSearchParams({ ...fields, access_token: credentials.token }),
         }
       : {}),
     signal: AbortSignal.timeout(30_000),
@@ -34,17 +33,40 @@ const graphRequest = async (path: string, method: "GET" | "POST", fields: Record
   return result;
 };
 
-export class InstagramCommunity {
-  constructor(private readonly collaborators: InstagramTrustedCollaboratorStore) {}
+const apiVersion = () => process.env.META_API_VERSION ?? "v24.0";
 
-  private accountId(): string {
-    const value = process.env.META_INSTAGRAM_ACCOUNT_ID;
-    if (!value) throw new Error("META_INSTAGRAM_ACCOUNT_ID no está configurada");
-    return value;
+export class InstagramCommunity {
+  constructor(
+    private readonly collaborators: InstagramTrustedCollaboratorStore,
+    private readonly connections?: InstagramConnectionStore,
+  ) {}
+
+  private async instagramCredentials(): Promise<Credentials> {
+    const connection = await this.connections?.getDefault();
+    if (connection) {
+      return {
+        accountId: connection.accountId,
+        token: connection.accessToken,
+        base: `https://graph.instagram.com/${apiVersion()}`,
+      };
+    }
+    const token = process.env.META_ACCESS_TOKEN;
+    const accountId = process.env.META_INSTAGRAM_ACCOUNT_ID;
+    if (!token || !accountId) throw new Error("Conectá una cuenta profesional de Instagram en Afterstage");
+    return { accountId, token, base: `https://graph.facebook.com/${apiVersion()}` };
+  }
+
+  private facebookCredentials(): Credentials {
+    const token = process.env.META_ACCESS_TOKEN;
+    const accountId = process.env.META_INSTAGRAM_ACCOUNT_ID;
+    if (!token || !accountId)
+      throw new Error("La gestión de colaboraciones requiere Instagram conectado mediante Facebook Login");
+    return { accountId, token, base: `https://graph.facebook.com/${apiVersion()}` };
   }
 
   async listConversations(limit = 25): Promise<GraphObject[]> {
-    const result = (await graphRequest(`${this.accountId()}/conversations`, "GET", {
+    const credentials = await this.instagramCredentials();
+    const result = (await graphRequest(credentials, `${credentials.accountId}/conversations`, "GET", {
       platform: "instagram",
       fields: "id,updated_time,participants",
       limit: String(limit),
@@ -53,7 +75,8 @@ export class InstagramCommunity {
   }
 
   async listMessages(conversationId: string, limit = 50): Promise<GraphObject[]> {
-    const result = (await graphRequest(`${encodeURIComponent(conversationId)}/messages`, "GET", {
+    const credentials = await this.instagramCredentials();
+    const result = (await graphRequest(credentials, `${encodeURIComponent(conversationId)}/messages`, "GET", {
       fields: "id,created_time,from,to,message,attachments",
       limit: String(limit),
     })) as GraphPage;
@@ -62,7 +85,8 @@ export class InstagramCommunity {
 
   async sendMessage(recipientId: string, message: string): Promise<GraphObject> {
     if (!recipientId.trim()) throw new Error("Falta el identificador del destinatario");
-    const result = await graphRequest(`${this.accountId()}/messages`, "POST", {
+    const credentials = await this.instagramCredentials();
+    const result = await graphRequest(credentials, `${credentials.accountId}/messages`, "POST", {
       recipient: JSON.stringify({ id: recipientId }),
       message: JSON.stringify({ text: message }),
     });
@@ -70,7 +94,8 @@ export class InstagramCommunity {
   }
 
   async listComments(mediaId: string, limit = 100): Promise<GraphObject[]> {
-    const result = (await graphRequest(`${encodeURIComponent(mediaId)}/comments`, "GET", {
+    const credentials = await this.instagramCredentials();
+    const result = (await graphRequest(credentials, `${encodeURIComponent(mediaId)}/comments`, "GET", {
       fields: "id,text,username,timestamp,like_count,replies",
       limit: String(limit),
     })) as GraphPage;
@@ -78,7 +103,8 @@ export class InstagramCommunity {
   }
 
   async replyToComment(commentId: string, message: string): Promise<GraphObject> {
-    const result = await graphRequest(`${encodeURIComponent(commentId)}/replies`, "POST", { message });
+    const credentials = await this.instagramCredentials();
+    const result = await graphRequest(credentials, `${encodeURIComponent(commentId)}/replies`, "POST", { message });
     return { commentId, replyId: result.id ?? null };
   }
 
@@ -88,8 +114,9 @@ export class InstagramCommunity {
   }> {
     const trusted = new Set((await this.collaborators.list()).map((item) => item.username.toLowerCase()));
     if (!trusted.size) return { checked: 0, accepted: [] };
-    const accountId = this.accountId();
-    const result = (await graphRequest(`${accountId}/collaboration_invites`, "GET", {
+    const credentials = this.facebookCredentials();
+    const accountId = credentials.accountId;
+    const result = (await graphRequest(credentials, `${accountId}/collaboration_invites`, "GET", {
       fields: "media_id,media_owner_username,caption,media_url",
       limit: "100",
     })) as GraphPage;
@@ -101,7 +128,10 @@ export class InstagramCommunity {
         .toLowerCase();
       const mediaId = String(invite.media_id ?? invite.id ?? "");
       if (!mediaId || !trusted.has(username)) continue;
-      await graphRequest(`${accountId}/collaboration_invites`, "POST", { media_id: mediaId, accept: "true" });
+      await graphRequest(credentials, `${accountId}/collaboration_invites`, "POST", {
+        media_id: mediaId,
+        accept: "true",
+      });
       accepted.push({ username, mediaId });
     }
     return { checked: invites.length, accepted };

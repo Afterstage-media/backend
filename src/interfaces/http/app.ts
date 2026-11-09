@@ -479,6 +479,7 @@ export const createApp = async (
         templateStore,
         mailbox,
         instagramTrustedCollaborators,
+        instagramConnections,
       );
   }
   app.use(

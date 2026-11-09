@@ -16,6 +16,7 @@ import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
 import { InstagramCommunity } from "../../infrastructure/integrations/instagram-community.js";
 import type { InstagramTrustedCollaboratorStore } from "../../infrastructure/persistence/instagram-trusted-collaborators.js";
+import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
 import { correctedCarouselImageSchema, instagramCarouselInputSchema } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
@@ -366,6 +367,7 @@ export const createRemoteMcpServer = (
   socialTemplates?: SocialTemplateRepository,
   mailbox?: MailRepository,
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
+  instagramConnections?: InstagramConnectionStore,
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
@@ -374,7 +376,7 @@ export const createRemoteMcpServer = (
   const allowedTools = roles ? toolsAllowedForRoles(roles) : undefined;
   const mailboxManager = mailbox ? new MailboxManager(mailbox) : undefined;
   const instagramService = instagramTrustedCollaborators
-    ? new InstagramCommunity(instagramTrustedCollaborators)
+    ? new InstagramCommunity(instagramTrustedCollaborators, instagramConnections)
     : undefined;
   const registerTool = <
     OutputArgs extends ZodRawShapeCompat | AnySchema,
@@ -1366,6 +1368,7 @@ export const mountRemoteMcp = (
   socialTemplates?: SocialTemplateRepository,
   mailbox?: MailRepository,
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
+  instagramConnections?: InstagramConnectionStore,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
   const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
@@ -1526,6 +1529,7 @@ export const mountRemoteMcp = (
         socialTemplates,
         mailbox,
         instagramTrustedCollaborators,
+        instagramConnections,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
