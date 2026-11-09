@@ -10,6 +10,44 @@ export const socialEditorialSections = [
   "news",
 ] as const;
 export const socialOutputTypes = ["post", "carousel", "story"] as const;
+export const socialVisualStyleSchema = z.object({
+  id: z
+    .string()
+    .trim()
+    .min(2)
+    .max(80)
+    .regex(/^[a-z0-9-]+$/)
+    .default("afterstage-editorial"),
+  name: z.string().trim().min(2).max(100).default("Afterstage editorial"),
+  description: z.string().max(300).default("Fotografía protagonista, tipografía condensada y acento violeta."),
+  layout: z.enum(["photo-overlay", "split-panel", "type-poster"]).default("photo-overlay"),
+  coverEyebrow: z.string().max(80).default("AFTERSTAGE EDITORIAL"),
+  palette: z
+    .object({
+      background: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .default("#111114"),
+      foreground: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .default("#f4f0e8"),
+      accent: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .default("#7b35ff"),
+      overlay: z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/)
+        .default("#080808"),
+    })
+    .default({
+      background: "#111114",
+      foreground: "#f4f0e8",
+      accent: "#7b35ff",
+      overlay: "#080808",
+    }),
+});
 
 export const socialTemplateSchema = z.object({
   id: z.string().optional(),
@@ -27,6 +65,19 @@ export const socialTemplateSchema = z.object({
   status: z.enum(socialTemplateStatus).default("draft"),
   schemaVersion: z.number().int().positive().default(1),
   templateVersion: z.number().int().positive().default(1),
+  visualStyle: socialVisualStyleSchema.default({
+    id: "afterstage-editorial",
+    name: "Afterstage editorial",
+    description: "Fotografía protagonista, tipografía condensada y acento violeta.",
+    layout: "photo-overlay",
+    coverEyebrow: "AFTERSTAGE EDITORIAL",
+    palette: {
+      background: "#111114",
+      foreground: "#f4f0e8",
+      accent: "#7b35ff",
+      overlay: "#080808",
+    },
+  }),
   guidanceVersion: z.number().int().nonnegative().default(0),
   editorialGuidance: z
     .object({
@@ -75,6 +126,7 @@ export const socialTemplateSchema = z.object({
 });
 
 export type SocialTemplate = z.infer<typeof socialTemplateSchema> & { id: string };
+export type SocialVisualStyle = z.infer<typeof socialVisualStyleSchema>;
 export type SocialTemplateInput = z.input<typeof socialTemplateSchema>;
 export type SocialTemplateRepository = {
   init(): Promise<void>;

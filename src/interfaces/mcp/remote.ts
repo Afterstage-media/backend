@@ -129,6 +129,28 @@ const socialTemplatesOutputSchema = z.object({
   templates: z.array(
     z.object({
       id: z.string(),
+      visualStyleId: z.string(),
+      name: z.string(),
+      description: z.string(),
+      canvas: z.object({ width: z.number().int(), height: z.number().int() }),
+      visualStyle: z.object({
+        id: z.string(),
+        name: z.string(),
+        description: z.string(),
+        layout: z.enum(["photo-overlay", "split-panel", "type-poster"]),
+        coverEyebrow: z.string(),
+        palette: z.object({
+          background: z.string(),
+          foreground: z.string(),
+          accent: z.string(),
+          overlay: z.string(),
+        }),
+      }),
+    }),
+  ),
+  editorialGuides: z.array(
+    z.object({
+      templateId: z.string(),
       slug: z.string(),
       name: z.string(),
       description: z.string(),
@@ -137,8 +159,6 @@ const socialTemplatesOutputSchema = z.object({
       channels: z.array(z.string()),
       templateVersion: z.number().int().positive(),
       guidanceVersion: z.number().int().nonnegative(),
-      canvas: z.object({ width: z.number().int(), height: z.number().int() }),
-      style: z.object({ eyebrow: z.string(), accent: z.string(), background: z.string() }),
       fields: z.array(z.object({ key: z.string(), label: z.string(), required: z.boolean(), maxLength: z.number() })),
       slides: z.array(
         z.object({
@@ -152,7 +172,8 @@ const socialTemplatesOutputSchema = z.object({
       editorialGuidance: socialEditorialGuidanceSchema,
     }),
   ),
-  total: z.number().int().nonnegative(),
+  totalStyles: z.number().int().nonnegative(),
+  totalGuides: z.number().int().nonnegative(),
 });
 const carouselOutputSchema = z.object({
   id: z.string(),
@@ -907,7 +928,7 @@ export const createRemoteMcpServer = (
     {
       title: "Listar plantillas sociales",
       description:
-        "Primer paso obligatorio antes de crear una publicación: devuelve estándares editoriales del medio, plantillas publicadas, propósito, enfoque, hechos que verificar, orden sugerido de láminas, guía de caption, voz y errores que evitar. Usá esta guía para redactar una pieza periodística verificable; no inventes los datos faltantes.",
+        "Primer paso obligatorio antes de crear una publicación. Devuelve estilos visuales (composición, paleta y formato) por separado de las guías editoriales (temas, propósito, hechos a verificar y estructura narrativa). Elegí un estilo por su visualStyleId y combiná la guía editorial adecuada al tema. No confundas tema con diseño ni inventes datos faltantes.",
       inputSchema: {},
       outputSchema: socialTemplatesOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false },
@@ -916,10 +937,21 @@ export const createRemoteMcpServer = (
     async (_input, extra) => {
       authFromExtra(extra, "notes:read", readNotesRoles);
       if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
-      const templates = (
-        await socialTemplates.list({ status: "published", type: "carousel", channel: "instagram" })
-      ).map((template) => ({
+      const catalog = await socialTemplates.list({ status: "published", type: "carousel", channel: "instagram" });
+      const styleRecords = new Map<string, (typeof catalog)[number]>();
+      for (const template of catalog) {
+        if (!styleRecords.has(template.visualStyle.id)) styleRecords.set(template.visualStyle.id, template);
+      }
+      const templates = [...styleRecords.values()].map((template) => ({
         id: template.id,
+        visualStyleId: template.visualStyle.id,
+        name: template.visualStyle.name,
+        description: template.visualStyle.description,
+        canvas: template.canvas,
+        visualStyle: template.visualStyle,
+      }));
+      const editorialGuides = catalog.map((template) => ({
+        templateId: template.id,
         slug: template.slug,
         name: template.name,
         description: template.description,
@@ -927,14 +959,18 @@ export const createRemoteMcpServer = (
         outputType: template.outputType,
         channels: template.channels,
         templateVersion: template.templateVersion,
-        canvas: template.canvas,
-        style: template.slides[0]!,
         guidanceVersion: template.guidanceVersion,
         fields: template.fields,
         slides: template.slides,
         editorialGuidance: template.editorialGuidance,
       }));
-      return textResult({ editorialStandards: socialEditorialStandards, templates, total: templates.length });
+      return textResult({
+        editorialStandards: socialEditorialStandards,
+        templates,
+        editorialGuides,
+        totalStyles: templates.length,
+        totalGuides: editorialGuides.length,
+      });
     },
   );
 
