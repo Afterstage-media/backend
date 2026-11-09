@@ -40,6 +40,7 @@ import {
   type UserDirectory,
 } from "./security.js";
 import { schedulerStatus } from "../../application/ops.js";
+import type { InstagramTrustedCollaboratorStore } from "../../infrastructure/persistence/instagram-trusted-collaborators.js";
 import { log } from "./logger.js";
 import type { DirectoryItem } from "../../domain/directory/types.js";
 import { distanceQuery, distanceKm } from "../../domain/location.js";
@@ -343,6 +344,7 @@ export const createApp = async (
   media?: MediaAssetService,
   platform = new PlatformManager(),
   socialTemplates?: SocialTemplateRepository,
+  instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
 ) => {
   const app = express();
   const outboundMailer = mailer ?? new PressMailer();
@@ -476,6 +478,8 @@ export const createApp = async (
         editorialVoice,
         templateStore,
         mailbox,
+        instagramTrustedCollaborators,
+        instagramConnections,
       );
   }
   app.use(

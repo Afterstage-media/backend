@@ -14,6 +14,9 @@ import {
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
+import { InstagramCommunity } from "../../infrastructure/integrations/instagram-community.js";
+import type { InstagramTrustedCollaboratorStore } from "../../infrastructure/persistence/instagram-trusted-collaborators.js";
+import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
 import { correctedCarouselImageSchema, instagramCarouselInputSchema } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
@@ -340,12 +343,24 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   crear_ruta_correo: ["mail:write"],
   actualizar_ruta_correo: ["mail:write"],
   eliminar_ruta_correo: ["mail:write"],
+  instagram_listar_conversaciones: ["notes:read"],
+  instagram_leer_mensajes: ["notes:read"],
+  instagram_responder_mensaje: ["notes:write"],
+  instagram_listar_comentarios: ["notes:read"],
+  instagram_responder_comentario: ["notes:write"],
+  listar_colaboradores_confiables_instagram: ["notes:read"],
+  agregar_colaborador_confiable_instagram: ["notes:write"],
+  quitar_colaborador_confiable_instagram: ["notes:write"],
 };
 
 const toolsAllowedForRoles = (roles: readonly string[]): Set<string> =>
   new Set(
     Object.entries(toolScopes)
-      .filter(([, scopes]) => scopes.every((scope) => mcpScopeRoles[scope].some((role) => roles.includes(role))))
+      .filter(([name, scopes]) =>
+        name.startsWith("instagram_") || name.includes("colaborador")
+          ? roles.includes("admin")
+          : scopes.every((scope) => mcpScopeRoles[scope].some((role) => roles.includes(role))),
+      )
       .map(([name]) => name),
   );
 const escapeHtml = (value: string): string =>
@@ -376,6 +391,8 @@ export const createRemoteMcpServer = (
   editorialVoice: EditorialVoiceRepository = new MemoryEditorialVoiceStore(),
   socialTemplates?: SocialTemplateRepository,
   mailbox?: MailRepository,
+  instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
+  instagramConnections?: InstagramConnectionStore,
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
@@ -383,6 +400,9 @@ export const createRemoteMcpServer = (
   });
   const allowedTools = roles ? toolsAllowedForRoles(roles) : undefined;
   const mailboxManager = mailbox ? new MailboxManager(mailbox) : undefined;
+  const instagramService = instagramTrustedCollaborators
+    ? new InstagramCommunity(instagramTrustedCollaborators, instagramConnections)
+    : undefined;
   const registerTool = <
     OutputArgs extends ZodRawShapeCompat | AnySchema,
     InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined,
@@ -412,6 +432,147 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
     },
     async (_input, extra) => textResult(authFromExtra(extra, "notes:read")),
+  );
+
+  const requireInstagramAdmin = (extra: McpExtra, scope: "notes:read" | "notes:write") =>
+    authFromExtra(extra, scope, ["admin"]);
+  const instagramItemsOutput = z.object({ items: z.array(z.record(z.string(), z.unknown())) });
+  registerTool(
+    "instagram_listar_conversaciones",
+    {
+      title: "Leer conversaciones de Instagram",
+      description: "Lista conversaciones recientes del inbox profesional conectado.",
+      inputSchema: { limit: z.number().int().min(1).max(100).default(25) },
+      outputSchema: instagramItemsOutput,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async ({ limit }, extra) => {
+      requireInstagramAdmin(extra, "notes:read");
+      if (!instagramService) throw new Error("La integración de Instagram no está configurada");
+      return textResult({ items: await instagramService.listConversations(limit) });
+    },
+  );
+  registerTool(
+    "instagram_leer_mensajes",
+    {
+      title: "Leer mensajes de Instagram",
+      description: "Lee los mensajes de una conversación del inbox profesional conectado.",
+      inputSchema: {
+        conversationId: z.string().trim().min(1).max(180),
+        limit: z.number().int().min(1).max(100).default(50),
+      },
+      outputSchema: instagramItemsOutput,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async ({ conversationId, limit }, extra) => {
+      requireInstagramAdmin(extra, "notes:read");
+      if (!instagramService) throw new Error("La integración de Instagram no está configurada");
+      return textResult({ items: await instagramService.listMessages(conversationId, limit) });
+    },
+  );
+  registerTool(
+    "instagram_responder_mensaje",
+    {
+      title: "Responder un mensaje de Instagram",
+      description: "Envía un mensaje de texto a una persona que ya inició una conversación con Afterstage.",
+      inputSchema: { recipientId: z.string().trim().min(1).max(180), message: z.string().trim().min(1).max(1000) },
+      outputSchema: z.object({ recipientId: z.string(), messageId: z.unknown().nullable() }),
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ recipientId, message }, extra) => {
+      requireInstagramAdmin(extra, "notes:write");
+      if (!instagramService) throw new Error("La integración de Instagram no está configurada");
+      return textResult(await instagramService.sendMessage(recipientId, message));
+    },
+  );
+  registerTool(
+    "instagram_listar_comentarios",
+    {
+      title: "Leer comentarios de Instagram",
+      description: "Lista comentarios de una publicación de Afterstage.",
+      inputSchema: { mediaId: z.string().trim().min(1).max(180), limit: z.number().int().min(1).max(100).default(100) },
+      outputSchema: instagramItemsOutput,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async ({ mediaId, limit }, extra) => {
+      requireInstagramAdmin(extra, "notes:read");
+      if (!instagramService) throw new Error("La integración de Instagram no está configurada");
+      return textResult({ items: await instagramService.listComments(mediaId, limit) });
+    },
+  );
+  registerTool(
+    "instagram_responder_comentario",
+    {
+      title: "Responder un comentario de Instagram",
+      description: "Publica una respuesta a un comentario en una publicación de Afterstage.",
+      inputSchema: { commentId: z.string().trim().min(1).max(180), message: z.string().trim().min(1).max(2200) },
+      outputSchema: z.object({ commentId: z.string(), replyId: z.unknown().nullable() }),
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ commentId, message }, extra) => {
+      requireInstagramAdmin(extra, "notes:write");
+      if (!instagramService) throw new Error("La integración de Instagram no está configurada");
+      return textResult(await instagramService.replyToComment(commentId, message));
+    },
+  );
+  registerTool(
+    "listar_colaboradores_confiables_instagram",
+    {
+      title: "Listar colaboradores confiables de Instagram",
+      description: "Lista cuentas cuyas invitaciones de colaboración pueden aceptarse automáticamente.",
+      inputSchema: {},
+      outputSchema: z.object({
+        accounts: z.array(
+          z.object({ username: z.string(), createdAt: z.string(), createdBy: z.string(), updatedAt: z.string() }),
+        ),
+      }),
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async (_input, extra) => {
+      requireInstagramAdmin(extra, "notes:read");
+      if (!instagramTrustedCollaborators) throw new Error("La lista de cuentas confiables no está configurada");
+      return textResult({ accounts: await instagramTrustedCollaborators.list() });
+    },
+  );
+  registerTool(
+    "agregar_colaborador_confiable_instagram",
+    {
+      title: "Agregar colaborador confiable de Instagram",
+      description: "Agrega un @usuario a la lista de cuentas cuyas colaboraciones pueden aceptarse automáticamente.",
+      inputSchema: { username: z.string().trim().min(1).max(100) },
+      outputSchema: z.object({
+        username: z.string(),
+        createdAt: z.string(),
+        createdBy: z.string(),
+        updatedAt: z.string(),
+      }),
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ username }, extra) => {
+      const actor = requireInstagramAdmin(extra, "notes:write");
+      if (!instagramTrustedCollaborators) throw new Error("La lista de cuentas confiables no está configurada");
+      return textResult(await instagramTrustedCollaborators.add(username, actor.userId));
+    },
+  );
+  registerTool(
+    "quitar_colaborador_confiable_instagram",
+    {
+      title: "Quitar colaborador confiable de Instagram",
+      description: "Quita un @usuario de la lista autorizada para aceptación automática.",
+      inputSchema: { username: z.string().trim().min(1).max(100) },
+      outputSchema: z.object({ username: z.string(), removed: z.boolean() }),
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ username }, extra) => {
+      requireInstagramAdmin(extra, "notes:write");
+      if (!instagramTrustedCollaborators) throw new Error("La lista de cuentas confiables no está configurada");
+      const normalized = username.trim().replace(/^@/, "").toLowerCase();
+      return textResult({ username: normalized, removed: await instagramTrustedCollaborators.remove(normalized) });
+    },
   );
 
   const canAccessOtherAuthorVoice = (rolesForUser: readonly string[]) =>
@@ -1246,6 +1407,8 @@ export const mountRemoteMcp = (
   editorialVoice?: EditorialVoiceRepository,
   socialTemplates?: SocialTemplateRepository,
   mailbox?: MailRepository,
+  instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
+  instagramConnections?: InstagramConnectionStore,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
   const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
@@ -1397,7 +1560,17 @@ export const mountRemoteMcp = (
       const roles = Array.isArray(request.auth?.extra?.roles)
         ? request.auth.extra.roles.filter((role): role is string => typeof role === "string")
         : [];
-      const server = createRemoteMcpServer(manager, press, directory, roles, editorialVoice, socialTemplates, mailbox);
+      const server = createRemoteMcpServer(
+        manager,
+        press,
+        directory,
+        roles,
+        editorialVoice,
+        socialTemplates,
+        mailbox,
+        instagramTrustedCollaborators,
+        instagramConnections,
+      );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
       await transport.handleRequest(request, response, request.body);

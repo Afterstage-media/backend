@@ -106,7 +106,14 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "crear_carrusel_instagram",
         "gestionar_acreditacion",
         "get_profile",
+        "instagram_leer_mensajes",
+        "instagram_listar_comentarios",
+        "instagram_listar_conversaciones",
+        "instagram_responder_comentario",
+        "instagram_responder_mensaje",
+        "agregar_colaborador_confiable_instagram",
         "listar_agenda",
+        "listar_colaboradores_confiables_instagram",
         "listar_conversaciones_correo",
         "listar_notas",
         "listar_plantillas_sociales",
@@ -120,6 +127,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "obtener_nota",
         "obtener_voz_notero",
         "actualizar_voz_notero",
+        "quitar_colaborador_confiable_instagram",
       ].sort(),
     );
     const createEventTool = tools.tools.find((tool) => tool.name === "crear_evento");
