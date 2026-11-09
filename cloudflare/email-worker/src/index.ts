@@ -51,6 +51,10 @@ type RoutingResponse = {
   };
 };
 
+type InboundResponse = {
+  blocked?: boolean;
+};
+
 const destinationsFromAfterstage = async (recipient: string, env: Env): Promise<string[] | undefined> => {
   try {
     const response = await fetch(
@@ -109,6 +113,11 @@ export default {
     if (!response.ok) {
       message.setReject(`Afterstage rejected the message (${response.status})`);
       throw new Error(`Afterstage inbound endpoint returned ${response.status}`);
+    }
+    const inboundResult = (await response.json()) as InboundResponse;
+    if (inboundResult.blocked) {
+      message.setReject("Sender blocked by Afterstage");
+      return;
     }
     const configuredDestinations = await destinationsFromAfterstage(message.to, env);
     if (configuredDestinations && configuredDestinations.length === 0) return;

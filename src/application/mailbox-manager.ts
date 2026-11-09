@@ -8,6 +8,7 @@ import {
   type MailRoutePatch,
 } from "../domain/mail/routing.js";
 import type { MailRepository } from "../infrastructure/persistence/mail-store.js";
+import { blockedSendersSchema, senderMatchesBlacklist } from "../domain/mail/blacklist.js";
 
 export class MailboxManager {
   constructor(
@@ -54,6 +55,20 @@ export class MailboxManager {
   deleteRoute(address: string): Promise<boolean> {
     if (!this.repository.deleteRoute) throw new Error("La gestión de rutas de correo no está disponible");
     return this.repository.deleteRoute(normalizeRouteAddress(address));
+  }
+
+  listBlockedSenders(): Promise<string[]> {
+    return this.repository.listBlockedSenders ? this.repository.listBlockedSenders() : Promise.resolve([]);
+  }
+
+  setBlockedSenders(entries: string[]): Promise<string[]> {
+    if (!this.repository.setBlockedSenders)
+      throw new Error("La gestión de remitentes bloqueados no está disponible");
+    return this.repository.setBlockedSenders(blockedSendersSchema.parse(entries));
+  }
+
+  async isSenderBlocked(sender: string): Promise<boolean> {
+    return senderMatchesBlacklist(sender, await this.listBlockedSenders());
   }
 
   private withRouteMetadata<T extends MailThreadSummary | MailThread>(

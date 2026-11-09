@@ -9,6 +9,7 @@ import {
   type MailRouteInput,
   type MailRoutePatch,
 } from "../../domain/mail/routing.js";
+import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 
 type MailDocument = Record<string, unknown> & { _id: string };
 type MailRouteDocument = MailRouteInput & { _id: string };
@@ -32,6 +33,8 @@ export interface MailRepository {
   createRoute?(input: MailRouteInput): Promise<MailRoute>;
   updateRoute?(address: string, patch: MailRoutePatch): Promise<MailRoute | undefined>;
   deleteRoute?(address: string): Promise<boolean>;
+  listBlockedSenders?(): Promise<string[]>;
+  setBlockedSenders?(entries: string[]): Promise<string[]>;
   addOutbound(input: {
     threadId: string;
     messageId: string;
@@ -49,11 +52,13 @@ export class MongoMailStore implements MailRepository {
   private readonly threads: Collection<MailDocument>;
   private readonly messages: Collection<MailDocument>;
   private readonly routes: Collection<MailRouteDocument>;
+  private readonly settings: Collection<MailDocument>;
 
   constructor(db: Db) {
     this.threads = db.collection<MailDocument>("mail_threads");
     this.messages = db.collection<MailDocument>("mail_messages");
     this.routes = db.collection<MailRouteDocument>("mail_routes");
+    this.settings = db.collection<MailDocument>("mail_settings");
   }
 
   async init() {
@@ -64,6 +69,11 @@ export class MongoMailStore implements MailRepository {
       this.messages.createIndex({ threadId: 1, receivedAt: 1 }),
       this.messages.createIndex({ references: 1 }),
       this.routes.createIndex({ address: 1 }, { unique: true }),
+      this.settings.updateOne(
+        { _id: "mail_sender_blacklist" },
+        { $setOnInsert: { entries: [] } },
+        { upsert: true },
+      ),
     ]);
     if ((await this.routes.countDocuments()) === 0) {
       await this.routes.insertMany(
@@ -216,6 +226,21 @@ export class MongoMailStore implements MailRepository {
 
   async deleteRoute(address: string): Promise<boolean> {
     return (await this.routes.deleteOne({ _id: normalizeRouteAddress(address) })).deletedCount === 1;
+  }
+
+  async listBlockedSenders(): Promise<string[]> {
+    const settings = await this.settings.findOne({ _id: "mail_sender_blacklist" });
+    return blockedSendersSchema.parse(settings?.entries ?? []);
+  }
+
+  async setBlockedSenders(entries: string[]): Promise<string[]> {
+    const normalized = blockedSendersSchema.parse(entries);
+    await this.settings.updateOne(
+      { _id: "mail_sender_blacklist" },
+      { $set: { entries: normalized, updatedAt: now() } },
+      { upsert: true },
+    );
+    return normalized;
   }
 
   async addOutbound(input: {
