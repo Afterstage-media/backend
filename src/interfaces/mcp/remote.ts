@@ -335,7 +335,11 @@ const toolScopes: Record<string, readonly McpScope[]> = {
 const toolsAllowedForRoles = (roles: readonly string[]): Set<string> =>
   new Set(
     Object.entries(toolScopes)
-      .filter(([, scopes]) => scopes.every((scope) => mcpScopeRoles[scope].some((role) => roles.includes(role))))
+      .filter(([name, scopes]) =>
+        name.startsWith("instagram_") || name.includes("colaborador")
+          ? roles.includes("admin")
+          : scopes.every((scope) => mcpScopeRoles[scope].some((role) => roles.includes(role))),
+      )
       .map(([name]) => name),
   );
 const escapeHtml = (value: string): string =>
