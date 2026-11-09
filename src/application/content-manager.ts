@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { AiWriter, type GenerationKind } from "../infrastructure/integrations/ai.js";
 import { MetaPublisher } from "../infrastructure/integrations/meta.js";
 import { ContentStore, type ContentRepository } from "../infrastructure/persistence/content-store.js";
@@ -21,7 +22,10 @@ import { InstagramCarouselRenderer } from "../infrastructure/integrations/instag
 import {
   correctedCarouselImageSchema,
   instagramCarouselInputSchema,
+  instagramCarouselUpdateSchema,
+  type CarouselImageInput,
   type InstagramCarouselInput,
+  type InstagramCarouselUpdate,
 } from "../domain/content/social-carousel.js";
 import type { SocialTemplate } from "../domain/content/social-template.js";
 import { MediaAssetService } from "../infrastructure/integrations/media-storage.js";
@@ -89,6 +93,91 @@ export class ContentManager {
         credit: image.credit,
       })),
     );
+  }
+
+  private async persistCarouselSources(
+    contentId: string,
+    slides: readonly { image: CarouselImageInput; text: string }[],
+  ): Promise<NonNullable<ContentItem["socialSlides"]>> {
+    if (!slides.length) return [];
+    const originals = slides.map(({ image }) => {
+      const raw = image.base64.trim();
+      const dataUrl = raw.match(/^data:([^;,]+);base64,(.*)$/is);
+      const base64 = (dataUrl?.[2] ?? raw).replace(/\s/g, "");
+      const mimeType = image.mimeType ?? dataUrl?.[1] ?? "image/jpeg";
+      return {
+        base64,
+        mimeType: mimeType as "image/jpeg" | "image/png" | "image/webp",
+        filename: image.filename,
+        altText: image.altText,
+        credit: image.credit,
+      };
+    });
+    let sources: ContentItem["assets"];
+    if (this.mediaStorage?.configured) {
+      const grants = await this.mediaStorage.createUploadGrants(
+        contentId,
+        originals.map((image, index) => ({
+          name: image.filename || `fuente-carrusel-${index + 1}.${image.mimeType.split("/")[1]}`,
+          contentType: image.mimeType,
+          size: Buffer.from(image.base64, "base64").length,
+        })),
+      );
+      sources = [];
+      try {
+        for (const [index, grant] of grants.entries()) {
+          const image = originals[index]!;
+          const response = await fetch(grant.uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": image.mimeType },
+            body: new Uint8Array(Buffer.from(image.base64, "base64")),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!response.ok) throw new Error("No se pudo guardar una imagen fuente del carrusel");
+          sources.push({
+            ...(await this.mediaStorage.completeUpload(grant.assetId)),
+            localPath: "",
+            altText: image.altText,
+            credit: image.credit,
+          });
+        }
+      } catch (error) {
+        await Promise.all(grants.map((grant) => this.mediaStorage!.removeAsset(grant.assetId).catch(() => undefined)));
+        throw error;
+      }
+    } else {
+      sources = await this.media.createImages(originals);
+    }
+    return slides.map((slide, index) => ({ text: slide.text, source: sources[index]! }));
+  }
+
+  private async readCarouselSource(source: ContentItem["assets"][number]): Promise<CarouselImageInput> {
+    const mediaBase =
+      process.env.MEDIA_PUBLIC_BASE_URL ??
+      process.env.PUBLIC_MEDIA_BASE_URL ??
+      process.env.PUBLIC_BASE_URL ??
+      process.env.CLOUDFLARE_TUNNEL_URL;
+    if (!mediaBase) throw new Error("No se pudo localizar la imagen fuente del carrusel");
+    const expectedOrigin = new URL(mediaBase).origin;
+    const sourceUrl = new URL(source.url);
+    if (sourceUrl.origin !== expectedOrigin)
+      throw new Error("La imagen fuente no pertenece al almacenamiento de Afterstage");
+    const response = await fetch(sourceUrl, { redirect: "error", signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) throw new Error("No se pudo recuperar una imagen fuente del borrador");
+    const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+    if (!(mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/webp")) {
+      throw new Error("El tipo de una imagen fuente guardada no es compatible");
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (!bytes.length || bytes.length > 2.5 * 1024 * 1024)
+      throw new Error("Una imagen fuente del borrador supera 2,5 MiB");
+    return {
+      base64: bytes.toString("base64"),
+      mimeType,
+      filename: path.basename(sourceUrl.pathname),
+      altText: source.altText,
+      credit: source.credit,
+    };
   }
 
   async create(input: unknown): Promise<ContentItem> {
@@ -211,19 +300,181 @@ export class ContentManager {
     if (shell.assets.length) return shell;
 
     let assets: ContentItem["assets"] = [];
+    let socialSlides: NonNullable<ContentItem["socialSlides"]> = [];
     try {
+      socialSlides = await this.persistCarouselSources(shell.id, parsed.slides);
       assets = await this.persistCarouselImages(shell.id, rendered);
       const updated = await this.store.update(shell.id, {
         assets,
+        socialSlides,
         socialRenderedAt: new Date().toISOString(),
       });
       if (!updated) throw new Error("No se pudo completar el borrador del carrusel");
-      if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(shell.id, updated.assets);
+      if (this.mediaStorage?.configured) {
+        await this.mediaStorage.syncContentAssets(shell.id, [
+          ...updated.assets,
+          ...(updated.socialSlides ?? []).map((slide) => slide.source),
+        ]);
+      }
       return updated;
     } catch (error) {
       if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(shell.id, []).catch(() => undefined);
-      else await this.media.remove(assets);
+      else await this.media.remove([...assets, ...socialSlides.map((slide) => slide.source)]);
       await this.store.remove(shell.id);
+      throw error;
+    }
+  }
+
+  async updateInstagramCarousel(publicationId: string, input: unknown, template: SocialTemplate): Promise<ContentItem> {
+    const parsed = instagramCarouselUpdateSchema.parse(input) as InstagramCarouselUpdate;
+    if (parsed.templateId !== template.id)
+      throw new Error("La plantilla seleccionada no coincide con el identificador enviado");
+    if (
+      template.status !== "published" ||
+      template.outputType !== "carousel" ||
+      !template.channels.includes("instagram")
+    ) {
+      throw new Error("La plantilla no está publicada para carruseles de Instagram");
+    }
+    const item = await this.required(publicationId);
+    if (item.type !== "carousel" || !item.channels.includes("instagram") || item.status !== "draft") {
+      throw new Error("Solo se pueden editar carruseles de Instagram que sigan en borrador");
+    }
+    const oldSlides = item.socialSlides ?? [];
+    const legacySources = oldSlides.length !== item.assets.length;
+    const templateChanged = item.socialTemplateId !== template.id;
+    if (legacySources && parsed.slides.some((slide) => !slide.image)) {
+      throw new Error(
+        "Este borrador anterior no conserva las fotos originales. Volvé a cargar una imagen en cada lámina para editarlo.",
+      );
+    }
+    const previousIndices = parsed.slides.map((slide, index) => {
+      if (!slide.sourceAssetId) return index;
+      const previousIndex = oldSlides.findIndex((current) => current.source.id === slide.sourceAssetId);
+      if (previousIndex < 0)
+        throw new Error("Una lámina ya no pertenece a este borrador. Actualizá la pantalla e intentá de nuevo.");
+      return previousIndex;
+    });
+    if (!legacySources && parsed.slides.some((slide, index) => !slide.image && !oldSlides[previousIndices[index]!])) {
+      throw new Error("Cargá una imagen en cada lámina nueva.");
+    }
+
+    const changedSlides = new Set<number>();
+    if (templateChanged) parsed.slides.forEach((_, index) => changedSlides.add(index));
+    if (parsed.title !== item.title) changedSlides.add(0);
+    parsed.slides.forEach((slide, index) => {
+      const previousIndex = previousIndices[index]!;
+      if (
+        slide.image ||
+        slide.text !== oldSlides[previousIndex]?.text ||
+        previousIndex !== index ||
+        (legacySources && !oldSlides.length)
+      ) {
+        changedSlides.add(index);
+      }
+    });
+
+    const sourceInputs = changedSlides.size
+      ? await Promise.all(
+          parsed.slides.map(async (slide, index) => {
+            if (slide.image) return slide.image;
+            const source = oldSlides[previousIndices[index]!]?.source;
+            if (!source) throw new Error(`Cargá una imagen para la lámina ${index + 1}.`);
+            return this.readCarouselSource(source);
+          }),
+        )
+      : [];
+    const renderSlides = changedSlides.size
+      ? parsed.slides.map((slide, index) => ({ image: sourceInputs[index]!, text: slide.text }))
+      : [];
+
+    let newSources: ContentItem["assets"] = [];
+    let newRendered: ContentItem["assets"] = [];
+    let committed = false;
+    try {
+      const sourceSlides = parsed.slides
+        .map((slide, index) => (slide.image ? { index, image: slide.image, text: slide.text } : null))
+        .filter((slide): slide is { index: number; image: CarouselImageInput; text: string } => Boolean(slide));
+      if (sourceSlides.length) {
+        const persisted = await this.persistCarouselSources(
+          publicationId,
+          sourceSlides.map(({ image, text }) => ({ image, text })),
+        );
+        newSources = persisted.map((slide) => slide.source);
+      }
+
+      const rendered = changedSlides.size
+        ? await this.carouselRenderer.render(template, parsed.title, renderSlides)
+        : [];
+      if (changedSlides.size) {
+        const changedIndices = [...changedSlides].sort((left, right) => left - right);
+        newRendered = await this.persistCarouselImages(
+          publicationId,
+          changedIndices.map((index) => rendered[index]!),
+        );
+      }
+
+      const nextSourceAssets = [...parsed.slides].map((slide, index) => {
+        if (slide.image) {
+          const newSourceIndex = sourceSlides.findIndex((sourceSlide) => sourceSlide.index === index);
+          const source = newSources[newSourceIndex];
+          if (!source) throw new Error(`No se pudo guardar la imagen de la lámina ${index + 1}`);
+          return { text: slide.text, source };
+        }
+        return { text: slide.text, source: oldSlides[previousIndices[index]!]!.source };
+      });
+      const renderedAssetByIndex = new Map<number, ContentItem["assets"][number]>();
+      [...changedSlides]
+        .sort((left, right) => left - right)
+        .forEach((slideIndex, renderedIndex) => {
+          renderedAssetByIndex.set(slideIndex, newRendered[renderedIndex]!);
+        });
+      const nextAssets = parsed.slides.map(
+        (_, index) => renderedAssetByIndex.get(index) ?? item.assets[previousIndices[index]!]!,
+      );
+      const updated = await this.store.update(publicationId, {
+        title: parsed.title,
+        summary: parsed.slides[0]!.text,
+        body: parsed.slides.map((slide, index) => `Lámina ${index + 1}: ${slide.text}`).join("\n\n"),
+        instagramCopy: parsed.instagramCopy,
+        tags: parsed.tags,
+        source: parsed.source,
+        author: parsed.author,
+        photographer: parsed.photographer,
+        socialTemplateId: template.id,
+        socialTemplateVersion: template.templateVersion,
+        assets: nextAssets,
+        socialSlides: nextSourceAssets,
+        socialRenderedAt: changedSlides.size ? new Date().toISOString() : item.socialRenderedAt,
+      });
+      if (!updated) throw new Error("No se pudo guardar el carrusel");
+      committed = true;
+      if (this.mediaStorage?.configured) {
+        await this.mediaStorage.syncContentAssets(publicationId, [
+          ...updated.assets,
+          ...(updated.socialSlides ?? []).map((slide) => slide.source),
+        ]);
+      } else {
+        const retained = new Set([
+          ...updated.assets.map((asset) => asset.id),
+          ...(updated.socialSlides ?? []).map((slide) => slide.source.id),
+        ]);
+        await this.media.remove(
+          [...item.assets, ...oldSlides.map((slide) => slide.source)].filter((asset) => !retained.has(asset.id)),
+        );
+      }
+      return updated;
+    } catch (error) {
+      if (committed) throw error;
+      if (this.mediaStorage?.configured) {
+        await Promise.all(
+          [...newSources, ...newRendered].map((asset) =>
+            this.mediaStorage!.removeAsset(asset.mediaAssetId || asset.id).catch(() => undefined),
+          ),
+        );
+      } else {
+        await this.media.remove([...newSources, ...newRendered]);
+      }
       throw error;
     }
   }
@@ -262,13 +513,19 @@ export class ContentManager {
         socialRenderedAt: new Date().toISOString(),
       });
       if (!updated) throw new Error("No se pudo reemplazar la lámina");
-      if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(publicationId, updated.assets);
+      if (this.mediaStorage?.configured)
+        await this.mediaStorage.syncContentAssets(publicationId, [
+          ...updated.assets,
+          ...(updated.socialSlides ?? []).map((slide) => slide.source),
+        ]);
       else await this.media.remove([previous]);
       return updated;
     } catch (error) {
       await this.store.update(publicationId, { assets: item.assets }).catch(() => undefined);
       if (this.mediaStorage?.configured)
-        await this.mediaStorage.syncContentAssets(publicationId, item.assets).catch(() => undefined);
+        await this.mediaStorage
+          .syncContentAssets(publicationId, [...item.assets, ...(item.socialSlides ?? []).map((slide) => slide.source)])
+          .catch(() => undefined);
       else await this.media.remove(replacement);
       throw error;
     }

@@ -64,6 +64,10 @@ export const contentInputSchema = z.object({
   socialTemplateVersion: z.number().int().positive().optional(),
   socialTemplateData: z.record(z.string(), z.string().max(500)).optional(),
   socialRenderedAt: z.string().datetime().nullable().optional(),
+  socialSlides: z
+    .array(z.object({ text: z.string().max(180), source: assetSchema }))
+    .max(9)
+    .optional(),
 });
 
 export const contentPatchSchema = contentInputSchema.partial();
