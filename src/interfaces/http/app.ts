@@ -52,6 +52,7 @@ import type { EditorialVoiceRepository } from "../../infrastructure/persistence/
 import { MailboxManager } from "../../application/mailbox-manager.js";
 import { inboundMailSchema, mailReplySchema } from "../../domain/mail/types.js";
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
+import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
 import { insuranceProductLabels, type InsuranceProduct } from "../../domain/platform/types.js";
@@ -418,6 +419,10 @@ export const createApp = async (
         return;
       }
       try {
+        if (await mailboxManager.isSenderBlocked(parsed.data.from)) {
+          response.status(202).json({ accepted: false, blocked: true });
+          return;
+        }
         const message = await inboundMailbox.ingestInbound(parsed.data);
         response.status(202).json({ accepted: true, messageId: message.messageId, threadId: message.threadId });
       } catch (error) {
@@ -1333,6 +1338,25 @@ export const createApp = async (
       return;
     }
     response.json({ routes: await mailboxManager.listRoutes() });
+  });
+  app.get("/api/mail/blacklist", requireRole("admin", "editor"), async (_request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    response.json({ entries: await mailboxManager.listBlockedSenders() });
+  });
+  app.put("/api/mail/blacklist", requireRole("admin", "editor"), requireSecureTransport, async (request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    const parsed = z.object({ entries: blockedSendersSchema }).safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: "invalid_mail_blacklist", details: parsed.error.flatten() });
+      return;
+    }
+    response.json({ entries: await mailboxManager.setBlockedSenders(parsed.data.entries) });
   });
   app.post("/api/mail/routes", requireRole("admin", "editor"), requireSecureTransport, async (request, response) => {
     if (!mailboxManager) {

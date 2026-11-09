@@ -23,6 +23,7 @@ import { PressManager } from "../../application/press-manager.js";
 import { MailboxManager } from "../../application/mailbox-manager.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
+import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import { editorialVoiceInputSchema } from "../../domain/editorial-voice/types.js";
 import {
   MemoryEditorialVoiceStore,
@@ -229,6 +230,7 @@ const mailRouteOutputSchema = z.object({
   destinations: z.array(z.string()),
 });
 const mailRoutesOutputSchema = z.object({ routes: z.array(mailRouteOutputSchema) });
+const mailBlacklistOutputSchema = z.object({ entries: z.array(z.string()) });
 const mailThreadSummaryOutputSchema = z.object({
   id: z.string(),
   subject: z.string(),
@@ -310,6 +312,8 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   obtener_voz_notero: ["voice:read"],
   actualizar_voz_notero: ["voice:write"],
   listar_rutas_correo: ["mail:read"],
+  listar_blacklist_correo: ["mail:read"],
+  actualizar_blacklist_correo: ["mail:write"],
   listar_conversaciones_correo: ["mail:read"],
   leer_conversacion_correo: ["mail:read"],
   crear_ruta_correo: ["mail:write"],
@@ -1040,6 +1044,42 @@ export const createRemoteMcpServer = (
       authFromExtra(extra, "mail:read", readMailRoles);
       if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
       return textResult({ routes: await mailboxManager.listRoutes() });
+    },
+  );
+
+  registerTool(
+    "listar_blacklist_correo",
+    {
+      title: "Listar remitentes bloqueados",
+      description:
+        "Consulta la blacklist de correo de Afterstage. Una lista vacía permite que la aplicación procese cualquier remitente que Cloudflare haya aceptado.",
+      inputSchema: {},
+      outputSchema: mailBlacklistOutputSchema,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "mail:read", readMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      return textResult({ entries: await mailboxManager.listBlockedSenders() });
+    },
+  );
+
+  registerTool(
+    "actualizar_blacklist_correo",
+    {
+      title: "Actualizar blacklist de correo",
+      description:
+        "Reemplaza la blacklist de Afterstage. Acepta emails exactos o dominios con @ (por ejemplo, @ejemplo.com); enviá [] para mantenerla vacía.",
+      inputSchema: { entries: z.array(z.string()).max(200) },
+      outputSchema: mailBlacklistOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:write"] }] },
+    },
+    async ({ entries }, extra) => {
+      authFromExtra(extra, "mail:write", writeMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      return textResult({ entries: await mailboxManager.setBlockedSenders(blockedSendersSchema.parse(entries)) });
     },
   );
 
