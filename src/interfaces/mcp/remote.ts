@@ -201,20 +201,50 @@ const mailRouteOutputSchema = z.object({
 });
 const mailRoutesOutputSchema = z.object({ routes: z.array(mailRouteOutputSchema) });
 const mailThreadSummaryOutputSchema = z.object({
-  id: z.string(), subject: z.string(), mailbox: z.string().optional(), mailboxType: z.enum(["personal", "distribution"]).optional(),
-  mailboxLabel: z.string().optional(), participants: z.array(z.string()), lastMessageAt: z.string(), unreadCount: z.number(),
-  createdAt: z.string(), updatedAt: z.string(), preview: z.string(), lastDirection: z.enum(["inbound", "outbound"]),
+  id: z.string(),
+  subject: z.string(),
+  mailbox: z.string().optional(),
+  mailboxType: z.enum(["personal", "distribution"]).optional(),
+  mailboxLabel: z.string().optional(),
+  participants: z.array(z.string()),
+  lastMessageAt: z.string(),
+  unreadCount: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  preview: z.string(),
+  lastDirection: z.enum(["inbound", "outbound"]),
 });
 const mailMessageOutputSchema = z.object({
-  id: z.string(), threadId: z.string(), direction: z.enum(["inbound", "outbound"]), messageId: z.string(),
-  deliveredTo: z.string().optional(), replyTo: z.string().optional(), inReplyTo: z.string().optional(), references: z.array(z.string()),
-  from: z.string(), to: z.array(z.string()), cc: z.array(z.string()), subject: z.string(), text: z.string(), html: z.string().optional(),
-  receivedAt: z.string(), createdAt: z.string(), readAt: z.string().nullable().optional(),
+  id: z.string(),
+  threadId: z.string(),
+  direction: z.enum(["inbound", "outbound"]),
+  messageId: z.string(),
+  deliveredTo: z.string().optional(),
+  replyTo: z.string().optional(),
+  inReplyTo: z.string().optional(),
+  references: z.array(z.string()),
+  from: z.string(),
+  to: z.array(z.string()),
+  cc: z.array(z.string()),
+  subject: z.string(),
+  text: z.string(),
+  html: z.string().optional(),
+  receivedAt: z.string(),
+  createdAt: z.string(),
+  readAt: z.string().nullable().optional(),
 });
 const mailThreadOutputSchema = z.object({
-  id: z.string(), subject: z.string(), mailbox: z.string().optional(), mailboxType: z.enum(["personal", "distribution"]).optional(),
-  mailboxLabel: z.string().optional(), participants: z.array(z.string()), lastMessageAt: z.string(), unreadCount: z.number(),
-  createdAt: z.string(), updatedAt: z.string(), messages: z.array(mailMessageOutputSchema),
+  id: z.string(),
+  subject: z.string(),
+  mailbox: z.string().optional(),
+  mailboxType: z.enum(["personal", "distribution"]).optional(),
+  mailboxLabel: z.string().optional(),
+  participants: z.array(z.string()),
+  lastMessageAt: z.string(),
+  unreadCount: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  messages: z.array(mailMessageOutputSchema),
 });
 
 const readNotesRoles = ["admin", "editor", "press", "auditor"] as const;
@@ -984,8 +1014,12 @@ export const createRemoteMcpServer = (
     "listar_conversaciones_correo",
     {
       title: "Listar conversaciones de correo",
-      description: "Lista los mensajes recibidos y enviados en las bandejas de Afterstage, con asunto, participantes, vista previa y dirección de archivo opcional.",
-      inputSchema: { mailbox: z.string().trim().email().optional(), limit: z.number().int().min(1).max(100).default(50) },
+      description:
+        "Lista los mensajes recibidos y enviados en las bandejas de Afterstage, con asunto, participantes, vista previa y dirección de archivo opcional.",
+      inputSchema: {
+        mailbox: z.string().trim().email().optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+      },
       outputSchema: z.object({ conversations: z.array(mailThreadSummaryOutputSchema) }),
       annotations: { readOnlyHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:read"] }] },
@@ -1004,7 +1038,8 @@ export const createRemoteMcpServer = (
     "leer_conversacion_correo",
     {
       title: "Leer conversación de correo",
-      description: "Lee el contenido completo de una conversación, incluidos los cuerpos de texto y HTML de cada mensaje.",
+      description:
+        "Lee el contenido completo de una conversación, incluidos los cuerpos de texto y HTML de cada mensaje.",
       inputSchema: { id: z.string().trim().min(1).max(180) },
       outputSchema: z.object({ conversation: mailThreadOutputSchema }),
       annotations: { readOnlyHint: true },
