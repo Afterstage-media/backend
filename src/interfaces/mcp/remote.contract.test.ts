@@ -90,6 +90,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.deepEqual(
       tools.tools.map((tool) => tool.name).sort(),
       [
+        "actualizar_blacklist_correo",
         "actualizar_ruta_correo",
         "actualizar_nota",
         "agregar_imagenes_nota",
@@ -111,6 +112,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "listar_plantillas_sociales",
         "listar_rutas_correo",
         "leer_conversacion_correo",
+        "listar_blacklist_correo",
         "listar_reemplazos",
         "modificar_nota",
         "actualizar_contacto",
@@ -423,6 +425,7 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
     assert.deepEqual(
       tools.tools.map((tool) => tool.name).sort(),
       [
+        "actualizar_blacklist_correo",
         "actualizar_contacto",
         "actualizar_nota",
         "actualizar_ruta_correo",
@@ -442,6 +445,7 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
         "listar_rutas_correo",
         "listar_conversaciones_correo",
         "leer_conversacion_correo",
+        "listar_blacklist_correo",
         "modificar_nota",
         "obtener_nota",
         "obtener_voz_notero",
