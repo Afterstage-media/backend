@@ -41,6 +41,10 @@ import { MongoMediaAssetStore } from "./mongo-media-assets.js";
 import { createInstagramConnectionStore, type MongoInstagramConnectionStore } from "./instagram-connections.js";
 import { MongoEditorialVoiceStore } from "./editorial-voice-mongo.js";
 import { MetaPublisher } from "../integrations/meta.js";
+import {
+  createInstagramTrustedCollaboratorStore,
+  type MongoInstagramTrustedCollaboratorStore,
+} from "./instagram-trusted-collaborators.js";
 import { MongoMailStore } from "./mail-store.js";
 import {
   emptyPlatformDatabase,
@@ -718,6 +722,7 @@ export type MongoPersistence = {
   editorialVoice: MongoEditorialVoiceStore;
   mail: MongoMailStore;
   socialTemplates: MongoSocialTemplateStore;
+  instagramTrustedCollaborators: MongoInstagramTrustedCollaboratorStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -747,6 +752,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const editorialVoice = new MongoEditorialVoiceStore(db.collection("editorial_voices"));
   const mail = new MongoMailStore(db);
   const socialTemplates = new MongoSocialTemplateStore(db.collection<MongoRecord>("social_templates"));
+  const instagramTrustedCollaborators = createInstagramTrustedCollaboratorStore(db);
   await Promise.all([
     content.init(),
     press.init(),
@@ -760,7 +766,9 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     editorialVoice.init(),
     mail.init(),
     socialTemplates.init(),
+    instagramTrustedCollaborators.init(),
   ]);
+  await instagramTrustedCollaborators.seedDefaultsOnce(["carlamagnolph", "fede.markoo.ph", "carrjmok"]);
   return {
     client,
     content,
@@ -773,6 +781,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     editorialVoice,
     mail,
     socialTemplates,
+    instagramTrustedCollaborators,
     mediaAssets,
     platform,
   };
@@ -799,6 +808,7 @@ export const createManagers = async () => {
     mcpOAuth: persistence?.mcpOAuth,
     media,
     socialTemplates: persistence?.socialTemplates,
+    instagramTrustedCollaborators: persistence?.instagramTrustedCollaborators,
     instagramConnections: persistence?.instagramConnections,
     editorialVoice: persistence?.editorialVoice,
     mail: persistence?.mail,
