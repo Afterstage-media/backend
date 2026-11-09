@@ -1346,23 +1346,18 @@ export const createApp = async (
     }
     response.json({ entries: await mailboxManager.listBlockedSenders() });
   });
-  app.put(
-    "/api/mail/blacklist",
-    requireRole("admin", "editor"),
-    requireSecureTransport,
-    async (request, response) => {
-      if (!mailboxManager) {
-        response.status(503).json({ error: "mailbox_not_configured" });
-        return;
-      }
-      const parsed = z.object({ entries: blockedSendersSchema }).safeParse(request.body);
-      if (!parsed.success) {
-        response.status(400).json({ error: "invalid_mail_blacklist", details: parsed.error.flatten() });
-        return;
-      }
-      response.json({ entries: await mailboxManager.setBlockedSenders(parsed.data.entries) });
-    },
-  );
+  app.put("/api/mail/blacklist", requireRole("admin", "editor"), requireSecureTransport, async (request, response) => {
+    if (!mailboxManager) {
+      response.status(503).json({ error: "mailbox_not_configured" });
+      return;
+    }
+    const parsed = z.object({ entries: blockedSendersSchema }).safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ error: "invalid_mail_blacklist", details: parsed.error.flatten() });
+      return;
+    }
+    response.json({ entries: await mailboxManager.setBlockedSenders(parsed.data.entries) });
+  });
   app.post("/api/mail/routes", requireRole("admin", "editor"), requireSecureTransport, async (request, response) => {
     if (!mailboxManager) {
       response.status(503).json({ error: "mailbox_not_configured" });

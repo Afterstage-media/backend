@@ -69,11 +69,7 @@ export class MongoMailStore implements MailRepository {
       this.messages.createIndex({ threadId: 1, receivedAt: 1 }),
       this.messages.createIndex({ references: 1 }),
       this.routes.createIndex({ address: 1 }, { unique: true }),
-      this.settings.updateOne(
-        { _id: "mail_sender_blacklist" },
-        { $setOnInsert: { entries: [] } },
-        { upsert: true },
-      ),
+      this.settings.updateOne({ _id: "mail_sender_blacklist" }, { $setOnInsert: { entries: [] } }, { upsert: true }),
     ]);
     if ((await this.routes.countDocuments()) === 0) {
       await this.routes.insertMany(

@@ -62,8 +62,7 @@ export class MailboxManager {
   }
 
   setBlockedSenders(entries: string[]): Promise<string[]> {
-    if (!this.repository.setBlockedSenders)
-      throw new Error("La gestión de remitentes bloqueados no está disponible");
+    if (!this.repository.setBlockedSenders) throw new Error("La gestión de remitentes bloqueados no está disponible");
     return this.repository.setBlockedSenders(blockedSendersSchema.parse(entries));
   }
 

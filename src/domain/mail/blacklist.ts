@@ -13,7 +13,10 @@ export const blockedSenderSchema = z
     return false;
   }, "Usá un email exacto o un dominio con @, por ejemplo @ejemplo.com");
 
-export const blockedSendersSchema = z.array(blockedSenderSchema).max(200).transform((entries) => [...new Set(entries)]);
+export const blockedSendersSchema = z
+  .array(blockedSenderSchema)
+  .max(200)
+  .transform((entries) => [...new Set(entries)]);
 export type BlockedSender = z.infer<typeof blockedSenderSchema>;
 
 export const senderMatchesBlacklist = (sender: string, entries: readonly string[]): boolean => {
