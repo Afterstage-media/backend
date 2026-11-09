@@ -229,6 +229,52 @@ const mailRouteOutputSchema = z.object({
   destinations: z.array(z.string()),
 });
 const mailRoutesOutputSchema = z.object({ routes: z.array(mailRouteOutputSchema) });
+const mailThreadSummaryOutputSchema = z.object({
+  id: z.string(),
+  subject: z.string(),
+  mailbox: z.string().optional(),
+  mailboxType: z.enum(["personal", "distribution"]).optional(),
+  mailboxLabel: z.string().optional(),
+  participants: z.array(z.string()),
+  lastMessageAt: z.string(),
+  unreadCount: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  preview: z.string(),
+  lastDirection: z.enum(["inbound", "outbound"]),
+});
+const mailMessageOutputSchema = z.object({
+  id: z.string(),
+  threadId: z.string(),
+  direction: z.enum(["inbound", "outbound"]),
+  messageId: z.string(),
+  deliveredTo: z.string().optional(),
+  replyTo: z.string().optional(),
+  inReplyTo: z.string().optional(),
+  references: z.array(z.string()),
+  from: z.string(),
+  to: z.array(z.string()),
+  cc: z.array(z.string()),
+  subject: z.string(),
+  text: z.string(),
+  html: z.string().optional(),
+  receivedAt: z.string(),
+  createdAt: z.string(),
+  readAt: z.string().nullable().optional(),
+});
+const mailThreadOutputSchema = z.object({
+  id: z.string(),
+  subject: z.string(),
+  mailbox: z.string().optional(),
+  mailboxType: z.enum(["personal", "distribution"]).optional(),
+  mailboxLabel: z.string().optional(),
+  participants: z.array(z.string()),
+  lastMessageAt: z.string(),
+  unreadCount: z.number(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  messages: z.array(mailMessageOutputSchema),
+});
 
 const readNotesRoles = ["admin", "editor", "press", "auditor"] as const;
 const writeNotesRoles = ["admin", "editor"] as const;
@@ -264,6 +310,8 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   obtener_voz_notero: ["voice:read"],
   actualizar_voz_notero: ["voice:write"],
   listar_rutas_correo: ["mail:read"],
+  listar_conversaciones_correo: ["mail:read"],
+  leer_conversacion_correo: ["mail:read"],
   crear_ruta_correo: ["mail:write"],
   actualizar_ruta_correo: ["mail:write"],
   eliminar_ruta_correo: ["mail:write"],
@@ -992,6 +1040,50 @@ export const createRemoteMcpServer = (
       authFromExtra(extra, "mail:read", readMailRoles);
       if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
       return textResult({ routes: await mailboxManager.listRoutes() });
+    },
+  );
+
+  registerTool(
+    "listar_conversaciones_correo",
+    {
+      title: "Listar conversaciones de correo",
+      description:
+        "Lista los mensajes recibidos y enviados en las bandejas de Afterstage, con asunto, participantes, vista previa y dirección de archivo opcional.",
+      inputSchema: {
+        mailbox: z.string().trim().email().optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+      },
+      outputSchema: z.object({ conversations: z.array(mailThreadSummaryOutputSchema) }),
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:read"] }] },
+    },
+    async ({ mailbox, limit }, extra) => {
+      authFromExtra(extra, "mail:read", readMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      const conversations = (await mailboxManager.listThreads())
+        .filter((thread) => !mailbox || thread.mailbox?.toLowerCase() === mailbox.toLowerCase())
+        .slice(0, limit);
+      return textResult({ conversations });
+    },
+  );
+
+  registerTool(
+    "leer_conversacion_correo",
+    {
+      title: "Leer conversación de correo",
+      description:
+        "Lee el contenido completo de una conversación, incluidos los cuerpos de texto y HTML de cada mensaje.",
+      inputSchema: { id: z.string().trim().min(1).max(180) },
+      outputSchema: z.object({ conversation: mailThreadOutputSchema }),
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:read"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "mail:read", readMailRoles);
+      if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
+      const conversation = await mailboxManager.getThread(id);
+      if (!conversation) throw new Error("Conversación no encontrada");
+      return textResult({ conversation });
     },
   );
 
