@@ -60,11 +60,11 @@ export const socialTemplateSchema = z.object({
         accent: z
           .string()
           .regex(/^#[0-9a-fA-F]{6}$/)
-          .default("#ff5c47"),
+          .default("#7b35ff"),
         background: z
           .string()
           .regex(/^#[0-9a-fA-F]{6}$/)
-          .default("#f4f0e8"),
+          .default("#111114"),
       }),
     )
     .min(1)

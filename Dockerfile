@@ -14,6 +14,7 @@ ENV NODE_ENV=production PORT=8787 DATA_DIR=/app/data UPLOAD_DIR=/app/uploads MED
 WORKDIR /app
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends fontconfig \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --create-home app
@@ -25,6 +26,8 @@ COPY --from=build --chown=app:app /app/dist ./dist
 COPY --chown=app:app package.json ./
 COPY --chown=app:app scripts ./scripts
 COPY --chown=app:app public ./public
+COPY --chown=app:app assets/fonts/ /usr/local/share/fonts/afterstage/
+RUN fc-cache -f /usr/local/share/fonts/afterstage
 RUN mkdir -p /app/data /app/uploads /app/media && chown -R app:app /app/data /app/uploads /app/media
 USER app
 EXPOSE 8787
