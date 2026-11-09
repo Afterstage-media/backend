@@ -564,6 +564,21 @@ export class ContentManager {
     return updated;
   }
 
+  async discardDraft(id: string): Promise<boolean> {
+    const item = await this.required(id);
+    if (item.status !== "draft" && item.status !== "idea") {
+      throw new Error("Solo se pueden descartar borradores o ideas");
+    }
+    const removed = await this.store.remove(id);
+    if (!removed) return false;
+    if (this.mediaStorage?.configured) {
+      await this.mediaStorage.syncContentAssets(id, []);
+    } else {
+      await this.media.remove([...item.assets, ...(item.socialSlides ?? []).map((slide) => slide.source)]);
+    }
+    return true;
+  }
+
   async generate(id: string, kind: GenerationKind, extraInstructions = ""): Promise<ContentItem> {
     const current = await this.required(id);
     const all = await this.store.list();

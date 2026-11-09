@@ -1807,6 +1807,16 @@ export const createApp = async (
       await media.syncContentAssets(contentId, updated.assets);
     response.json(updated);
   });
+  app.post("/api/content/:id/discard", requireRole("admin", "editor"), async (request, response) => {
+    const contentId = String(request.params.id);
+    const item = await manager.required(contentId);
+    if (item.status !== "draft" && item.status !== "idea") {
+      return response.status(409).json({ error: "Solo se pueden descartar borradores o ideas" });
+    }
+    const removed = await manager.discardDraft(contentId);
+    if (!removed) return response.status(404).json({ error: "Contenido no encontrado" });
+    response.json({ discarded: true });
+  });
   app.delete("/api/content/:id", requireRole("admin", "editor"), async (request, response) => {
     const removed = await manager.store.remove(String(request.params.id));
     response.status(removed ? 204 : 404).end();
