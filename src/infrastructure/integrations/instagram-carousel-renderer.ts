@@ -44,11 +44,12 @@ const svgLines = (
   limit: number,
   maxLines: number,
   weight = 700,
+  fontFamily = "DM Sans",
 ) =>
   wrap(value, limit, maxLines)
     .map(
       (line, index) =>
-        `<text x="${x}" y="${y + index * lineHeight}" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${xml(line)}</text>`,
+        `<text x="${x}" y="${y + index * lineHeight}" font-family="${xml(fontFamily)}" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${xml(line)}</text>`,
     )
     .join("");
 
@@ -90,6 +91,10 @@ export class InstagramCarouselRenderer {
     const { width, height } = template.canvas;
     const style = template.slides[0]!;
     const accent = style.accent;
+    const displayFont = "Oswald";
+    const bodyFont = "DM Sans";
+    const ink = "#111114";
+    const paper = "#f4f0e8";
     const eyebrow = style.eyebrow || template.name.toUpperCase();
     const rendered: RenderedCarouselImage[] = [];
     for (const [index, slide] of slides.entries()) {
@@ -110,10 +115,11 @@ export class InstagramCarouselRenderer {
       const scale = width / 1080;
       const x = Math.round(68 * scale);
       const cover = index === 0;
-      const footer = `<text x="${x}" y="${height - Math.round(66 * scale)}" font-family="Arial,sans-serif" font-size="${Math.round(25 * scale)}" font-weight="700" letter-spacing="3" fill="#ffffff">AFTERSTAGE</text><text x="${width - x}" y="${height - Math.round(66 * scale)}" text-anchor="end" font-family="Arial,sans-serif" font-size="${Math.round(25 * scale)}" font-weight="700" fill="#ffffff">${String(index + 1).padStart(2, "0")}/${String(slides.length).padStart(2, "0")}</text>`;
+      const footerY = height - Math.round(66 * scale);
+      const footer = `<text x="${x}" y="${footerY}" font-family="${displayFont}" font-size="${Math.round(27 * scale)}" font-weight="700" letter-spacing="1.5" fill="${paper}">AFTERSTAGE</text><rect x="${x + Math.round(168 * scale)}" y="${footerY - Math.round(20 * scale)}" width="${Math.round(12 * scale)}" height="${Math.round(12 * scale)}" fill="${accent}"/><text x="${width - x}" y="${footerY}" text-anchor="end" font-family="${bodyFont}" font-size="${Math.round(23 * scale)}" font-weight="700" fill="${paper}">${String(index + 1).padStart(2, "0")}/${String(slides.length).padStart(2, "0")}</text>`;
       const content = cover
-        ? `<text x="${x}" y="${Math.round(height * 0.57)}" font-family="Arial,sans-serif" font-size="${Math.round(30 * scale)}" font-weight="800" letter-spacing="5" fill="#ffffff">${xml(eyebrow)}</text><path d="M${x} ${Math.round(height * 0.6)}h${Math.round(125 * scale)}" stroke="${accent}" stroke-width="${Math.round(12 * scale)}"/>${svgLines(title.toUpperCase(), x, Math.round(height * 0.7), Math.round(90 * scale), Math.round(96 * scale), accent, Math.max(12, Math.round(20 / scale)), 2, 900)}${svgLines(slide.text, x, Math.round(height * 0.86), Math.round(34 * scale), Math.round(42 * scale), "#ffffff", Math.max(24, Math.round(44 / scale)), 2, 800)}`
-        : `<rect x="0" y="${Math.round(height * 0.63)}" width="${width}" height="${Math.round(height * 0.37)}" fill="${style.background}" opacity="0.26"/><rect x="0" y="${Math.round(height * 0.63)}" width="${width}" height="${Math.round(height * 0.37)}" fill="#080808" opacity="0.68"/><path d="M${x} ${Math.round(height * 0.69)}h${Math.round(96 * scale)}" stroke="${accent}" stroke-width="${Math.round(10 * scale)}"/>${svgLines(slide.text, x, Math.round(height * 0.76), Math.round(39 * scale), Math.round(53 * scale), "#ffffff", Math.max(24, Math.round(46 / scale)), 4, 700)}`;
+        ? `<text x="${x}" y="${Math.round(height * 0.57)}" font-family="${bodyFont}" font-size="${Math.round(27 * scale)}" font-weight="700" letter-spacing="5" fill="${paper}">${xml(eyebrow)}</text><path d="M${x} ${Math.round(height * 0.6)}h${Math.round(125 * scale)}" stroke="${accent}" stroke-width="${Math.round(12 * scale)}"/>${svgLines(title.toUpperCase(), x, Math.round(height * 0.7), Math.round(98 * scale), Math.round(102 * scale), paper, Math.max(12, Math.round(20 / scale)), 2, 700, displayFont)}${svgLines(slide.text, x, Math.round(height * 0.86), Math.round(34 * scale), Math.round(42 * scale), paper, Math.max(24, Math.round(44 / scale)), 2, 700, bodyFont)}`
+        : `<rect x="0" y="${Math.round(height * 0.63)}" width="${width}" height="${Math.round(height * 0.37)}" fill="${style.background || ink}" opacity="0.24"/><rect x="0" y="${Math.round(height * 0.63)}" width="${width}" height="${Math.round(height * 0.37)}" fill="${ink}" opacity="0.72"/><path d="M${x} ${Math.round(height * 0.69)}h${Math.round(96 * scale)}" stroke="${accent}" stroke-width="${Math.round(10 * scale)}"/>${svgLines(slide.text, x, Math.round(height * 0.76), Math.round(39 * scale), Math.round(53 * scale), paper, Math.max(24, Math.round(46 / scale)), 4, 700, bodyFont)}`;
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${image}<defs><linearGradient id="shade" x1="0" y1="0" x2="0" y2="1"><stop offset="28%" stop-color="#080808" stop-opacity="0"/><stop offset="100%" stop-color="#080808" stop-opacity="0.84"/></linearGradient></defs><rect width="${width}" height="${height}" fill="url(#shade)"/>${content}<path d="M${width - x} ${x}h-${Math.round(62 * scale)}M${width - x} ${x}v${Math.round(62 * scale)}" fill="none" stroke="${accent}" stroke-width="${Math.round(9 * scale)}"/>${footer}</svg>`;
       rendered.push({
         buffer: await sharp(Buffer.from(svg)).png().toBuffer(),

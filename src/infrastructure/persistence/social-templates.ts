@@ -19,7 +19,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     outputType: "carousel",
     channels: ["instagram", "facebook"],
     status: "published",
-    canvas: { width: 1080, height: 1080 },
+    canvas: { width: 1080, height: 1350 },
     fields: [
       { key: "period", label: "Mes y año", required: true, maxLength: 50 },
       { key: "headline", label: "Hook de portada", required: true, maxLength: 90 },
@@ -40,7 +40,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     outputType: "post",
     channels: ["instagram", "facebook"],
     status: "published",
-    canvas: { width: 1080, height: 1080 },
+    canvas: { width: 1080, height: 1350 },
     fields: [
       { key: "artist", label: "Artista o banda", required: true, maxLength: 90 },
       { key: "hook", label: "Hook", required: true, maxLength: 100 },
@@ -58,7 +58,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     outputType: "carousel",
     channels: ["instagram", "facebook"],
     status: "published",
-    canvas: { width: 1080, height: 1080 },
+    canvas: { width: 1080, height: 1350 },
     fields: [
       { key: "band", label: "Artista o banda", required: true, maxLength: 90 },
       { key: "hook", label: "Hook", required: true, maxLength: 100 },
@@ -83,7 +83,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     outputType: "carousel",
     channels: ["instagram"],
     status: "published",
-    canvas: { width: 1080, height: 1080 },
+    canvas: { width: 1080, height: 1350 },
     fields: [
       { key: "band", label: "Nombre", required: true, maxLength: 90 },
       { key: "hook", label: "Hook", required: true, maxLength: 100 },
@@ -106,7 +106,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     outputType: "post",
     channels: ["instagram", "facebook"],
     status: "published",
-    canvas: { width: 1080, height: 1080 },
+    canvas: { width: 1080, height: 1350 },
     fields: [
       { key: "headline", label: "Titular / hook", required: true, maxLength: 120 },
       { key: "summary", label: "Qué pasó", required: true, maxLength: 260 },
@@ -123,7 +123,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     outputType: "carousel",
     channels: ["instagram"],
     status: "published",
-    canvas: { width: 1080, height: 1080 },
+    canvas: { width: 1080, height: 1350 },
     fields: [
       { key: "artist", label: "Banda o artista", required: true, maxLength: 90 },
       { key: "hook", label: "Hook", required: true, maxLength: 110 },
