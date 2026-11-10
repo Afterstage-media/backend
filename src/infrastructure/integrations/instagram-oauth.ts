@@ -75,6 +75,7 @@ const facebookScopes = [
   "instagram_manage_comments",
   "instagram_manage_messages",
   "instagram_manage_insights",
+  "instagram_manage_engagement",
   "pages_show_list",
   "pages_read_engagement",
   "business_management",
