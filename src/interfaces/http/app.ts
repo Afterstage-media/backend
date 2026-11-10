@@ -13,6 +13,8 @@ import {
   correctedCarouselImageSchema,
   instagramCarouselInputSchema,
   instagramCarouselUpdateSchema,
+  instagramSocialPublicationInputSchema,
+  instagramSocialPublicationUpdateSchema,
 } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import { PressManager } from "../../application/press-manager.js";
@@ -1625,6 +1627,68 @@ export const createApp = async (
       })),
     });
   });
+  app.post("/api/social-publication", requireRole("admin", "editor"), async (request, response) => {
+    const input = instagramSocialPublicationInputSchema.parse(request.body);
+    const template = await templateStore.get(input.templateId);
+    if (!template) return response.status(404).json({ error: "No se encontró la plantilla seleccionada" });
+    if (template.outputType !== input.type)
+      return response.status(400).json({ error: "El formato de la plantilla debe coincidir con la publicación" });
+    const actor = (request as typeof request & { actor?: { id: string } }).actor;
+    if (!actor?.id) return response.status(401).json({ error: "No autorizado" });
+    const item = await manager.createInstagramSocialPublication(input, actor.id, template);
+    response.status(201).json({
+      id: item.id,
+      status: item.status,
+      title: item.title,
+      instagramCopy: item.instagramCopy,
+      templateId: item.socialTemplateId,
+      templateVersion: item.socialTemplateVersion,
+      images: item.assets.map((asset, index) => ({
+        slide: index + 1,
+        url: asset.url,
+        altText: asset.altText,
+        credit: asset.credit,
+      })),
+      slides: (item.socialSlides ?? []).map((slide, index) => ({
+        slide: index + 1,
+        sourceAssetId: slide.source.id,
+        imageUrl: slide.source.url,
+        text: slide.text,
+        altText: slide.source.altText,
+        credit: slide.source.credit,
+      })),
+    });
+  });
+  app.put("/api/social-publication/:id", requireRole("admin", "editor"), async (request, response) => {
+    const input = instagramSocialPublicationUpdateSchema.parse(request.body);
+    const template = await templateStore.get(input.templateId);
+    if (!template) return response.status(404).json({ error: "No se encontró la plantilla seleccionada" });
+    if (template.outputType !== input.type)
+      return response.status(400).json({ error: "El formato de la plantilla debe coincidir con la publicación" });
+    const updated = await manager.updateInstagramSocialPublication(String(request.params.id), input, template);
+    response.json({
+      id: updated.id,
+      status: updated.status,
+      title: updated.title,
+      instagramCopy: updated.instagramCopy,
+      templateId: updated.socialTemplateId,
+      templateVersion: updated.socialTemplateVersion,
+      images: updated.assets.map((asset, index) => ({
+        slide: index + 1,
+        url: asset.url,
+        altText: asset.altText,
+        credit: asset.credit,
+      })),
+      slides: (updated.socialSlides ?? []).map((slide, index) => ({
+        slide: index + 1,
+        sourceAssetId: slide.source.id,
+        imageUrl: slide.source.url,
+        text: slide.text,
+        altText: slide.source.altText,
+        credit: slide.source.credit,
+      })),
+    });
+  });
   app.put("/api/social-carousel/:id", requireRole("admin", "editor"), async (request, response) => {
     const input = instagramCarouselUpdateSchema.parse(request.body);
     const template = await templateStore.get(input.templateId);
@@ -1654,6 +1718,38 @@ export const createApp = async (
     });
   });
   app.put("/api/social-carousel/:id/slides/:slide", requireRole("admin", "editor"), async (request, response) => {
+    const { image } = correctedCarouselImageSchema.parse(request.body);
+    const item = await manager.required(String(request.params.id));
+    if (!item.socialTemplateId)
+      return response.status(409).json({ error: "El borrador no tiene una plantilla social asociada" });
+    const template = await templateStore.get(item.socialTemplateId);
+    if (!template) return response.status(404).json({ error: "No se encontró la plantilla del borrador" });
+    const slide = z.coerce.number().int().positive().parse(request.params.slide);
+    const updated = await manager.replaceInstagramCarouselImage(item.id, slide, { image }, template);
+    response.json({
+      id: updated.id,
+      status: updated.status,
+      title: updated.title,
+      instagramCopy: updated.instagramCopy,
+      templateId: updated.socialTemplateId,
+      templateVersion: updated.socialTemplateVersion,
+      images: updated.assets.map((asset, index) => ({
+        slide: index + 1,
+        url: asset.url,
+        altText: asset.altText,
+        credit: asset.credit,
+      })),
+      slides: (updated.socialSlides ?? []).map((slide, index) => ({
+        slide: index + 1,
+        sourceAssetId: slide.source.id,
+        imageUrl: slide.source.url,
+        text: slide.text,
+        altText: slide.source.altText,
+        credit: slide.source.credit,
+      })),
+    });
+  });
+  app.put("/api/social-publication/:id/slides/:slide", requireRole("admin", "editor"), async (request, response) => {
     const { image } = correctedCarouselImageSchema.parse(request.body);
     const item = await manager.required(String(request.params.id));
     if (!item.socialTemplateId)
