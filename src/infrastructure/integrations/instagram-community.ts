@@ -115,6 +115,13 @@ export class InstagramCommunity {
     return { commentId, replyId: result.id ?? null };
   }
 
+  async likeComment(commentId: string): Promise<GraphObject> {
+    if (!commentId.trim()) throw new Error("Falta el identificador del comentario");
+    const credentials = await this.facebookCredentials();
+    const result = await graphRequest(credentials, `${encodeURIComponent(commentId)}/likes`, "POST");
+    return { commentId, liked: result.success === true };
+  }
+
   async acceptTrustedCollaborationInvites(): Promise<{
     checked: number;
     accepted: Array<{ username: string; mediaId: string }>;

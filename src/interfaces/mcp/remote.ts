@@ -348,6 +348,7 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   instagram_responder_mensaje: ["notes:write"],
   instagram_listar_comentarios: ["notes:read"],
   instagram_responder_comentario: ["notes:write"],
+  instagram_like_comentario: ["notes:write"],
   listar_colaboradores_confiables_instagram: ["notes:read"],
   agregar_colaborador_confiable_instagram: ["notes:write"],
   quitar_colaborador_confiable_instagram: ["notes:write"],
@@ -516,6 +517,21 @@ export const createRemoteMcpServer = (
       requireInstagramAdmin(extra, "notes:write");
       if (!instagramService) throw new Error("La integración de Instagram no está configurada");
       return textResult(await instagramService.replyToComment(commentId, message));
+    },
+  );
+  registerTool(
+    "instagram_like_comentario",
+    {
+      title: "Dar Me gusta a un comentario de Instagram",
+      description: "Marca con Me gusta un comentario de la cuenta profesional conectada.",
+      inputSchema: { commentId: z.string().trim().min(1).max(180) },
+      outputSchema: z.object({ commentId: z.string(), liked: z.boolean() }),
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ commentId }, extra) => {
+      requireInstagramAdmin(extra, "notes:write");
+      if (!instagramService) throw new Error("La integración de Instagram no está configurada");
+      return textResult(await instagramService.likeComment(commentId));
     },
   );
   registerTool(

@@ -109,6 +109,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "instagram_leer_mensajes",
         "instagram_listar_comentarios",
         "instagram_listar_conversaciones",
+        "instagram_like_comentario",
         "instagram_responder_comentario",
         "instagram_responder_mensaje",
         "agregar_colaborador_confiable_instagram",
