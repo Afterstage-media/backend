@@ -47,7 +47,7 @@ export class InstagramCommunity {
       return {
         accountId: connection.accountId,
         token: connection.accessToken,
-        base: `https://graph.instagram.com/${apiVersion()}`,
+        base: `https://graph.${connection.apiHost ?? "instagram"}.com/${apiVersion()}`,
       };
     }
     const token = process.env.META_ACCESS_TOKEN;
@@ -56,7 +56,14 @@ export class InstagramCommunity {
     return { accountId, token, base: `https://graph.facebook.com/${apiVersion()}` };
   }
 
-  private facebookCredentials(): Credentials {
+  private async facebookCredentials(): Promise<Credentials> {
+    const connection = await this.connections?.getDefault();
+    if (connection?.apiHost === "facebook")
+      return {
+        accountId: connection.accountId,
+        token: connection.accessToken,
+        base: `https://graph.facebook.com/${apiVersion()}`,
+      };
     const token = process.env.META_ACCESS_TOKEN;
     const accountId = process.env.META_INSTAGRAM_ACCOUNT_ID;
     if (!token || !accountId)
@@ -114,7 +121,7 @@ export class InstagramCommunity {
   }> {
     const trusted = new Set((await this.collaborators.list()).map((item) => item.username.toLowerCase()));
     if (!trusted.size) return { checked: 0, accepted: [] };
-    const credentials = this.facebookCredentials();
+    const credentials = await this.facebookCredentials();
     const accountId = credentials.accountId;
     const result = (await graphRequest(credentials, `${accountId}/collaboration_invites`, "GET", {
       fields: "media_id,media_owner_username,caption,media_url",

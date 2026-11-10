@@ -7,6 +7,7 @@ export type InstagramConnectionCredentials = {
   accessToken: string;
   expiresAt: string | null;
   scopes: string[];
+  apiHost?: "facebook" | "instagram";
 };
 
 export type InstagramConnectionView = {
@@ -16,12 +17,14 @@ export type InstagramConnectionView = {
   scopes: string[];
   connectedAt: string;
   updatedAt: string;
+  apiHost: "facebook" | "instagram";
 };
 
 type InstagramConnectionRecord = InstagramConnectionView & {
   _id: string;
   accessTokenEncrypted: string;
   connectedByUserId: string;
+  apiHost?: "facebook" | "instagram";
 };
 
 export type InstagramConnectionInput = {
@@ -31,6 +34,7 @@ export type InstagramConnectionInput = {
   expiresAt: string | null;
   scopes: string[];
   connectedByUserId: string;
+  apiHost?: "facebook" | "instagram";
 };
 
 export type InstagramConnectionStore = {
@@ -48,6 +52,7 @@ const viewOf = (record: InstagramConnectionRecord): InstagramConnectionView => (
   scopes: record.scopes,
   connectedAt: record.connectedAt,
   updatedAt: record.updatedAt,
+  apiHost: record.apiHost ?? "instagram",
 });
 
 export class MongoInstagramConnectionStore implements InstagramConnectionStore {
@@ -75,6 +80,7 @@ export class MongoInstagramConnectionStore implements InstagramConnectionStore {
       accessToken: decryptSecret(record.accessTokenEncrypted),
       expiresAt: record.expiresAt,
       scopes: record.scopes,
+      apiHost: record.apiHost ?? "instagram",
     };
   }
 
@@ -88,6 +94,7 @@ export class MongoInstagramConnectionStore implements InstagramConnectionStore {
       accessTokenEncrypted: encryptSecret(input.accessToken),
       expiresAt: input.expiresAt,
       scopes: [...new Set(input.scopes)].sort(),
+      apiHost: input.apiHost ?? "instagram",
       connectedAt: existing?.connectedAt ?? now,
       updatedAt: now,
       connectedByUserId: input.connectedByUserId,

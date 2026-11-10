@@ -71,7 +71,12 @@ export class MetaPublisher {
     requireAccount = true,
   ): Promise<{ accountId: string; accessToken: string; host: GraphHost }> {
     const connection = await this.instagramConnections?.getDefault();
-    if (connection) return { accountId: connection.accountId, accessToken: connection.accessToken, host: "instagram" };
+    if (connection)
+      return {
+        accountId: connection.accountId,
+        accessToken: connection.accessToken,
+        host: connection.apiHost ?? "instagram",
+      };
     const accessToken = requireEnv("META_ACCESS_TOKEN");
     const accountId =
       process.env.META_INSTAGRAM_ACCOUNT_ID ?? (requireAccount ? requireEnv("META_INSTAGRAM_ACCOUNT_ID") : "");
