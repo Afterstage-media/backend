@@ -10,6 +10,7 @@ const imageInput = z.object({
 const correctedImageInput = imageInput.extend({ altText: z.string().max(500).optional() });
 
 export const instagramCarouselInputSchema = z.object({
+  seriesId: z.string().trim().min(2).max(120).optional(),
   templateId: z.string().trim().min(1).max(120),
   title: z.string().trim().min(1).max(180),
   instagramCopy: z.string().trim().min(1).max(2200),
@@ -44,6 +45,7 @@ export const instagramCarouselUpdateSchema = instagramCarouselInputSchema.extend
 });
 
 const instagramSocialPublicationBaseSchema = z.object({
+  seriesId: z.string().trim().min(2).max(120).optional(),
   templateId: z.string().trim().min(1).max(120),
   type: z.enum(["post", "story"]),
   title: z.string().trim().min(1).max(180),

@@ -18,6 +18,7 @@ const {
   mail,
   media,
   socialTemplates,
+  socialSeries,
   instagramTrustedCollaborators,
 } = await createManagers();
 const app = await createApp(
@@ -36,6 +37,7 @@ const app = await createApp(
   platform,
   socialTemplates,
   instagramTrustedCollaborators,
+  socialSeries,
 );
 
 app.listen(port, () => log("info", "server_started", { port }));
