@@ -62,7 +62,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "anuncio-show",
     name: "Anuncio de show",
     description: "Una fecha con la información esencial y su fuente.",
-    guidanceVersion: 1,
+    guidanceVersion: 2,
     editorialGuidance: {
       purpose: "Informar una fecha de show con lo necesario para entender qué se anunció y dónde confirmarlo.",
       angle: "El dato principal es el anuncio; el gancho debe contar qué vuelve, debuta o sucede, sin exagerar.",
@@ -89,6 +89,14 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     },
     editorialSection: "show-announcement",
     outputType: "post",
+    visualStyle: {
+      id: "afterstage-stage-photo",
+      name: "En vivo",
+      description: "Foto a sangre, contraste carbón y acentos violeta para anuncios con energía.",
+      layout: "photo-overlay",
+      coverEyebrow: "AFTERSTAGE · EN VIVO",
+      palette: { background: "#111114", foreground: "#f4f0e8", accent: "#7b35ff", overlay: "#080808" },
+    },
     channels: ["instagram", "facebook"],
     status: "published",
     canvas: { width: 1080, height: 1350 },
@@ -295,6 +303,80 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
       { eyebrow: "FUENTE", titleField: "source" },
     ],
   },
+  {
+    slug: "historia-convocatoria",
+    name: "Historia de convocatoria",
+    description: "Secuencia vertical breve para invitar a participar o descubrir un servicio.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Comunicar una propuesta concreta de Afterstage en una secuencia breve y fácil de recorrer.",
+      angle: "Presentá primero la situación de la audiencia, después qué ofrece Afterstage y cómo avanzar.",
+      verify: [
+        "Disponibilidad y condiciones vigentes del servicio",
+        "Alcance exacto de la cobertura o producción ofrecida",
+        "Canal de contacto y respuesta esperada",
+      ],
+      slidePlan: ["Una historia vertical: pregunta o gancho, propuesta concreta y una invitación simple a conversar"],
+      caption: "Acompañá la secuencia con un contacto vigente y aclaraciones necesarias sobre disponibilidad.",
+      voice: "Directa, cercana y segura; hablale a la escena sin convertir la historia en un aviso genérico.",
+      avoid: [
+        "No prometer alcance, resultados ni tiempos que no estén confirmados",
+        "No insinuar que una cobertura es gratuita si no lo es",
+        "No llenar la historia de hashtags ni llamadas a la acción repetidas",
+      ],
+    },
+    editorialSection: "show-announcement",
+    outputType: "story",
+    channels: ["instagram"],
+    status: "published",
+    canvas: { width: 1080, height: 1920 },
+    fields: [
+      { key: "headline", label: "Pregunta o gancho", required: true, maxLength: 180 },
+      { key: "body", label: "Propuesta y contacto", required: true, maxLength: 180 },
+    ],
+    slides: [{ eyebrow: "AFTERSTAGE · EN ESCENA", titleField: "headline", bodyField: "body" }],
+  },
+  {
+    slug: "historia-en-vivo",
+    name: "Historia desde el show",
+    description: "Una placa vertical con fotografía protagonista para compartir una escena en vivo.",
+    guidanceVersion: 1,
+    editorialGuidance: {
+      purpose: "Compartir una escena real del vivo con un dato o una observación que le aporte contexto.",
+      angle: "Dejá que la foto abra la historia y usá una sola frase concreta para contar por qué importa.",
+      verify: [
+        "Artista, show y fecha",
+        "Identidad y crédito de la fotografía",
+        "Toda cita o dato incluido en la placa",
+      ],
+      slidePlan: ["Una sola historia vertical: foto del show, frase breve y marca Afterstage"],
+      caption: "Si la historia lleva copy, sumá el contexto y el crédito que no entran en la placa.",
+      voice: "Observacional, breve y precisa; no describas como hecho una interpretación personal.",
+      avoid: [
+        "No inventar reacciones o citas",
+        "No tapar la escena principal con texto",
+        "No quitar el crédito de la foto",
+      ],
+    },
+    editorialSection: "show-recap",
+    outputType: "story",
+    channels: ["instagram"],
+    status: "published",
+    visualStyle: {
+      id: "afterstage-stage-photo",
+      name: "En vivo",
+      description: "Foto a sangre, contraste carbón y acentos violeta para anuncios con energía.",
+      layout: "photo-overlay",
+      coverEyebrow: "AFTERSTAGE · EN VIVO",
+      palette: { background: "#111114", foreground: "#f4f0e8", accent: "#7b35ff", overlay: "#080808" },
+    },
+    canvas: { width: 1080, height: 1920 },
+    fields: [
+      { key: "headline", label: "Frase sobre la escena", required: true, maxLength: 160 },
+      { key: "photoCredit", label: "Crédito de fotografía", maxLength: 120 },
+    ],
+    slides: [{ eyebrow: "AFTERSTAGE · EN VIVO", titleField: "headline" }],
+  },
 ];
 
 export class MongoSocialTemplateStore implements SocialTemplateRepository {
@@ -314,6 +396,7 @@ export class MongoSocialTemplateStore implements SocialTemplateRepository {
           ...existing,
           guidanceVersion: template.guidanceVersion ?? 0,
           editorialGuidance: template.editorialGuidance,
+          ...(template.visualStyle ? { visualStyle: template.visualStyle } : {}),
         });
       }
     }
@@ -386,6 +469,7 @@ export class MemorySocialTemplateStore implements SocialTemplateRepository {
           ...existing,
           guidanceVersion: template.guidanceVersion ?? 0,
           editorialGuidance: template.editorialGuidance,
+          ...(template.visualStyle ? { visualStyle: template.visualStyle } : {}),
         });
       }
     }

@@ -19,19 +19,19 @@ export const socialVisualStyleSchema = z.object({
     .regex(/^[a-z0-9-]+$/)
     .default("afterstage-editorial"),
   name: z.string().trim().min(2).max(100).default("Afterstage editorial"),
-  description: z.string().max(300).default("Fotografía protagonista, tipografía condensada y acento violeta."),
-  layout: z.enum(["photo-overlay", "split-panel", "type-poster"]).default("photo-overlay"),
+  description: z.string().max(300).default("Papel texturado, tipografía condensada y acentos violeta de Afterstage."),
+  layout: z.enum(["photo-overlay", "split-panel", "type-poster"]).default("type-poster"),
   coverEyebrow: z.string().max(80).default("AFTERSTAGE EDITORIAL"),
   palette: z
     .object({
       background: z
         .string()
         .regex(/^#[0-9a-fA-F]{6}$/)
-        .default("#111114"),
+        .default("#f1f0ec"),
       foreground: z
         .string()
         .regex(/^#[0-9a-fA-F]{6}$/)
-        .default("#f4f0e8"),
+        .default("#19191d"),
       accent: z
         .string()
         .regex(/^#[0-9a-fA-F]{6}$/)
@@ -42,8 +42,8 @@ export const socialVisualStyleSchema = z.object({
         .default("#080808"),
     })
     .default({
-      background: "#111114",
-      foreground: "#f4f0e8",
+      background: "#f1f0ec",
+      foreground: "#19191d",
       accent: "#7b35ff",
       overlay: "#080808",
     }),
@@ -68,12 +68,12 @@ export const socialTemplateSchema = z.object({
   visualStyle: socialVisualStyleSchema.default({
     id: "afterstage-editorial",
     name: "Afterstage editorial",
-    description: "Fotografía protagonista, tipografía condensada y acento violeta.",
-    layout: "photo-overlay",
+    description: "Papel texturado, tipografía condensada y acentos violeta de Afterstage.",
+    layout: "type-poster",
     coverEyebrow: "AFTERSTAGE EDITORIAL",
     palette: {
-      background: "#111114",
-      foreground: "#f4f0e8",
+      background: "#f1f0ec",
+      foreground: "#19191d",
       accent: "#7b35ff",
       overlay: "#080808",
     },

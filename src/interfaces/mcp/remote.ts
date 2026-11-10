@@ -18,7 +18,11 @@ import { InstagramCommunity } from "../../infrastructure/integrations/instagram-
 import type { InstagramTrustedCollaboratorStore } from "../../infrastructure/persistence/instagram-trusted-collaborators.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import { channels, contentStatuses, imageInputSchema, type ContentItem } from "../../domain/content/types.js";
-import { correctedCarouselImageSchema, instagramCarouselInputSchema } from "../../domain/content/social-carousel.js";
+import {
+  correctedCarouselImageSchema,
+  instagramCarouselInputSchema,
+  instagramSocialPublicationInputShape,
+} from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import type { SocialTemplateRepository } from "../../domain/content/social-template.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
@@ -133,6 +137,7 @@ const socialTemplatesOutputSchema = z.object({
     z.object({
       id: z.string(),
       visualStyleId: z.string(),
+      outputType: z.enum(["post", "story", "carousel"]),
       name: z.string(),
       description: z.string(),
       canvas: z.object({ width: z.number().int(), height: z.number().int() }),
@@ -327,6 +332,7 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   listar_reemplazos: ["replacements:read"],
   crear_nota: ["notes:write"],
   crear_carrusel_instagram: ["notes:write"],
+  crear_pieza_instagram: ["notes:write"],
   listar_plantillas_sociales: ["notes:read"],
   corregir_lamina_instagram: ["notes:write"],
   agregar_imagenes_nota: ["notes:write"],
@@ -1114,14 +1120,16 @@ export const createRemoteMcpServer = (
     async (_input, extra) => {
       authFromExtra(extra, "notes:read", readNotesRoles);
       if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
-      const catalog = await socialTemplates.list({ status: "published", type: "carousel", channel: "instagram" });
+      const catalog = await socialTemplates.list({ status: "published", channel: "instagram" });
       const styleRecords = new Map<string, (typeof catalog)[number]>();
       for (const template of catalog) {
-        if (!styleRecords.has(template.visualStyle.id)) styleRecords.set(template.visualStyle.id, template);
+        const key = `${template.outputType}:${template.visualStyle.id}`;
+        if (!styleRecords.has(key)) styleRecords.set(key, template);
       }
       const templates = [...styleRecords.values()].map((template) => ({
         id: template.id,
         visualStyleId: template.visualStyle.id,
+        outputType: template.outputType,
         name: template.visualStyle.name,
         description: template.visualStyle.description,
         canvas: template.canvas,
@@ -1152,11 +1160,32 @@ export const createRemoteMcpServer = (
   );
 
   registerTool(
+    "crear_pieza_instagram",
+    {
+      title: "Crear post o historias de Instagram",
+      description:
+        "Crea como borrador un post 4:5 o una historia 9:16 a partir de una plantilla visual. Incluí una foto y el texto integrado; Afterstage compone la imagen y devuelve su URL para que puedas revisarla. Nunca publica automáticamente.",
+      inputSchema: instagramSocialPublicationInputShape,
+      outputSchema: carouselOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async (input, extra) => {
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
+      const template = await socialTemplates.get(input.templateId);
+      if (!template) throw new Error("No se encontró la plantilla seleccionada");
+      const note = await manager.createInstagramSocialPublication(input, actor.userId, template);
+      return textResult(publicCarousel(note, actor.userId));
+    },
+  );
+
+  registerTool(
     "corregir_lamina_instagram",
     {
-      title: "Reemplazar lámina del carrusel",
+      title: "Reemplazar imagen de una pieza de Instagram",
       description:
-        "Recibe la imagen corregida y reemplaza la lámina indicada dentro del mismo borrador. Devuelve las URLs actuales para volver a revisarlas.",
+        "Recibe la imagen corregida y reemplaza la lámina indicada de un borrador de carrusel, post o historia. Devuelve las URLs actuales para volver a revisarlas.",
       inputSchema: {
         publicationId: z.string().trim().min(1).max(180),
         slide: z.number().int().positive(),
