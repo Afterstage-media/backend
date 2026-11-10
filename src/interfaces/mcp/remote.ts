@@ -25,6 +25,11 @@ import {
 } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import type { SocialTemplateRepository } from "../../domain/content/social-template.js";
+import {
+  socialSeriesSchema,
+  socialSeriesInputShape,
+  type SocialSeriesRepository,
+} from "../../domain/content/social-series.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { PressManager } from "../../application/press-manager.js";
 import { MailboxManager } from "../../application/mailbox-manager.js";
@@ -183,6 +188,8 @@ const socialTemplatesOutputSchema = z.object({
   totalStyles: z.number().int().nonnegative(),
   totalGuides: z.number().int().nonnegative(),
 });
+const socialSeriesOutputSchema = z.object({ series: z.array(z.unknown()), total: z.number().int().nonnegative() });
+const socialSeriesMutationOutputSchema = z.object({ series: z.unknown() });
 const carouselOutputSchema = z.object({
   id: z.string(),
   status: z.enum(contentStatuses),
@@ -333,6 +340,10 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   crear_nota: ["notes:write"],
   crear_carrusel_instagram: ["notes:write"],
   crear_pieza_instagram: ["notes:write"],
+  crear_serie_social: ["notes:write"],
+  actualizar_serie_social: ["notes:write"],
+  listar_series_sociales: ["notes:read"],
+  crear_borrador_serie_social: ["notes:write"],
   listar_plantillas_sociales: ["notes:read"],
   corregir_lamina_instagram: ["notes:write"],
   agregar_imagenes_nota: ["notes:write"],
@@ -400,6 +411,7 @@ export const createRemoteMcpServer = (
   mailbox?: MailRepository,
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
   instagramConnections?: InstagramConnectionStore,
+  socialSeries?: SocialSeriesRepository,
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
@@ -1181,6 +1193,129 @@ export const createRemoteMcpServer = (
   );
 
   registerTool(
+    "listar_series_sociales",
+    {
+      title: "Listar series de publicaciones",
+      description:
+        "Muestra los formatos recurrentes de Afterstage, su pauta editorial, frecuencia, próxima fecha y si están vencidos. Las ejecuciones se convierten en borradores y nunca se publican automáticamente.",
+      inputSchema: {},
+      outputSchema: socialSeriesOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date());
+      const series = await Promise.all(
+        (await socialSeries.list()).map(async (item) => {
+          const template = await socialTemplates.findBySlug(item.templateSlug);
+          return {
+            ...item,
+            templateName: template?.name ?? "Formato no disponible",
+            outputType: template?.outputType ?? "unknown",
+            due: Boolean(item.active && item.nextRunAt && item.nextRunAt <= today),
+          };
+        }),
+      );
+      return textResult({ series, total: series.length });
+    },
+  );
+
+  registerTool(
+    "crear_serie_social",
+    {
+      title: "Crear una serie recurrente",
+      description:
+        "Guarda un formato editorial recurrente con una frecuencia ajustable. No crea publicaciones ni las publica hasta que se solicite un borrador.",
+      inputSchema: socialSeriesInputShape,
+      outputSchema: socialSeriesMutationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
+      const parsed = socialSeriesSchema.parse(input);
+      const template = await socialTemplates.findBySlug(parsed.templateSlug);
+      if (!template || template.status !== "published") throw new Error("El formato social no está disponible");
+      const series = await socialSeries.save(parsed);
+      return textResult({ series });
+    },
+  );
+
+  registerTool(
+    "actualizar_serie_social",
+    {
+      title: "Actualizar una serie recurrente",
+      description:
+        "Cambia la frecuencia, el estado o la pauta editorial de una serie. Pausarla no elimina sus borradores anteriores.",
+      inputSchema: socialSeriesInputShape,
+      outputSchema: socialSeriesMutationOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
+      const parsed = socialSeriesSchema.parse(input);
+      if (!parsed.id) throw new Error("Indicá el id de la serie a actualizar");
+      const template = await socialTemplates.findBySlug(parsed.templateSlug);
+      if (!template || template.status !== "published") throw new Error("El formato social no está disponible");
+      const series = await socialSeries.save(parsed, parsed.id);
+      return textResult({ series });
+    },
+  );
+
+  registerTool(
+    "crear_borrador_serie_social",
+    {
+      title: "Crear borrador desde una serie",
+      description:
+        "Genera un post, historia o carrusel con el formato asociado a una serie y actualiza su próxima fecha. Adjuntá las imágenes y datos verificados del ciclo; el resultado siempre queda en borrador y no se publica.",
+      inputSchema: {
+        seriesId: z.string().trim().min(2).max(120),
+        title: z.string().trim().min(1).max(180),
+        instagramCopy: z.string().trim().min(1).max(2200),
+        slides: z
+          .array(z.object({ image: imageInputSchema, text: z.string().trim().min(1).max(180) }))
+          .min(1)
+          .max(9),
+        tags: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
+        source: z.string().trim().min(1).max(500),
+        author: z.string().trim().max(180).default(""),
+        photographer: z.string().trim().max(180).default(""),
+      },
+      outputSchema: carouselOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async (input, extra) => {
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
+      const series = await socialSeries.get(input.seriesId);
+      if (!series?.active) throw new Error("La serie está pausada o no existe");
+      const template = await socialTemplates.findBySlug(series.templateSlug);
+      if (!template || template.status !== "published") throw new Error("El formato de la serie no está disponible");
+      if (template.outputType === "carousel" && input.slides.length < 2)
+        throw new Error("El carrusel necesita al menos dos láminas");
+      if (template.outputType !== "carousel" && input.slides.length !== 1)
+        throw new Error("Este formato usa una sola lámina");
+      const content = { ...input, templateId: template.id };
+      const draft =
+        template.outputType === "carousel"
+          ? await manager.createInstagramCarousel(content, actor.userId, template)
+          : await manager.createInstagramSocialPublication(
+              { ...content, type: template.outputType },
+              actor.userId,
+              template,
+            );
+      const updatedSeries = await socialSeries.completeDraftRun(series.id, draft.id);
+      return textResult({ ...publicCarousel(draft, actor.userId), seriesNextRunAt: updatedSeries.nextRunAt });
+    },
+  );
+
+  registerTool(
     "corregir_lamina_instagram",
     {
       title: "Reemplazar imagen de una pieza de Instagram",
@@ -1454,6 +1589,7 @@ export const mountRemoteMcp = (
   mailbox?: MailRepository,
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
   instagramConnections?: InstagramConnectionStore,
+  socialSeries?: SocialSeriesRepository,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
   const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
@@ -1615,6 +1751,7 @@ export const mountRemoteMcp = (
         mailbox,
         instagramTrustedCollaborators,
         instagramConnections,
+        socialSeries,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);

@@ -9,6 +9,7 @@ import { ContentManager, DuplicateContentError } from "../../application/content
 import { PlatformManager } from "../../application/platform-manager.js";
 import { contentStatuses, type ContentItem } from "../../domain/content/types.js";
 import { socialTemplateSchema, type SocialTemplateRepository } from "../../domain/content/social-template.js";
+import { socialSeriesSchema, type SocialSeriesRepository } from "../../domain/content/social-series.js";
 import {
   correctedCarouselImageSchema,
   instagramCarouselInputSchema,
@@ -53,6 +54,7 @@ import type { McpOAuthStore } from "../mcp/oauth.js";
 import { MEDIA_CONTENT_TYPES, MediaAssetService } from "../../infrastructure/integrations/media-storage.js";
 import { MediaQuotaExceededError } from "../../infrastructure/persistence/mongo-media-assets.js";
 import { MemorySocialTemplateStore } from "../../infrastructure/persistence/social-templates.js";
+import { MemorySocialSeriesStore } from "../../infrastructure/persistence/social-series.js";
 import { SocialTemplateRenderer } from "../../infrastructure/integrations/social-template-renderer.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
@@ -349,14 +351,17 @@ export const createApp = async (
   platform = new PlatformManager(),
   socialTemplates?: SocialTemplateRepository,
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
+  socialSeries?: SocialSeriesRepository,
 ) => {
   const app = express();
   const outboundMailer = mailer ?? new PressMailer();
   const mailboxManager = mailbox ? new MailboxManager(mailbox, outboundMailer) : undefined;
   const inboundMailbox = mailbox;
   const templateStore = socialTemplates ?? new MemorySocialTemplateStore();
+  const seriesStore = socialSeries ?? new MemorySocialSeriesStore();
   const templateRenderer = new SocialTemplateRenderer();
   await templateStore.init();
+  await seriesStore.init();
   if (users) configureUserDirectory(users);
   const uploadDir = process.env.UPLOAD_DIR ?? path.resolve("uploads");
   const mediaRoot = process.env.MEDIA_ROOT ?? uploadDir;
@@ -484,6 +489,7 @@ export const createApp = async (
         mailbox,
         instagramTrustedCollaborators,
         instagramConnections,
+        seriesStore,
       );
   }
   app.use(
@@ -1597,13 +1603,50 @@ export const createApp = async (
     const all = await templateStore.list({ ...filters, status });
     response.json(all.map((template) => ({ ...template, editorialStandards: socialEditorialStandards })));
   });
+  app.get("/api/social-series", requireRole("admin", "editor"), async (_request, response) => {
+    const series = await seriesStore.list();
+    response.json(
+      await Promise.all(
+        series.map(async (item) => {
+          const template = await templateStore.findBySlug(item.templateSlug);
+          return {
+            ...item,
+            template: template
+              ? { id: template.id, slug: template.slug, name: template.name, outputType: template.outputType }
+              : null,
+          };
+        }),
+      ),
+    );
+  });
+  app.post("/api/social-series", requireRole("admin", "editor"), async (request, response) => {
+    const input = socialSeriesSchema.parse(request.body);
+    const template = await templateStore.findBySlug(input.templateSlug);
+    if (!template || template.status !== "published")
+      return response.status(404).json({ error: "El formato seleccionado no está disponible" });
+    response.status(201).json(await seriesStore.save(input));
+  });
+  app.put("/api/social-series/:id", requireRole("admin", "editor"), async (request, response) => {
+    const input = socialSeriesSchema.parse(request.body);
+    const template = await templateStore.findBySlug(input.templateSlug);
+    if (!template || template.status !== "published")
+      return response.status(404).json({ error: "El formato seleccionado no está disponible" });
+    response.json(await seriesStore.save(input, String(request.params.id)));
+  });
   app.post("/api/social-carousel", requireRole("admin", "editor"), async (request, response) => {
     const input = instagramCarouselInputSchema.parse(request.body);
     const template = await templateStore.get(input.templateId);
     if (!template) return response.status(404).json({ error: "No se encontró la plantilla seleccionada" });
+    if (input.seriesId) {
+      const series = await seriesStore.get(input.seriesId);
+      if (!series?.active) return response.status(409).json({ error: "La serie está pausada o no existe" });
+      if (series.templateSlug !== template.slug)
+        return response.status(400).json({ error: "La plantilla no coincide con la serie seleccionada" });
+    }
     const actor = (request as typeof request & { actor?: { id: string } }).actor;
     if (!actor?.id) return response.status(401).json({ error: "No autorizado" });
     const item = await manager.createInstagramCarousel(input, actor.id, template);
+    if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
     response.status(201).json({
       id: item.id,
       status: item.status,
@@ -1633,9 +1676,16 @@ export const createApp = async (
     if (!template) return response.status(404).json({ error: "No se encontró la plantilla seleccionada" });
     if (template.outputType !== input.type)
       return response.status(400).json({ error: "El formato de la plantilla debe coincidir con la publicación" });
+    if (input.seriesId) {
+      const series = await seriesStore.get(input.seriesId);
+      if (!series?.active) return response.status(409).json({ error: "La serie está pausada o no existe" });
+      if (series.templateSlug !== template.slug)
+        return response.status(400).json({ error: "La plantilla no coincide con la serie seleccionada" });
+    }
     const actor = (request as typeof request & { actor?: { id: string } }).actor;
     if (!actor?.id) return response.status(401).json({ error: "No autorizado" });
     const item = await manager.createInstagramSocialPublication(input, actor.id, template);
+    if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
     response.status(201).json({
       id: item.id,
       status: item.status,

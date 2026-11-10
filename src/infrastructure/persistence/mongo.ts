@@ -70,6 +70,7 @@ import {
 } from "../../domain/platform/types.js";
 import type { PlatformRepository } from "./platform-store.js";
 import { MongoSocialTemplateStore } from "./social-templates.js";
+import { MongoSocialSeriesStore } from "./social-series.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 const timestamps = () => new Date().toISOString();
@@ -722,6 +723,7 @@ export type MongoPersistence = {
   editorialVoice: MongoEditorialVoiceStore;
   mail: MongoMailStore;
   socialTemplates: MongoSocialTemplateStore;
+  socialSeries: MongoSocialSeriesStore;
   instagramTrustedCollaborators: MongoInstagramTrustedCollaboratorStore;
 };
 
@@ -752,6 +754,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const editorialVoice = new MongoEditorialVoiceStore(db.collection("editorial_voices"));
   const mail = new MongoMailStore(db);
   const socialTemplates = new MongoSocialTemplateStore(db.collection<MongoRecord>("social_templates"));
+  const socialSeries = new MongoSocialSeriesStore(db.collection<MongoRecord>("social_publication_series"));
   const instagramTrustedCollaborators = createInstagramTrustedCollaboratorStore(db);
   await Promise.all([
     content.init(),
@@ -766,6 +769,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     editorialVoice.init(),
     mail.init(),
     socialTemplates.init(),
+    socialSeries.init(),
     instagramTrustedCollaborators.init(),
   ]);
   await instagramTrustedCollaborators.seedDefaultsOnce(["carlamagnolph", "fede.markoo.ph", "carrjmok"]);
@@ -781,6 +785,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     editorialVoice,
     mail,
     socialTemplates,
+    socialSeries,
     instagramTrustedCollaborators,
     mediaAssets,
     platform,
@@ -808,6 +813,7 @@ export const createManagers = async () => {
     mcpOAuth: persistence?.mcpOAuth,
     media,
     socialTemplates: persistence?.socialTemplates,
+    socialSeries: persistence?.socialSeries,
     instagramTrustedCollaborators: persistence?.instagramTrustedCollaborators,
     instagramConnections: persistence?.instagramConnections,
     editorialVoice: persistence?.editorialVoice,

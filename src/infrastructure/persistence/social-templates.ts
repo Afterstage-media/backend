@@ -307,7 +307,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "historia-convocatoria",
     name: "Historia de convocatoria",
     description: "Secuencia vertical breve para invitar a participar o descubrir un servicio.",
-    guidanceVersion: 1,
+    guidanceVersion: 2,
     editorialGuidance: {
       purpose: "Comunicar una propuesta concreta de Afterstage en una secuencia breve y fácil de recorrer.",
       angle: "Presentá primero la situación de la audiencia, después qué ofrece Afterstage y cómo avanzar.",
@@ -327,6 +327,14 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     },
     editorialSection: "show-announcement",
     outputType: "story",
+    visualStyle: {
+      id: "afterstage-urban-poster",
+      name: "Afiche de escena",
+      description: "Papel de imprenta, tipografía condensada y tinta violeta de Afterstage.",
+      layout: "type-poster",
+      coverEyebrow: "AFTERSTAGE · EN ESCENA",
+      palette: { background: "#e8e6e0", foreground: "#242329", accent: "#6d38ba", overlay: "#242329" },
+    },
     channels: ["instagram"],
     status: "published",
     canvas: { width: 1080, height: 1920 },
