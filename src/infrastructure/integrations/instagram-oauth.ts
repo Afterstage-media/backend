@@ -8,7 +8,7 @@ const requestedScopes = [
   "instagram_business_manage_insights",
 ];
 
-type OAuthState = { actorId: string; nonce: string; expiresAt: number };
+type OAuthState = { actorId: string; nonce: string; expiresAt: number; provider?: "instagram" | "facebook" };
 
 const requireConfig = (name: string): string => {
   const value = process.env[name];
@@ -32,11 +32,15 @@ const encode = (value: unknown): string => Buffer.from(JSON.stringify(value)).to
 
 const sign = (value: string): string => createHmac("sha256", stateKey()).update(value).digest("base64url");
 
-export const createInstagramOAuthState = (actorId: string): string => {
+export const createInstagramOAuthState = (
+  actorId: string,
+  provider: "instagram" | "facebook" = "instagram",
+): string => {
   const payload = encode({
     actorId,
     nonce: randomBytes(16).toString("base64url"),
     expiresAt: Date.now() + 10 * 60_000,
+    provider,
   });
   return `${payload}.${sign(payload)}`;
 };
@@ -62,6 +66,27 @@ export const instagramAuthorizationUrl = (actorId: string): string => {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", requestedScopes.join(","));
   url.searchParams.set("state", createInstagramOAuthState(actorId));
+  return url.toString();
+};
+
+const facebookScopes = [
+  "instagram_basic",
+  "instagram_content_publish",
+  "instagram_manage_comments",
+  "instagram_manage_messages",
+  "instagram_manage_insights",
+  "pages_show_list",
+  "pages_read_engagement",
+  "business_management",
+];
+
+export const facebookInstagramAuthorizationUrl = (actorId: string): string => {
+  const url = new URL(`https://www.facebook.com/${process.env.META_API_VERSION ?? "v24.0"}/dialog/oauth`);
+  url.searchParams.set("client_id", requireConfig("META_INSTAGRAM_APP_ID"));
+  url.searchParams.set("redirect_uri", instagramRedirectUri());
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", facebookScopes.join(","));
+  url.searchParams.set("state", createInstagramOAuthState(actorId, "facebook"));
   return url.toString();
 };
 
@@ -187,4 +212,86 @@ export const exchangeInstagramCode = async (code: string) => {
         : null,
     scopes: requestedScopes,
   };
+};
+
+export const exchangeFacebookInstagramCode = async (code: string) => {
+  const version = process.env.META_API_VERSION ?? "v24.0";
+  const clientId = requireConfig("META_INSTAGRAM_APP_ID");
+  const clientSecret = requireConfig("META_INSTAGRAM_APP_SECRET");
+  const redirectUri = instagramRedirectUri();
+  const tokenUrl = new URL(`https://graph.facebook.com/${version}/oauth/access_token`);
+  for (const [key, value] of Object.entries({
+    client_id: clientId,
+    client_secret: clientSecret,
+    redirect_uri: redirectUri,
+    code,
+  }))
+    tokenUrl.searchParams.set(key, value);
+  const shortLived = await getMetaJson(tokenUrl);
+  if (typeof shortLived.access_token !== "string") throw new Error("Meta no devolvió un token de Facebook válido");
+
+  const longUrl = new URL(`https://graph.facebook.com/${version}/oauth/access_token`);
+  for (const [key, value] of Object.entries({
+    grant_type: "fb_exchange_token",
+    client_id: clientId,
+    client_secret: clientSecret,
+    fb_exchange_token: shortLived.access_token,
+  }))
+    longUrl.searchParams.set(key, value);
+  const longLived = await getMetaJson(longUrl);
+  if (typeof longLived.access_token !== "string") throw new Error("Meta no devolvió un token de larga duración");
+
+  const pagesUrl = new URL(`https://graph.facebook.com/${version}/me/accounts`);
+  pagesUrl.searchParams.set("fields", "id,name,access_token,instagram_business_account{id,username}");
+  pagesUrl.searchParams.set("access_token", longLived.access_token);
+  const pagesResult = await getMetaJson(pagesUrl);
+  const pages =
+    (pagesResult.data as
+      | Array<{
+          id?: string;
+          access_token?: string;
+          instagram_business_account?: { id?: string; username?: string };
+        }>
+      | undefined) ?? [];
+  const candidates = pages.filter((page) => page.id && page.access_token && page.instagram_business_account?.id);
+  const preferredAccountId = process.env.META_INSTAGRAM_ACCOUNT_ID;
+  const selected = preferredAccountId
+    ? candidates.find((page) => page.instagram_business_account?.id === preferredAccountId)
+    : candidates.length === 1
+      ? candidates[0]
+      : undefined;
+  if (!selected?.instagram_business_account?.id || !selected.access_token) {
+    if (candidates.length > 1 && !preferredAccountId)
+      throw new Error(
+        "Hay varias cuentas profesionales vinculadas. Configurá META_INSTAGRAM_ACCOUNT_ID con el ID de la cuenta Afterstage.",
+      );
+    throw new Error("No se encontró una cuenta profesional de Instagram vinculada a una página autorizada");
+  }
+  return {
+    accountId: selected.instagram_business_account.id,
+    username: selected.instagram_business_account.username ?? selected.instagram_business_account.id,
+    accessToken: selected.access_token,
+    expiresAt: null,
+    scopes: facebookScopes,
+    apiHost: "facebook" as const,
+  };
+};
+
+const getMetaJson = async (url: URL): Promise<Record<string, unknown>> => {
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  } catch (error) {
+    throw new Error(`Meta OAuth request falló: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  let payload: Record<string, unknown>;
+  try {
+    payload = (await response.json()) as Record<string, unknown>;
+  } catch {
+    throw new Error(`Meta devolvió una respuesta inválida (${response.status})`);
+  }
+  const error = payload.error as { message?: string; code?: number } | undefined;
+  if (!response.ok || error)
+    throw new Error(`Meta OAuth ${error?.code ?? response.status}: ${error?.message ?? "error desconocido"}`);
+  return payload;
 };

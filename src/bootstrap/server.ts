@@ -66,10 +66,18 @@ mediaTimer.unref();
 const collabTimer = setInterval(
   () =>
     void schedulerRun(async () => {
-      if (!instagramTrustedCollaborators || !process.env.META_ACCESS_TOKEN || !process.env.META_INSTAGRAM_ACCOUNT_ID)
+      if (!instagramTrustedCollaborators) return;
+      const facebookConnection = await instagramConnections?.getDefault();
+      if (
+        facebookConnection?.apiHost !== "facebook" &&
+        (!process.env.META_ACCESS_TOKEN || !process.env.META_INSTAGRAM_ACCOUNT_ID)
+      )
         return;
       const { InstagramCommunity } = await import("../infrastructure/integrations/instagram-community.js");
-      const result = await new InstagramCommunity(instagramTrustedCollaborators).acceptTrustedCollaborationInvites();
+      const result = await new InstagramCommunity(
+        instagramTrustedCollaborators,
+        instagramConnections,
+      ).acceptTrustedCollaborationInvites();
       if (result.accepted.length) log("info", "instagram_collaboration_invites_accepted", result);
     }).catch((error) =>
       log("error", "instagram_collaboration_auto_accept_failed", { error: (error as Error).message }),

@@ -89,8 +89,12 @@ npm run dev
 | `AI_API_KEY` | Opcional para las herramientas internas de regeneración editorial (`/api/content/:id/generate`); no es necesaria para el MCP, porque el agente genera la nota. Nunca debe configurarse en el cliente, Git o la conexión MCP. |
 | `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
 | `AI_MODEL` | Modelo de redacción. |
-| `META_ACCESS_TOKEN` | Token de Page de larga duración. |
-| `META_INSTAGRAM_ACCOUNT_ID` | ID de la cuenta profesional vinculada. |
+| `META_INSTAGRAM_APP_ID` | ID de la app Meta usada para OAuth de Instagram. Debe corresponder al secreto de la misma app. |
+| `META_INSTAGRAM_APP_SECRET` | Secreto servidor de la app Meta, usado para canjear el código OAuth. |
+| `META_INSTAGRAM_REDIRECT_URI` | Callback registrado en Meta; por defecto `/api/integrations/instagram/callback` en `PUBLIC_BASE_URL`. |
+| `META_TOKEN_ENCRYPTION_KEY` | Clave base64url de 32 bytes que cifra tokens conectados en MongoDB. |
+| `META_ACCESS_TOKEN` | Fallback heredado de Page token si no hay una cuenta conectada mediante Facebook Login. |
+| `META_INSTAGRAM_ACCOUNT_ID` | ID de la cuenta profesional vinculada; también permite elegirla si hay varias páginas. |
 | `META_PAGE_ID` | ID de la página de Facebook. |
 | `META_API_VERSION` | Versión de Graph API, configurable para facilitar upgrades. |
 | `CORS_ORIGINS` | Lista opcional de orígenes permitidos, separada por comas. |
@@ -107,7 +111,7 @@ npm run dev
 | `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
 | `EVENTS_RSS_URLS` | URLs RSS/Atom públicas separadas por coma. Sus eventos se combinan con la agenda editorial, con caché de 5 minutos. |
 
-El token de Meta necesita los permisos vigentes equivalentes a publicación de contenido de Instagram y gestión/publicación de páginas. La cuenta de Instagram debe ser profesional y estar vinculada a la página. Revisá los nombres y requisitos actuales en Meta antes del despliegue, porque cambian entre versiones.
+En `/admin/instagram`, conectá la cuenta con Facebook para colaboraciones para usar inbox, comentarios, métricas, publicación y aceptación automática de colaboraciones. La cuenta debe ser profesional y estar vinculada a una página de Facebook; si el usuario administra varias páginas, configurá `META_INSTAGRAM_ACCOUNT_ID` para elegir la de Afterstage. El OAuth solicita permisos de contenido, insights, mensajes y comentarios. Los tokens se cifran en MongoDB.
 
 Para publicar imágenes locales, `PUBLIC_BASE_URL` debe resolver por HTTPS hacia este servicio o hacia un storage/CDN. `localhost` no es accesible para los servidores de Meta.
 

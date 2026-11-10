@@ -62,7 +62,9 @@ import type { MailRepository } from "../../infrastructure/persistence/mail-store
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
 import { insuranceProductLabels, type InsuranceProduct } from "../../domain/platform/types.js";
 import {
+  exchangeFacebookInstagramCode,
   exchangeInstagramCode,
+  facebookInstagramAuthorizationUrl,
   instagramAuthorizationUrl,
   readInstagramOAuthState,
 } from "../../infrastructure/integrations/instagram-oauth.js";
@@ -1307,7 +1309,10 @@ export const createApp = async (
         response.status(503).send("La conexión con Instagram no está configurada en Afterstage.");
         return;
       }
-      const connection = await exchangeInstagramCode(code);
+      const connection =
+        oauthState.provider === "facebook"
+          ? await exchangeFacebookInstagramCode(code)
+          : await exchangeInstagramCode(code);
       await instagramConnections.upsert({ ...connection, connectedByUserId: oauthState.actorId });
       const destination = `${(process.env.PUBLIC_BASE_URL ?? "/").replace(/\/$/, "")}/admin?instagram=connected`;
       response.redirect(destination || "/admin?instagram=connected");
@@ -1475,6 +1480,23 @@ export const createApp = async (
         return;
       }
       response.redirect(instagramAuthorizationUrl(actor.id));
+    },
+  );
+  app.get(
+    "/api/integrations/instagram/connect-facebook",
+    requireRole("admin", "social"),
+    requireSecureTransport,
+    (request, response) => {
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!instagramConnections) {
+        response.status(503).json({ error: "La conexión con Instagram no está configurada" });
+        return;
+      }
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      response.redirect(facebookInstagramAuthorizationUrl(actor.id));
     },
   );
   app.delete(
