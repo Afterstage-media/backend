@@ -54,6 +54,7 @@ import {
   accreditationSchema,
   mcpCreateEventSchema,
   eventStatuses,
+  mediaKitSchema,
   replacementProfiles,
   replacementStatuses,
 } from "../../domain/press/types.js";
@@ -336,6 +337,8 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   listar_agenda: ["agenda:read"],
   crear_evento: ["agenda:write"],
   gestionar_acreditacion: ["agenda:write"],
+  obtener_dossier_prensa: ["agenda:read"],
+  actualizar_dossier_prensa: ["agenda:write"],
   buscar_directorio: ["directory:read"],
   crear_contacto: ["directory:write"],
   actualizar_contacto: ["directory:write"],
@@ -936,6 +939,40 @@ export const createRemoteMcpServer = (
     async ({ id, idempotencyKey }, extra) => {
       const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
       return textResult(await press.sendAccreditation(id, false, { actorId: actor.userId, key: idempotencyKey }));
+    },
+  );
+
+  registerTool(
+    "obtener_dossier_prensa",
+    {
+      title: "Consultar dossier de prensa",
+      description: "Devuelve la identidad, audiencia y datos de contacto del medio configurados en Afterstage.",
+      inputSchema: {},
+      outputSchema: mediaKitSchema,
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "agenda:read", readAgendaRoles);
+      return textResult((await press.snapshot()).mediaKit);
+    },
+  );
+
+  registerTool(
+    "actualizar_dossier_prensa",
+    {
+      title: "Actualizar dossier de prensa",
+      description: "Actualiza solo los campos enviados del dossier. No publica contenido ni envía comunicaciones.",
+      inputSchema: mediaKitSchema.partial().shape,
+      outputSchema: mediaKitSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      if (!Object.keys(input).length) throw new Error("Enviá al menos un campo para actualizar el dossier");
+      const mediaKit = await press.updateMediaKit(input);
+      return textResult(mediaKit);
     },
   );
 
