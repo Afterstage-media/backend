@@ -2021,7 +2021,9 @@ export const createRemoteMcpServer = (
           ...snapshot,
           photographers: snapshot.photographers.map(({ contactEmail: _contactEmail, ...item }) => item),
           coverageRequests: snapshot.coverageRequests.map(({ requesterEmail: _requesterEmail, ...item }) => item),
-          coverageApplications: snapshot.coverageApplications.map(({ applicantEmail: _applicantEmail, ...item }) => item),
+          coverageApplications: snapshot.coverageApplications.map(
+            ({ applicantEmail: _applicantEmail, ...item }) => item,
+          ),
           transportRequests: snapshot.transportRequests.map(({ email: _email, ...item }) => item),
           insuranceRequests: snapshot.insuranceRequests.map(
             ({ dni: _dni, email: _email, phone: _phone, notificationTo: _notificationTo, ...item }) => item,
