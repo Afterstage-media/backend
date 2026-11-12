@@ -515,13 +515,35 @@ export class MongoPlatformStore implements PlatformRepository {
 }
 
 export class MongoUserDirectory implements UserDirectory {
-  constructor(private readonly collection: Collection<MongoRecord>) {}
+  constructor(
+    private readonly collection: Collection<MongoRecord>,
+    private readonly revokedSessions: Collection<MongoRecord>,
+  ) {}
   async init() {
     await Promise.all([
       this.collection.createIndex({ active: 1, roles: 1 }),
       this.collection.createIndex({ username: 1 }, { unique: true, sparse: true }),
       this.collection.createIndex({ email: 1 }, { unique: true, sparse: true }),
+      this.revokedSessions.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     ]);
+  }
+  async isSessionRevoked(userId: string, jti: string): Promise<boolean> {
+    return Boolean(
+      await this.revokedSessions.findOne({
+        _id: `${userId}:${jti}`,
+        userId,
+        jti,
+        expiresAt: { $gt: new Date() },
+      } as never),
+    );
+  }
+  async revokeSession(userId: string, jti: string, expiresAt: Date): Promise<void> {
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) return;
+    await this.revokedSessions.updateOne(
+      { _id: `${userId}:${jti}` },
+      { $setOnInsert: { userId, jti, expiresAt, createdAt: timestamps() } },
+      { upsert: true },
+    );
   }
   async findActiveUser(id: string): Promise<ActiveUser | undefined> {
     const user = await this.collection.findOne({
@@ -753,7 +775,10 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const content = new MongoContentStore(db.collection<MongoRecord>("contents"));
   const press = new MongoPressStore(db);
   const platform = new MongoPlatformStore(db);
-  const users = new MongoUserDirectory(db.collection<MongoRecord>("users"));
+  const users = new MongoUserDirectory(
+    db.collection<MongoRecord>("users"),
+    db.collection<MongoRecord>("auth_revoked_sessions"),
+  );
   const directory = new MongoDirectoryStore(db.collection<MongoRecord>("directory"));
   const monetization = new MongoMonetizationStore(db.collection("monetization_promotions"));
   const mcpOAuth = new MongoMcpOAuthStore(db);

@@ -7,6 +7,7 @@ import {
   generateKeyPairSync,
   privateDecrypt,
   randomBytes,
+  randomUUID,
   scrypt as scryptCallback,
   timingSafeEqual,
 } from "node:crypto";
@@ -53,6 +54,8 @@ export type UserDirectory = {
     id: string,
     patch: Partial<Omit<ManagedUserInput, "id" | "passwordHash">> & { passwordHash?: string },
   ) => Promise<ManagedUser | undefined>;
+  isSessionRevoked?: (userId: string, jti: string) => Promise<boolean>;
+  revokeSession?: (userId: string, jti: string, expiresAt: Date) => Promise<void>;
 };
 const passwordCost = 16384;
 const passwordBlockSize = 8;
@@ -69,6 +72,11 @@ const derivePassword = (password: string, salt: string, cost: number, blockSize:
     );
   });
 let userDirectory: UserDirectory | undefined;
+export class SessionVerificationUnavailable extends Error {
+  constructor() {
+    super("No se pudo verificar la sesión contra el directorio de usuarios");
+  }
+}
 
 const authEncryptionKeys = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -125,16 +133,19 @@ export const issueAccessToken = (user: ActiveUser): string => {
   if (!secret) throw new Error("JWT_SECRET no está configurado");
   const now = Math.floor(Date.now() / 1000);
   const ttl = accessTokenTtlSeconds();
+  const issuer = process.env.JWT_ISSUER || "afterstage";
+  const audience = process.env.JWT_AUDIENCE || "afterstage-web";
   const header = jwtPart({ alg: "HS256", typ: "JWT" });
   const payload = jwtPart({
     sub: user.id,
     roles: user.roles,
     permissions: user.permissions,
     sessionVersion: user.sessionVersion ?? 0,
+    jti: randomBytes(24).toString("base64url"),
     iat: now,
     exp: now + ttl,
-    ...(process.env.JWT_ISSUER ? { iss: process.env.JWT_ISSUER } : {}),
-    ...(process.env.JWT_AUDIENCE ? { aud: process.env.JWT_AUDIENCE } : {}),
+    iss: issuer,
+    aud: audience,
   });
   const signature = createHmac("sha256", secret).update(`${header}.${payload}`).digest("base64url");
   return `${header}.${payload}.${signature}`;
@@ -191,8 +202,16 @@ export const actorFromJwt = async (token: string): Promise<Actor | undefined> =>
       roles?: unknown;
       permissions?: unknown;
       sessionVersion?: unknown;
+      jti?: unknown;
     };
-    if (header.alg !== "HS256" || header.typ !== "JWT" || typeof claims.sub !== "string" || !claims.sub)
+    if (
+      header.alg !== "HS256" ||
+      header.typ !== "JWT" ||
+      typeof claims.sub !== "string" ||
+      !claims.sub ||
+      typeof claims.jti !== "string" ||
+      !claims.jti
+    )
       return undefined;
     const expected = createHmac("sha256", secret).update(`${parts[0]}.${parts[1]}`).digest("base64url");
     const received = Buffer.from(parts[2]!, "utf8");
@@ -206,16 +225,23 @@ export const actorFromJwt = async (token: string): Promise<Actor | undefined> =>
       (typeof claims.nbf === "number" && claims.nbf > now + skew)
     )
       return undefined;
-    if (process.env.JWT_ISSUER && claims.iss !== process.env.JWT_ISSUER) return undefined;
-    if (
-      process.env.JWT_AUDIENCE &&
-      !(
-        claims.aud === process.env.JWT_AUDIENCE ||
-        (Array.isArray(claims.aud) && claims.aud.includes(process.env.JWT_AUDIENCE))
-      )
-    )
+    const expectedIssuer = process.env.JWT_ISSUER || "afterstage";
+    const expectedAudience = process.env.JWT_AUDIENCE || "afterstage-web";
+    if (claims.iss !== expectedIssuer) return undefined;
+    if (!(claims.aud === expectedAudience || (Array.isArray(claims.aud) && claims.aud.includes(expectedAudience))))
       return undefined;
-    const user = await userDirectory?.findActiveUser(claims.sub);
+    let user: ActiveUser | undefined;
+    try {
+      user = await userDirectory?.findActiveUser(claims.sub);
+      if (user) {
+        if (!userDirectory?.isSessionRevoked && process.env.NODE_ENV === "production")
+          throw new SessionVerificationUnavailable();
+        if (userDirectory?.isSessionRevoked && (await userDirectory.isSessionRevoked(user.id, claims.jti)))
+          return undefined;
+      }
+    } catch {
+      throw new SessionVerificationUnavailable();
+    }
     if (!user || user.active === false) return undefined;
     if ((claims.sessionVersion ?? 0) !== (user.sessionVersion ?? 0)) return undefined;
     if (
@@ -229,7 +255,8 @@ export const actorFromJwt = async (token: string): Promise<Actor | undefined> =>
     )
       return undefined;
     return { id: user.id, roles: user.roles, permissions: user.permissions };
-  } catch {
+  } catch (error) {
+    if (error instanceof SessionVerificationUnavailable) throw error;
     return undefined;
   }
 };
@@ -242,11 +269,40 @@ const cookieValue = (request: Request, name: string): string | undefined => {
   return value ? decodeURIComponent(value) : undefined;
 };
 
-export const actorFromRequest = async (request: Request): Promise<Actor | undefined> => {
+const tokenFromRequest = (request: Request): string | undefined => {
   const authorization = request.get("authorization");
   const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const token = bearer ?? cookieValue(request, authCookieName);
+  return bearer ?? cookieValue(request, authCookieName);
+};
+
+export const actorFromRequest = async (request: Request): Promise<Actor | undefined> => {
+  const token = tokenFromRequest(request);
   return token ? actorFromJwt(token) : undefined;
+};
+
+export const correlationIdMiddleware: RequestHandler = (request, response, next) => {
+  const received = request.get("x-correlation-id")?.trim();
+  const correlationId = received && /^[A-Za-z0-9._:-]{1,128}$/.test(received) ? received : randomUUID();
+  (request as Request & { correlationId: string }).correlationId = correlationId;
+  response.setHeader("X-Correlation-ID", correlationId);
+  next();
+};
+
+export const revokeSessionFromRequest = async (request: Request): Promise<void> => {
+  const token = tokenFromRequest(request);
+  if (!token) return;
+  const actor = await actorFromJwt(token);
+  if (!actor) return;
+  const parts = token.split(".");
+  if (parts.length !== 3) return;
+  const claims = decodePart(parts[1]!) as { jti?: unknown; exp?: unknown };
+  if (typeof claims.jti !== "string" || typeof claims.exp !== "number" || !userDirectory?.revokeSession)
+    throw new SessionVerificationUnavailable();
+  try {
+    await userDirectory.revokeSession(actor.id, claims.jti, new Date(claims.exp * 1000));
+  } catch {
+    throw new SessionVerificationUnavailable();
+  }
 };
 
 export const setAuthCookie = (response: Response, token: string): void => {
@@ -299,12 +355,13 @@ export const audit = async (request: Request, action: string, metadata: Record<s
   const file = path.join(process.env.DATA_DIR ?? path.resolve("data"), "audit.jsonl");
   await mkdir(path.dirname(file), { recursive: true });
   const actor = (request as Request & { actor?: Actor }).actor;
+  const correlationId = (request as Request & { correlationId?: string }).correlationId;
   const operation = auditQueue.then(async () => {
     const info = await stat(file).catch(() => undefined);
     if (info && info.size > 10 * 1024 * 1024) await rename(file, `${file}.${Date.now()}`).catch(() => undefined);
     await appendFile(
       file,
-      `${JSON.stringify({ at: new Date().toISOString(), actor: actor ?? { id: "anonymous", roles: [], permissions: [] }, action, method: request.method, path: request.path, ip: request.ip, metadata })}\n`,
+      `${JSON.stringify({ at: new Date().toISOString(), service: "afterstage-social-manager", correlationId, actor: actor ?? { id: "anonymous", roles: [], permissions: [] }, action, method: request.method, path: request.path, metadata })}\n`,
       "utf8",
     );
   });
