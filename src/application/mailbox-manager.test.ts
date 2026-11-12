@@ -45,7 +45,9 @@ class FakeMailbox implements MailRepository {
   async getThread(_id?: string) {
     return thread();
   }
-  async markRead(id: string) { this.read.push(id); }
+  async markRead(id: string) {
+    this.read.push(id);
+  }
   async addOutbound(input: Parameters<MailRepository["addOutbound"]>[0]) {
     this.sent.push(input);
     return {
