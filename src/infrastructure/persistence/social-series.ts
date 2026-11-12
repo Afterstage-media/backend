@@ -15,6 +15,24 @@ const firstOfNextMonth = () => {
   return next.toISOString().slice(0, 10);
 };
 const timestamp = () => new Date().toISOString();
+const obsoleteStorySeriesCutoff = "2026-11-13T00:00:00.000Z";
+const storyPublishDate = () => {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(now);
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+  const today = `${value("year")}-${value("month")}-${value("day")}`;
+  if (`${value("hour")}:${value("minute")}` < "12:00") return today;
+  const [year, month, day] = today.split("-").map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day! + 1, 12)).toISOString().slice(0, 10);
+};
 
 export const starterSocialSeries: SocialSeriesInput[] = [
   {
@@ -38,6 +56,68 @@ export const starterSocialSeries: SocialSeriesInput[] = [
     cadence: { every: 1, unit: "week" },
     nextRunAt: null,
     active: false,
+  },
+  {
+    slug: "secuencia-afterstage-diaria",
+    name: "Afterstage · historias diarias",
+    description:
+      "Tres historias editables generadas desde las plantillas de Afterstage y publicadas en orden todos los días.",
+    templateSlug: "afterstage-historia-red",
+    editorialBrief:
+      "Generar cada historia con su plantilla editable de Afterstage y publicar la secuencia en el orden definido.",
+    cadence: { every: 1, unit: "day" },
+    nextRunAt: storyPublishDate(),
+    active: true,
+    autoPublish: true,
+    publishTime: "12:00",
+    fixedStoryTemplates: [
+      {
+        templateSlug: "afterstage-historia-red",
+        data: {
+          eyebrow: "UN PUNTO DE ENCUENTRO",
+          headline1: "UN LUGAR PARA",
+          headline2: "QUIENES HACEN",
+          headline3: "LA ESCENA.",
+          body1: "Bandas, fotógrafos, fans, creadores",
+          body2: "y productoras. La música nos cruza:",
+          body3: "acá podemos encontrarnos y hacer match.",
+          service1: "INFORMACIÓN, DIFUSIÓN",
+          service2: "Y OPORTUNIDADES DE TRABAJO.",
+          badge: "EN RED",
+        },
+      },
+      {
+        templateSlug: "afterstage-historia-lugar",
+        data: {
+          eyebrow: "PARA QUIENES HACEN LA ESCENA",
+          headline1: "¿TENÉS UNA",
+          headline2: "BANDA?",
+          body1: "¿Querés difundir tu proyecto?",
+          body2: "¿Hacés fotos o te gustaría",
+          body3: "cubrir algún show?",
+          banner: "ESTE ES TU LUGAR.",
+          footer1: "Un espacio para compartir lo que hacés",
+          footer2: "y conectar con otros proyectos.",
+        },
+      },
+      {
+        templateSlug: "afterstage-historia-coberturas",
+        data: {
+          eyebrow: "COBERTURAS PARA LA ESCENA",
+          headline1: "¿QUERÉS QUE",
+          headline2: "CUBRAMOS",
+          headline3: "TU SHOW?",
+          services: "FOTO · VIDEO · CRÓNICA · ENTREVISTAS",
+          body1: "Cada cobertura lleva tiempo, oficio",
+          body2: "y trabajo profesional. Por eso, nuestros",
+          body3: "servicios son remunerados.",
+          question: "¿ESTÁS EMPEZANDO?",
+          footer1: "Escribinos. Podemos conversar una propuesta",
+          footer2: "que acompañe a tu proyecto.",
+          badge: "TRABAJO CON VALOR",
+        },
+      },
+    ],
   },
   {
     slug: "descubrimiento-de-bandas",
@@ -85,6 +165,13 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
     for (const series of starterSocialSeries) {
       if (!(await this.findBySlug(series.slug))) await this.save(series);
     }
+    const obsoleteStorySeries = await this.findBySlug("historias-de-la-escena");
+    if (
+      obsoleteStorySeries?.active &&
+      (obsoleteStorySeries.updatedAt ?? obsoleteStorySeries.createdAt ?? "") < obsoleteStorySeriesCutoff
+    ) {
+      await this.save({ ...obsoleteStorySeries, active: false }, obsoleteStorySeries.id);
+    }
   }
 
   async list() {
@@ -115,6 +202,7 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
       updatedAt: timestampNow,
       lastDraftAt: existing?.lastDraftAt ?? parsed.lastDraftAt ?? null,
       lastDraftId: existing?.lastDraftId ?? parsed.lastDraftId ?? null,
+      lastAutoScheduledAt: existing?.lastAutoScheduledAt ?? parsed.lastAutoScheduledAt ?? null,
     }) as SocialSeries;
     const { id: _id, ...data } = next;
     const record = { ...data, _id: next.id } as SeriesRecord;
@@ -132,6 +220,14 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
       nextRunAt = nextDate(nextRunAt, existing.cadence.every, existing.cadence.unit);
     } while (nextRunAt <= nowDate);
     return this.save({ ...existing, nextRunAt, lastDraftAt: timestamp(), lastDraftId: draftId }, id);
+  }
+
+  async completeAutoScheduleRun(id: string, runDate: string, nextRunAt: string) {
+    await this.collection.updateOne(
+      { _id: id, active: true, autoPublish: true, nextRunAt: runDate },
+      { $set: { nextRunAt, lastAutoScheduledAt: timestamp(), updatedAt: timestamp() } },
+    );
+    return this.get(id);
   }
 }
 
@@ -164,6 +260,7 @@ export class MemorySocialSeriesStore implements SocialSeriesRepository {
       updatedAt: timestampNow,
       lastDraftAt: existing?.lastDraftAt ?? parsed.lastDraftAt ?? null,
       lastDraftId: existing?.lastDraftId ?? parsed.lastDraftId ?? null,
+      lastAutoScheduledAt: existing?.lastAutoScheduledAt ?? parsed.lastAutoScheduledAt ?? null,
     }) as SocialSeries;
     this.series = [...this.series.filter((item) => item.id !== next.id), next];
     return next;
@@ -178,5 +275,10 @@ export class MemorySocialSeriesStore implements SocialSeriesRepository {
       nextRunAt = nextDate(nextRunAt, existing.cadence.every, existing.cadence.unit);
     } while (nextRunAt <= nowDate);
     return this.save({ ...existing, nextRunAt, lastDraftAt: timestamp(), lastDraftId: draftId }, id);
+  }
+  async completeAutoScheduleRun(id: string, runDate: string, nextRunAt: string) {
+    const current = await this.get(id);
+    if (!current || !current.active || !current.autoPublish || current.nextRunAt !== runDate) return current;
+    return this.save({ ...current, nextRunAt, lastAutoScheduledAt: timestamp() }, id);
   }
 }

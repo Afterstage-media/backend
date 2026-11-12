@@ -33,6 +33,7 @@ import {
 } from "../domain/content/social-carousel.js";
 import type { SocialTemplate } from "../domain/content/social-template.js";
 import { MediaAssetService } from "../infrastructure/integrations/media-storage.js";
+import { SocialTemplateRenderer } from "../infrastructure/integrations/social-template-renderer.js";
 
 export class DuplicateContentError extends Error {
   constructor(readonly matches: DuplicateMatch[]) {
@@ -49,6 +50,7 @@ export class ContentManager {
     private readonly media = new MediaAssetStore(),
     private readonly carouselRenderer = new InstagramCarouselRenderer(),
     private readonly mediaStorage?: MediaAssetService,
+    private readonly templateRenderer = new SocialTemplateRenderer(),
   ) {}
 
   private async persistCarouselImages(
@@ -202,6 +204,79 @@ export class ContentManager {
       throw new DuplicateContentError(duplicates);
     }
     return this.store.create(parsed);
+  }
+
+  async scheduleRecurringStory(input: {
+    seriesId: string;
+    runDate: string;
+    index: number;
+    scheduledAt: string;
+    template: SocialTemplate;
+    data: Record<string, string>;
+  }): Promise<ContentItem> {
+    const { template } = input;
+    if (template.status !== "published" || template.outputType !== "story" || !template.artworkSvg)
+      throw new Error("La secuencia automática necesita una plantilla editable de historia publicada");
+    if (!template.channels.includes("instagram")) throw new Error("La plantilla no está habilitada para Instagram");
+    for (const field of template.fields) {
+      const value = input.data[field.key]?.trim() ?? "";
+      if (field.required && !value) throw new Error(`Completá el campo «${field.label}» de la plantilla`);
+      if (value.length > field.maxLength)
+        throw new Error(`El campo «${field.label}» supera ${field.maxLength} caracteres`);
+    }
+    const idempotencyKey = `social-series:${input.seriesId}:${input.runDate}:${input.index + 1}`;
+    const existing = await this.store.findByIdempotencyKey(idempotencyKey);
+    if (existing?.assets.length) return existing;
+    const shell =
+      existing ??
+      (await this.store.create(
+        contentInputSchema.parse({
+          type: "story",
+          title: `${template.name} · ${input.runDate}`,
+          summary: template.name,
+          body: template.description,
+          status: "scheduled",
+          channels: ["instagram"],
+          assets: [],
+          instagramCopy: "",
+          facebookCopy: "",
+          tags: ["afterstage", "historias"],
+          scheduledAt: input.scheduledAt,
+          notes: "Secuencia diaria generada desde una plantilla editable de Afterstage.",
+          author: "Afterstage",
+          photographer: "",
+          source: template.name,
+          seoTitle: "",
+          seoDescription: "",
+          canonicalUrl: "",
+          featured: false,
+          idempotencyKey,
+          socialTemplateId: template.id,
+          socialTemplateVersion: template.templateVersion,
+          socialTemplateData: input.data,
+          socialRenderedAt: null,
+        }),
+      ));
+    let assets: ContentItem["assets"] = [];
+    try {
+      const rendered = await this.templateRenderer.render(template, shell, input.data);
+      assets = await this.persistCarouselImages(shell.id, rendered);
+      const updated = await this.store.update(shell.id, {
+        assets: assets.map((asset) => ({ ...asset, altText: `[Plantilla:${template.slug}] ${asset.altText}` })),
+        socialTemplateId: template.id,
+        socialTemplateVersion: template.templateVersion,
+        socialTemplateData: input.data,
+        socialRenderedAt: new Date().toISOString(),
+      });
+      if (!updated) throw new Error("No se pudo guardar la historia generada");
+      if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(shell.id, updated.assets);
+      return updated;
+    } catch (error) {
+      if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(shell.id, []).catch(() => undefined);
+      else await this.media.remove(assets);
+      await this.store.remove(shell.id).catch(() => false);
+      throw error;
+    }
   }
 
   async createAgentNote(input: unknown, idempotencyScope = "global"): Promise<ContentItem> {
@@ -928,12 +1003,14 @@ export class ContentManager {
 
   async publishDue(): Promise<void> {
     const now = Date.now();
-    const due = (await this.store.list()).filter(
-      (item) =>
-        ["scheduled", "failed"].includes(item.status) &&
-        (item.nextAttemptAt ?? item.scheduledAt) &&
-        Date.parse(item.nextAttemptAt ?? item.scheduledAt!) <= now,
-    );
+    const due = (await this.store.list())
+      .filter(
+        (item) =>
+          ["scheduled", "failed"].includes(item.status) &&
+          (item.nextAttemptAt ?? item.scheduledAt) &&
+          Date.parse(item.nextAttemptAt ?? item.scheduledAt!) <= now,
+      )
+      .sort((left, right) => Date.parse(left.scheduledAt ?? "") - Date.parse(right.scheduledAt ?? ""));
     for (const item of due) {
       try {
         await this.publish(item.id);

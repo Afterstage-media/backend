@@ -41,6 +41,7 @@ export type InstagramConnectionStore = {
   init(): Promise<void>;
   list(): Promise<InstagramConnectionView[]>;
   getDefault(): Promise<InstagramConnectionCredentials | undefined>;
+  updateAccessToken(accountId: string, accessToken: string, expiresAt: string): Promise<void>;
   upsert(input: InstagramConnectionInput): Promise<InstagramConnectionView>;
   remove(accountId: string): Promise<boolean>;
 };
@@ -82,6 +83,14 @@ export class MongoInstagramConnectionStore implements InstagramConnectionStore {
       scopes: record.scopes,
       apiHost: record.apiHost ?? "instagram",
     };
+  }
+
+  async updateAccessToken(accountId: string, accessToken: string, expiresAt: string): Promise<void> {
+    const result = await this.collection.updateOne(
+      { accountId },
+      { $set: { accessTokenEncrypted: encryptSecret(accessToken), expiresAt, updatedAt: new Date().toISOString() } },
+    );
+    if (!result.matchedCount) throw new Error("La conexión de Instagram no está disponible para actualizar el token");
   }
 
   async upsert(input: InstagramConnectionInput): Promise<InstagramConnectionView> {

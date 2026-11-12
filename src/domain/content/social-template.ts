@@ -120,9 +120,22 @@ export const socialTemplateSchema = z.object({
     )
     .min(1)
     .max(9),
+  artworkSvg: z.string().max(40_000).optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
   publishedAt: z.string().nullable().optional(),
+}).superRefine((template, context) => {
+  if (!template.artworkSvg) return;
+  const svg = template.artworkSvg.toLowerCase();
+  if (/<script\b|<foreignobject\b|<!entity\b|\bon[a-z]+\s*=|\b(?:href|src)\s*=\s*["'](?!#)|url\(\s*["']?(?!#)/.test(svg)) {
+    context.addIssue({ code: "custom", path: ["artworkSvg"], message: "La plantilla SVG contiene contenido no permitido" });
+  }
+  const keys = new Set(template.fields.map((field) => field.key));
+  for (const [, field] of template.artworkSvg.matchAll(/\{\{([a-zA-Z][a-zA-Z0-9]*)\}\}/g)) {
+    if (!keys.has(field!)) {
+      context.addIssue({ code: "custom", path: ["artworkSvg"], message: `El arte usa un campo inexistente: ${field}` });
+    }
+  }
 });
 
 export type SocialTemplate = z.infer<typeof socialTemplateSchema> & { id: string };

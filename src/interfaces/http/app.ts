@@ -1621,6 +1621,13 @@ export const createApp = async (
   });
   app.post("/api/social-series", requireRole("admin", "editor"), async (request, response) => {
     const input = socialSeriesSchema.parse(request.body);
+    const actor = (request as typeof request & { actor?: import("./security.js").Actor }).actor;
+    if (input.autoPublish && input.active && (!actor || !hasPermission(actor, "instagram:publish"))) {
+      response
+        .status(403)
+        .json({ error: "Se requiere el permiso instagram:publish para activar la publicación automática" });
+      return;
+    }
     const template = await templateStore.findBySlug(input.templateSlug);
     if (!template || template.status !== "published")
       return response.status(404).json({ error: "El formato seleccionado no está disponible" });
@@ -1628,6 +1635,13 @@ export const createApp = async (
   });
   app.put("/api/social-series/:id", requireRole("admin", "editor"), async (request, response) => {
     const input = socialSeriesSchema.parse(request.body);
+    const actor = (request as typeof request & { actor?: import("./security.js").Actor }).actor;
+    if (input.autoPublish && input.active && (!actor || !hasPermission(actor, "instagram:publish"))) {
+      response
+        .status(403)
+        .json({ error: "Se requiere el permiso instagram:publish para activar la publicación automática" });
+      return;
+    }
     const template = await templateStore.findBySlug(input.templateSlug);
     if (!template || template.status !== "published")
       return response.status(404).json({ error: "El formato seleccionado no está disponible" });

@@ -1197,7 +1197,7 @@ export const createRemoteMcpServer = (
     {
       title: "Listar series de publicaciones",
       description:
-        "Muestra los formatos recurrentes de Afterstage, su pauta editorial, frecuencia, próxima fecha y si están vencidos. Las ejecuciones se convierten en borradores y nunca se publican automáticamente.",
+        "Muestra las series de Afterstage. Las series editoriales producen borradores para revisar; las secuencias fijas configuradas para publicación automática publican sus medios en el horario indicado.",
       inputSchema: {},
       outputSchema: socialSeriesOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false },
@@ -1227,16 +1227,26 @@ export const createRemoteMcpServer = (
     {
       title: "Crear una serie recurrente",
       description:
-        "Guarda un formato editorial recurrente con una frecuencia ajustable. No crea publicaciones ni las publica hasta que se solicite un borrador.",
+        "Guarda una serie editorial, que genera borradores manualmente, o una secuencia de tres Stories con publicación automática. La secuencia se renderiza cada día desde sus plantillas SVG editables; requiere frecuencia diaria, permiso instagram:publish y una cuenta de Instagram Business conectada.",
       inputSchema: socialSeriesInputShape,
       outputSchema: socialSeriesMutationOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: false },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async (input, extra) => {
-      authFromExtra(extra, "notes:write", writeNotesRoles);
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
       const parsed = socialSeriesSchema.parse(input);
+      if (
+        parsed.autoPublish &&
+        parsed.active &&
+        !(
+          actor.roles.some((role) => role === "admin" || role === "social") ||
+          actor.permissions.includes("instagram:publish")
+        )
+      ) {
+        throw new Error("Se requiere el permiso instagram:publish para activar la publicación automática");
+      }
       const template = await socialTemplates.findBySlug(parsed.templateSlug);
       if (!template || template.status !== "published") throw new Error("El formato social no está disponible");
       const series = await socialSeries.save(parsed);
@@ -1249,17 +1259,27 @@ export const createRemoteMcpServer = (
     {
       title: "Actualizar una serie recurrente",
       description:
-        "Cambia la frecuencia, el estado o la pauta editorial de una serie. Pausarla no elimina sus borradores anteriores.",
+        "Cambia la frecuencia, el estado o la pauta editorial de una serie. En una secuencia automática, desactivar la serie la pausa; pausar no elimina publicaciones programadas ni anteriores.",
       inputSchema: socialSeriesInputShape,
       outputSchema: socialSeriesMutationOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async (input, extra) => {
-      authFromExtra(extra, "notes:write", writeNotesRoles);
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
       const parsed = socialSeriesSchema.parse(input);
       if (!parsed.id) throw new Error("Indicá el id de la serie a actualizar");
+      if (
+        parsed.autoPublish &&
+        parsed.active &&
+        !(
+          actor.roles.some((role) => role === "admin" || role === "social") ||
+          actor.permissions.includes("instagram:publish")
+        )
+      ) {
+        throw new Error("Se requiere el permiso instagram:publish para activar la publicación automática");
+      }
       const template = await socialTemplates.findBySlug(parsed.templateSlug);
       if (!template || template.status !== "published") throw new Error("El formato social no está disponible");
       const series = await socialSeries.save(parsed, parsed.id);
@@ -1295,6 +1315,8 @@ export const createRemoteMcpServer = (
       if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
       const series = await socialSeries.get(input.seriesId);
       if (!series?.active) throw new Error("La serie está pausada o no existe");
+      if (series.autoPublish)
+        throw new Error("Esta secuencia se publica automáticamente y no admite borradores manuales");
       const template = await socialTemplates.findBySlug(series.templateSlug);
       if (!template || template.status !== "published") throw new Error("El formato de la serie no está disponible");
       if (template.outputType === "carousel" && input.slides.length < 2)
