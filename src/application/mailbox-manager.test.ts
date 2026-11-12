@@ -34,6 +34,7 @@ const thread = (): MailThread => ({
 
 class FakeMailbox implements MailRepository {
   sent: Parameters<MailRepository["addOutbound"]>[0][] = [];
+  read: string[] = [];
   async init() {}
   async ingestInbound() {
     return inbound;
@@ -44,7 +45,7 @@ class FakeMailbox implements MailRepository {
   async getThread(_id?: string) {
     return thread();
   }
-  async markRead() {}
+  async markRead(id: string) { this.read.push(id); }
   async addOutbound(input: Parameters<MailRepository["addOutbound"]>[0]) {
     this.sent.push(input);
     return {
@@ -62,6 +63,16 @@ class FakeMailbox implements MailRepository {
     };
   }
 }
+
+test("leer una conversación la marca como leída y devuelve cero sin leer", async () => {
+  const repository = new FakeMailbox();
+  const manager = new MailboxManager(repository);
+
+  const result = await manager.readThread("thread-1");
+
+  assert.deepEqual(repository.read, ["thread-1"]);
+  assert.equal(result?.unreadCount, 0);
+});
 
 test("responde al último remitente y persiste la salida", async () => {
   const repository = new FakeMailbox();

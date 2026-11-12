@@ -1405,13 +1405,12 @@ export const createApp = async (
       response.status(503).json({ error: "mailbox_not_configured" });
       return;
     }
-    const thread = await mailboxManager.getThread(String(request.params.id));
+    const thread = await mailboxManager.readThread(String(request.params.id));
     if (!thread) {
       response.status(404).json({ error: "thread_not_found" });
       return;
     }
-    await mailboxManager.markRead(thread.id);
-    response.json({ thread: { ...thread, unreadCount: 0 } });
+    response.json({ thread });
   });
   app.get("/api/mail/routes", requireRole("admin", "editor", "press", "community"), async (_request, response) => {
     if (!mailboxManager) {
