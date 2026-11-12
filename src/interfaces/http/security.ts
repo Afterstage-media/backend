@@ -168,7 +168,7 @@ export const authenticateUser = async (
     roles: user.roles,
     permissions: user.permissions,
     active: user.active,
-    sessionVersion: user.sessionVersion ?? 0,
+    ...(typeof user.sessionVersion === "number" ? { sessionVersion: user.sessionVersion } : {}),
     ...(user.email ? { email: user.email } : {}),
   };
 };
