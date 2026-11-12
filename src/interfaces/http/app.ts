@@ -496,6 +496,7 @@ export const createApp = async (
         instagramTrustedCollaborators,
         instagramConnections,
         seriesStore,
+        platform,
       );
   }
   app.use(
