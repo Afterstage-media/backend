@@ -34,6 +34,9 @@ import {
   setAuthCookie,
   hashPassword,
   RateLimiter,
+  correlationIdMiddleware,
+  revokeSessionFromRequest,
+  SessionVerificationUnavailable,
   requireRole,
   requirePermission,
   requireSecureTransport,
@@ -396,6 +399,7 @@ export const createApp = async (
     .filter(Boolean);
   app.disable("x-powered-by");
   app.set("trust proxy", process.env.TRUST_PROXY === "true" ? 1 : false);
+  app.use(correlationIdMiddleware);
   app.use(securityHeaders);
   app.use(new RateLimiter().middleware);
   app.use(auditMiddleware);
@@ -567,9 +571,19 @@ export const createApp = async (
   app.get("/api/auth/session", async (request, response) => {
     response.json({ user: (await actorFromRequest(request)) ?? null });
   });
-  app.post("/api/auth/logout", (_request, response) => {
-    clearAuthCookie(response);
-    response.status(204).end();
+  app.post("/api/auth/logout", async (request, response) => {
+    try {
+      await revokeSessionFromRequest(request);
+      clearAuthCookie(response);
+      response.status(204).end();
+    } catch (error) {
+      clearAuthCookie(response);
+      log("error", "auth_session_revocation_failed", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+        correlationId: (request as typeof request & { correlationId?: string }).correlationId,
+      });
+      response.status(503).json({ error: "No se pudo confirmar el cierre de sesión. Volvé a intentarlo." });
+    }
   });
   app.get("/api/auth/public-key", (_request, response) => response.json(getAuthEncryptionPublicKey()));
   const recoveryRateLimit = new RateLimiter(5, 15 * 60_000).middleware;
@@ -620,6 +634,7 @@ export const createApp = async (
       });
     } catch (error) {
       log("error", "password_recovery_email_failed", {
+        correlationId: (request as typeof request & { correlationId?: string }).correlationId,
         errorType: error instanceof Error ? error.name : "UnknownError",
         errorCode:
           typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
@@ -2381,17 +2396,26 @@ export const createApp = async (
   );
 
   const errors: ErrorRequestHandler = (error, _request, response, _next) => {
+    const request = _request as typeof _request & { correlationId?: string };
     const status =
-      error instanceof DuplicateContentError
-        ? 409
-        : error instanceof ZodError
-          ? 400
-          : /no encontrado/i.test(error.message)
-            ? 404
-            : 422;
+      error instanceof SessionVerificationUnavailable
+        ? 503
+        : error instanceof DuplicateContentError
+          ? 409
+          : error instanceof ZodError
+            ? 400
+            : /no encontrado/i.test(error.message)
+              ? 404
+              : 422;
+    const errorCode =
+      typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+        ? error.code
+        : undefined;
     log("error", "request_failed", {
+      correlationId: request.correlationId,
       status,
-      error: error instanceof Error ? error.message : String(error),
+      errorType: error instanceof Error ? error.name : "UnknownError",
+      errorCode,
     });
     const production = process.env.NODE_ENV === "production";
     response.status(status).json({
