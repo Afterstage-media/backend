@@ -906,6 +906,36 @@ export const createRemoteMcpServer = (
   );
 
   registerTool(
+    "enviar_acreditacion",
+    {
+      title: "Enviar solicitud de acreditación",
+      description:
+        "Envía por email una solicitud de acreditación preparada. Requiere una clave estable para que los reintentos no dupliquen el envío.",
+      inputSchema: {
+        id: z.string().uuid(),
+        idempotencyKey: z
+          .string()
+          .trim()
+          .min(1)
+          .max(200)
+          .regex(/^[A-Za-z0-9._:-]+$/),
+      },
+      outputSchema: z.object({
+        messageId: z.string(),
+        dryRun: z.boolean(),
+        accreditationId: z.string(),
+        to: z.string().email(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id, idempotencyKey }, extra) => {
+      const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult(await press.sendAccreditation(id, false, { actorId: actor.userId, key: idempotencyKey }));
+    },
+  );
+
+  registerTool(
     "buscar_directorio",
     {
       title: "Buscar en directorio",

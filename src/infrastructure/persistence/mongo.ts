@@ -29,7 +29,7 @@ import {
   type ReplacementSearchInput,
 } from "../../domain/press/types.js";
 import type { ContentRepository } from "./content-store.js";
-import type { PressRepository } from "./press-store.js";
+import type { IdempotentOperationResult, PressRepository } from "./press-store.js";
 import type { DirectoryRepository } from "./directory-store.js";
 import type { DirectoryInput, DirectoryItem, DirectoryPatch } from "../../domain/directory/types.js";
 import type { ActiveUser, ManagedUser, ManagedUserInput, UserDirectory } from "../../interfaces/http/security.js";
@@ -364,6 +364,28 @@ export class MongoPressStore implements PressRepository {
       ...emptyMediaKit(),
       ...this.withoutId(result as MongoRecord),
     } as MediaKit;
+  }
+
+  async beginIdempotentOperation(key: string, requestHash: string): Promise<IdempotentOperationResult> {
+    const operations = this.collection<MongoRecord>("press_idempotency_operations");
+    try {
+      await operations.insertOne({ _id: key, requestHash, status: "pending", createdAt: timestamps() });
+      return { status: "started" };
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) throw error;
+      const existing = await operations.findOne({ _id: key });
+      if (!existing || existing.requestHash !== requestHash) return { status: "conflict" };
+      if (existing.status === "completed") return { status: "completed", result: existing.result };
+      return { status: "pending" };
+    }
+  }
+
+  async completeIdempotentOperation(key: string, result: unknown): Promise<void> {
+    const updated = await this.collection<MongoRecord>("press_idempotency_operations").updateOne(
+      { _id: key, status: "pending" },
+      { $set: { status: "completed", result, updatedAt: timestamps() } },
+    );
+    if (updated.matchedCount !== 1) throw new Error("Operación idempotente no encontrada");
   }
 
   async remove(

@@ -45,6 +45,8 @@ export interface PressRepository {
     patch: Partial<ReplacementApplicationInput>,
   ): Promise<ReplacementApplication | undefined>;
   updateMediaKit(patch: Partial<MediaKit>): Promise<MediaKit>;
+  beginIdempotentOperation(key: string, requestHash: string): Promise<IdempotentOperationResult>;
+  completeIdempotentOperation(key: string, result: unknown): Promise<void>;
   remove(
     collection:
       "events" | "contacts" | "accreditations" | "coverages" | "replacementSearches" | "replacementApplications",
@@ -52,14 +54,21 @@ export interface PressRepository {
   ): Promise<boolean>;
 }
 
+export type IdempotentOperationResult =
+  { status: "started" } | { status: "pending" } | { status: "completed"; result: unknown } | { status: "conflict" };
+
+type IdempotentOperation = { key: string; requestHash: string; status: "pending" | "completed"; result?: unknown };
+
 export class PressStore implements PressRepository {
   private readonly file: string;
   private readonly lock: string;
+  private readonly idempotencyFile: string;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(dataDir = process.env.DATA_DIR ?? path.resolve("data")) {
     this.file = path.join(dataDir, "press.json");
     this.lock = path.join(dataDir, ".press.lock");
+    this.idempotencyFile = path.join(dataDir, "press-idempotency.json");
   }
 
   private async read(): Promise<PressDatabase> {
@@ -217,6 +226,46 @@ export class PressStore implements PressRepository {
       db.mediaKit = { ...db.mediaKit, ...patch };
       await this.write(db);
       return db.mediaKit;
+    });
+  }
+  async beginIdempotentOperation(key: string, requestHash: string): Promise<IdempotentOperationResult> {
+    return this.serialize(async () => {
+      let operations: IdempotentOperation[] = [];
+      try {
+        operations = JSON.parse(await readFile(this.idempotencyFile, "utf8")) as IdempotentOperation[];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const existing = operations.find((operation) => operation.key === key);
+      if (existing) {
+        if (existing.requestHash !== requestHash) return { status: "conflict" };
+        if (existing.status === "completed") return { status: "completed", result: existing.result };
+        return { status: "pending" };
+      }
+      operations.push({ key, requestHash, status: "pending" });
+      await mkdir(path.dirname(this.idempotencyFile), { recursive: true });
+      const temporary = `${this.idempotencyFile}.${process.pid}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(operations)}\n`, "utf8");
+      await rename(temporary, this.idempotencyFile);
+      return { status: "started" };
+    });
+  }
+  async completeIdempotentOperation(key: string, result: unknown): Promise<void> {
+    await this.serialize(async () => {
+      let operations: IdempotentOperation[];
+      try {
+        operations = JSON.parse(await readFile(this.idempotencyFile, "utf8")) as IdempotentOperation[];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Operación idempotente no encontrada");
+        throw error;
+      }
+      const operation = operations.find((item) => item.key === key);
+      if (!operation) throw new Error("Operación idempotente no encontrada");
+      operation.status = "completed";
+      operation.result = result;
+      const temporary = `${this.idempotencyFile}.${process.pid}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(operations)}\n`, "utf8");
+      await rename(temporary, this.idempotencyFile);
     });
   }
   async remove(

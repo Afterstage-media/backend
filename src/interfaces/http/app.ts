@@ -18,7 +18,7 @@ import {
   instagramSocialPublicationUpdateSchema,
 } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
-import { PressManager } from "../../application/press-manager.js";
+import { IdempotentOperationError, PressManager } from "../../application/press-manager.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { EventsFeed } from "../../infrastructure/integrations/events-feed.js";
 import {
@@ -2270,14 +2270,30 @@ export const createApp = async (
   app.patch("/api/press/accreditations/:id", requireRole("admin", "press"), async (request, response) =>
     response.json(await press.updateAccreditation(String(request.params.id), request.body)),
   );
-  app.post("/api/press/accreditations/:id/send", requireRole("admin", "press"), async (request, response) =>
-    response.json(
-      await press.sendAccreditation(
-        String(request.params.id),
-        z.object({ dryRun: z.boolean().default(true) }).parse(request.body ?? {}).dryRun,
-      ),
-    ),
-  );
+  app.post("/api/press/accreditations/:id/send", requireRole("admin", "press"), async (request, response) => {
+    const { dryRun } = z.object({ dryRun: z.boolean().default(true) }).parse(request.body ?? {});
+    const idempotencyKey = request.get("Idempotency-Key")?.trim();
+    if (!dryRun && (!idempotencyKey || idempotencyKey.length > 200 || !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey))) {
+      response.status(400).json({ error: "Para enviar el correo, incluí una clave Idempotency-Key válida." });
+      return;
+    }
+    const actor = (request as typeof request & { actor?: { id: string } }).actor;
+    try {
+      response.json(
+        await press.sendAccreditation(
+          String(request.params.id),
+          dryRun,
+          !dryRun && idempotencyKey && actor ? { key: idempotencyKey, actorId: actor.id } : undefined,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof IdempotentOperationError) {
+        response.status(409).json({ error: error.message, outcome: error.reason });
+        return;
+      }
+      throw error;
+    }
+  });
   app.post("/api/press/followups/run", requireRole("admin", "press"), async (request, response) =>
     response.json(
       await press.sendDueFollowups(z.object({ dryRun: z.boolean().default(true) }).parse(request.body ?? {}).dryRun),

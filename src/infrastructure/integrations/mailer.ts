@@ -15,6 +15,10 @@ export type Mail = {
 export class PressMailer {
   private transporter?: Transporter;
 
+  get configured(): boolean {
+    return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  }
+
   private getTransporter(): Transporter {
     if (this.transporter) return this.transporter;
     const host = process.env.SMTP_HOST;
