@@ -29,6 +29,13 @@ export class MailboxManager {
     return this.withRouteMetadata(thread, route ? new Map([[route.address, route]]) : new Map());
   }
 
+  async readThread(id: string): Promise<MailThread | undefined> {
+    const thread = await this.getThread(id);
+    if (!thread) return undefined;
+    await this.markRead(thread.id);
+    return { ...thread, unreadCount: 0 };
+  }
+
   async listRoutes(): Promise<MailRoute[]> {
     return this.repository.listRoutes
       ? this.repository.listRoutes()

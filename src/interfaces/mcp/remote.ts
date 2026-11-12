@@ -1550,7 +1550,7 @@ export const createRemoteMcpServer = (
     async ({ id }, extra) => {
       authFromExtra(extra, "mail:read", readMailRoles);
       if (!mailboxManager) throw new Error("La bandeja de correo no está disponible");
-      const conversation = await mailboxManager.getThread(id);
+      const conversation = await mailboxManager.readThread(id);
       if (!conversation) throw new Error("Conversación no encontrada");
       return textResult({ conversation });
     },
