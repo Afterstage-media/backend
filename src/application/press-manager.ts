@@ -218,6 +218,20 @@ export class PressManager {
       if (existing.status === "completed")
         return existing.result as { applicationId: string; searchId: string; notification: unknown };
     }
+    if (
+      !dryRun &&
+      application.status === "accepted" &&
+      search.status === "assigned" &&
+      search.assignedApplicationId === id
+    ) {
+      const result = {
+        applicationId: id,
+        searchId: search.id,
+        notification: { skipped: true, reason: "already_assigned" },
+      };
+      if (operationKey) await this.store.completeIdempotentOperation(operationKey, result);
+      return result;
+    }
     await this.store.updateReplacementApplication(id, { status: "accepted" });
     for (const other of snapshot.replacementApplications.filter(
       (item) =>
