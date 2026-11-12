@@ -1,3 +1,5 @@
+import { createHash, createHmac } from "node:crypto";
+import { IdempotentOperationError, PressManager } from "./press-manager.js";
 import { PressMailer, type Mail } from "../infrastructure/integrations/mailer.js";
 import type { MailReplyInput, MailThread, MailThreadSummary } from "../domain/mail/types.js";
 import {
@@ -13,7 +15,8 @@ import { blockedSendersSchema, senderMatchesBlacklist } from "../domain/mail/bla
 export class MailboxManager {
   constructor(
     private readonly repository: MailRepository,
-    private readonly mailer: Pick<PressMailer, "send"> = new PressMailer(),
+    private readonly mailer: Pick<PressMailer, "send"> & Partial<Pick<PressMailer, "configured">> = new PressMailer(),
+    private readonly press: PressManager = new PressManager(),
   ) {}
 
   async listThreads(): Promise<MailThreadSummary[]> {
@@ -93,7 +96,8 @@ export class MailboxManager {
     return this.repository.markRead(id);
   }
 
-  async reply(id: string, input: MailReplyInput) {
+  async reply(id: string, input: MailReplyInput, idempotency: { key: string; actorId: string }) {
+    if (this.mailer.configured === false) throw new Error("El envío de correo no está configurado");
     const thread = await this.repository.getThread(id);
     if (!thread) throw new Error("Conversación no encontrada");
     const latestInbound = [...thread.messages].reverse().find((message) => message.direction === "inbound");
@@ -122,8 +126,24 @@ export class MailboxManager {
         ? { references: [...latestInbound.references, latestInbound.messageId] }
         : {}),
     };
+    const operationKey = createHash("sha256")
+      .update(`${idempotency.actorId}:mail-reply:${idempotency.key}`)
+      .digest("hex");
+    const requestHash = createHmac("sha256", process.env.JWT_SECRET ?? "afterstage-local-idempotency")
+      .update(JSON.stringify({ threadId: id, mail }))
+      .digest("hex");
+    const existing = await this.press.beginIdempotentOperation(operationKey, requestHash);
+    if (existing.status === "conflict") throw new IdempotentOperationError("conflict");
+    if (existing.status === "pending") throw new IdempotentOperationError("pending");
+    if (existing.status === "completed") {
+      const previous = existing.result as { messageId?: string };
+      const currentThread = await this.repository.getThread(id);
+      const previousMessage = currentThread?.messages.find((message) => message.messageId === previous.messageId);
+      if (!previousMessage) throw new Error("No se pudo recuperar la respuesta ya enviada");
+      return previousMessage;
+    }
     const result = await this.mailer.send(mail);
-    return this.repository.addOutbound({
+    const message = await this.repository.addOutbound({
       threadId: id,
       messageId: result.messageId,
       from: replyFrom,
@@ -134,5 +154,7 @@ export class MailboxManager {
       inReplyTo: latestInbound.messageId,
       references: [...latestInbound.references, latestInbound.messageId],
     });
+    await this.press.completeIdempotentOperation(operationKey, { messageId: message.messageId });
+    return message;
   }
 }

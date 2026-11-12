@@ -14,6 +14,7 @@ import {
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
+import { IdempotentOperationError } from "../../application/press-manager.js";
 import { InstagramCommunity } from "../../infrastructure/integrations/instagram-community.js";
 import type { InstagramTrustedCollaboratorStore } from "../../infrastructure/persistence/instagram-trusted-collaborators.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
@@ -36,6 +37,7 @@ import { MailboxManager } from "../../application/mailbox-manager.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
+import { mailReplyIdempotencyKeySchema, mailReplySchema } from "../../domain/mail/types.js";
 import { editorialVoiceInputSchema } from "../../domain/editorial-voice/types.js";
 import {
   MemoryEditorialVoiceStore,
@@ -324,6 +326,7 @@ const readEditorialVoiceRoles = ["admin", "editor", "press", "auditor"] as const
 const writeEditorialVoiceRoles = ["admin", "editor", "press"] as const;
 const readMailRoles = ["admin", "editor"] as const;
 const writeMailRoles = ["admin", "editor"] as const;
+const replyMailRoles = ["admin", "editor", "press", "community"] as const;
 const toolScopes: Record<string, readonly McpScope[]> = {
   get_profile: ["notes:read"],
   obtener_nota: ["notes:read"],
@@ -357,6 +360,7 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   actualizar_blacklist_correo: ["mail:write"],
   listar_conversaciones_correo: ["mail:read"],
   leer_conversacion_correo: ["mail:read"],
+  responder_conversacion_correo: ["mail:reply"],
   crear_ruta_correo: ["mail:write"],
   actualizar_ruta_correo: ["mail:write"],
   eliminar_ruta_correo: ["mail:write"],
@@ -418,7 +422,7 @@ export const createRemoteMcpServer = (
     version: "1.0.0",
   });
   const allowedTools = roles ? toolsAllowedForRoles(roles) : undefined;
-  const mailboxManager = mailbox ? new MailboxManager(mailbox) : undefined;
+  const mailboxManager = mailbox ? new MailboxManager(mailbox, undefined, press) : undefined;
   const instagramService = instagramTrustedCollaborators
     ? new InstagramCommunity(instagramTrustedCollaborators, instagramConnections)
     : undefined;
@@ -1553,6 +1557,44 @@ export const createRemoteMcpServer = (
       const conversation = await mailboxManager.readThread(id);
       if (!conversation) throw new Error("Conversación no encontrada");
       return textResult({ conversation });
+    },
+  );
+
+  registerTool(
+    "responder_conversacion_correo",
+    {
+      title: "Responder una conversación de correo",
+      description:
+        "Envía una respuesta a una conversación de Afterstage. Reutilizá la misma idempotencyKey si repetís exactamente la misma solicitud; una clave con otro contenido se rechaza.",
+      inputSchema: {
+        id: z.string().trim().min(1).max(180),
+        ...mailReplySchema.shape,
+        idempotencyKey: mailReplyIdempotencyKeySchema,
+      },
+      outputSchema: z.object({ message: mailMessageOutputSchema }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["mail:reply"] }] },
+    },
+    async ({ id, text, html, idempotencyKey }, extra) => {
+      const actor = authFromExtra(extra, "mail:reply", replyMailRoles);
+      if (!mailboxManager) throw new Error("La gestión del correo no está configurada");
+      try {
+        const message = await mailboxManager.reply(
+          id,
+          { text, ...(html !== undefined ? { html } : {}) },
+          { key: idempotencyKey, actorId: actor.userId },
+        );
+        return textResult({ message });
+      } catch (error) {
+        if (error instanceof IdempotentOperationError) {
+          return {
+            content: [{ type: "text" as const, text: error.message }],
+            isError: true,
+            structuredContent: { error: error.message, outcome: error.reason },
+          };
+        }
+        throw error;
+      }
     },
   );
 

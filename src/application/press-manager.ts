@@ -60,6 +60,14 @@ export class PressManager {
     private readonly mailer = new PressMailer(),
   ) {}
 
+  beginIdempotentOperation(key: string, requestHash: string) {
+    return this.store.beginIdempotentOperation(key, requestHash);
+  }
+
+  completeIdempotentOperation(key: string, result: unknown) {
+    return this.store.completeIdempotentOperation(key, result);
+  }
+
   async snapshot() {
     return this.store.snapshot();
   }

@@ -64,7 +64,7 @@ import { SocialTemplateRenderer } from "../../infrastructure/integrations/social
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
 import { MailboxManager } from "../../application/mailbox-manager.js";
-import { inboundMailSchema, mailReplySchema } from "../../domain/mail/types.js";
+import { inboundMailSchema, mailReplyIdempotencyKeySchema, mailReplySchema } from "../../domain/mail/types.js";
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
@@ -360,7 +360,7 @@ export const createApp = async (
 ) => {
   const app = express();
   const outboundMailer = mailer ?? new PressMailer();
-  const mailboxManager = mailbox ? new MailboxManager(mailbox, outboundMailer) : undefined;
+  const mailboxManager = mailbox ? new MailboxManager(mailbox, outboundMailer, press) : undefined;
   const inboundMailbox = mailbox;
   const templateStore = socialTemplates ?? new MemorySocialTemplateStore();
   const seriesStore = socialSeries ?? new MemorySocialSeriesStore();
@@ -1512,10 +1512,28 @@ export const createApp = async (
         response.status(400).json({ error: "invalid_reply", details: parsed.error.flatten() });
         return;
       }
+      const parsedIdempotencyKey = mailReplyIdempotencyKeySchema.safeParse(request.get("Idempotency-Key"));
+      if (!parsedIdempotencyKey.success) {
+        response.status(400).json({ error: "Para responder, incluí una clave Idempotency-Key válida." });
+        return;
+      }
+      const idempotencyKey = parsedIdempotencyKey.data;
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!actor) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
       try {
-        const message = await mailboxManager.reply(String(request.params.id), parsed.data);
+        const message = await mailboxManager.reply(String(request.params.id), parsed.data, {
+          key: idempotencyKey,
+          actorId: actor.id,
+        });
         response.status(201).json({ message });
       } catch (error) {
+        if (error instanceof IdempotentOperationError) {
+          response.status(409).json({ error: error.message, outcome: error.reason });
+          return;
+        }
         log("error", "mail_reply_failed", {
           error: error instanceof Error ? error.message : String(error),
           threadId: String(request.params.id),

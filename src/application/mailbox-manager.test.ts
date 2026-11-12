@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { MailboxManager } from "./mailbox-manager.js";
+import { PressManager } from "./press-manager.js";
+import { PressStore } from "../infrastructure/persistence/press-store.js";
 import type { MailMessage, MailThread, MailThreadSummary } from "../domain/mail/types.js";
 import type { MailRepository } from "../infrastructure/persistence/mail-store.js";
 
@@ -76,7 +81,9 @@ test("leer una conversación la marca como leída y devuelve cero sin leer", asy
   assert.equal(result?.unreadCount, 0);
 });
 
-test("responde al último remitente y persiste la salida", async () => {
+test("responde al último remitente y persiste la salida", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-mail-reply-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
   const repository = new FakeMailbox();
   const mailer = {
     send: async (mail: { from?: string; to: string; subject: string; text: string }) => {
@@ -87,9 +94,13 @@ test("responde al último remitente y persiste la salida", async () => {
       return { messageId: "<outgoing@afterstage.ar>", dryRun: false };
     },
   };
-  const manager = new MailboxManager(repository, mailer);
+  const manager = new MailboxManager(repository, mailer, new PressManager(new PressStore(directory)));
 
-  const message = await manager.reply("thread-1", { text: "Sí, coordinemos." });
+  const message = await manager.reply(
+    "thread-1",
+    { text: "Sí, coordinemos." },
+    { key: "reply-1", actorId: "editor-1" },
+  );
 
   assert.equal(message.direction, "outbound");
   assert.deepEqual(repository.sent[0], {
@@ -104,20 +115,26 @@ test("responde al último remitente y persiste la salida", async () => {
   });
 });
 
-test("respeta un destinatario de respuesta explícito del hilo", async () => {
+test("respeta un destinatario de respuesta explícito del hilo", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-mail-reply-to-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
   const repository = new FakeMailbox();
   const originalGetThread = repository.getThread.bind(repository);
   repository.getThread = async (_id: string) => ({
     ...(await originalGetThread("thread-1")),
     messages: [{ ...inbound, replyTo: "productor@example.com" }],
   });
-  const manager = new MailboxManager(repository, {
-    send: async (mail: { to: string }) => {
-      assert.equal(mail.to, "productor@example.com");
-      return { messageId: "<insurance-reply@afterstage.ar>", dryRun: false };
+  const manager = new MailboxManager(
+    repository,
+    {
+      send: async (mail: { to: string }) => {
+        assert.equal(mail.to, "productor@example.com");
+        return { messageId: "<insurance-reply@afterstage.ar>", dryRun: false };
+      },
     },
-  });
+    new PressManager(new PressStore(directory)),
+  );
 
-  await manager.reply("thread-1", { text: "Adjunto la cotización." });
+  await manager.reply("thread-1", { text: "Adjunto la cotización." }, { key: "reply-2", actorId: "editor-1" });
   assert.equal(repository.sent[0]?.to[0], "productor@example.com");
 });
