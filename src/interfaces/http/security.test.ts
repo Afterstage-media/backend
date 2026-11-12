@@ -84,9 +84,11 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
   const previous = {
     secret: process.env.JWT_SECRET,
     issuer: process.env.JWT_ISSUER,
+    audience: process.env.JWT_AUDIENCE,
   };
   process.env.JWT_SECRET = "jwt-test-secret";
   process.env.JWT_ISSUER = "afterstage";
+  process.env.JWT_AUDIENCE = "afterstage-web";
   configureUserDirectory({
     findActiveUser: async (id) =>
       id === "user-1" ? { id, roles: ["editor"], permissions: [], active: true } : undefined,
@@ -98,6 +100,8 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     roles: ["editor"],
     permissions: [],
     iss: "afterstage",
+    aud: "afterstage-web",
+    jti: "test-session-id",
     exp: Math.floor(Date.now() / 1000) + 300,
   });
   const sign = (body: string, secret = process.env.JWT_SECRET!) =>
@@ -110,6 +114,8 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
     roles: ["editor"],
     permissions: [],
     iss: "afterstage",
+    aud: "afterstage-web",
+    jti: "expired-session-id",
     exp: Math.floor(Date.now() / 1000) - 60,
   });
   assert.equal(await actorFromJwt(`${header}.${expiredPayload}.${sign(`${header}.${expiredPayload}`)}`), undefined);
@@ -118,6 +124,8 @@ test("verifica firma, expiración y usuario activo en Mongo antes de aceptar JWT
   else process.env.JWT_SECRET = previous.secret;
   if (previous.issuer === undefined) delete process.env.JWT_ISSUER;
   else process.env.JWT_ISSUER = previous.issuer;
+  if (previous.audience === undefined) delete process.env.JWT_AUDIENCE;
+  else process.env.JWT_AUDIENCE = previous.audience;
 });
 
 test("autentica contraseñas con scrypt y emite JWT de corta duración", async () => {
