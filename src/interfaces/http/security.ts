@@ -12,6 +12,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import type { Request, RequestHandler, Response } from "express";
+import { log } from "./logger.js";
 
 export type Role = "admin" | "editor" | "press" | "directory" | "community" | "auditor" | "social";
 export const permissionNames = ["instagram:read", "instagram:metrics", "instagram:publish"] as const;
@@ -378,7 +379,17 @@ export const auditMiddleware: RequestHandler = (request, _response, next) => {
   const original = response?.end;
   if (original) {
     response.end = function (this: typeof response, ...args: Parameters<typeof original>) {
-      void audit(request, "http_request", { status: response.statusCode });
+      void audit(request, "http_request", { status: response.statusCode }).catch((error: unknown) => {
+        const errorCode =
+          error && typeof error === "object" && "code" in error && typeof error.code === "string"
+            ? error.code
+            : undefined;
+        const correlationId = (request as Request & { correlationId?: string }).correlationId;
+        log("error", "audit_write_failed", {
+          correlationId,
+          ...(errorCode ? { errorCode } : {}),
+        });
+      });
       return original.apply(this, args);
     } as typeof original;
   }
