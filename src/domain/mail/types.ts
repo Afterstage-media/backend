@@ -21,6 +21,12 @@ export const mailReplySchema = z.object({
   text: z.string().trim().min(1).max(10_000_000),
   html: z.string().max(10_000_000).optional(),
 });
+export const mailReplyIdempotencyKeySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .regex(/^[A-Za-z0-9._:-]+$/);
 
 export type InboundMailInput = z.infer<typeof inboundMailSchema>;
 export type MailReplyInput = z.infer<typeof mailReplySchema>;

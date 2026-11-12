@@ -126,6 +126,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "listar_plantillas_sociales",
         "listar_rutas_correo",
         "leer_conversacion_correo",
+        "responder_conversacion_correo",
         "listar_blacklist_correo",
         "listar_reemplazos",
         "modificar_nota",

@@ -28,6 +28,7 @@ export const mcpScopes = [
   "voice:write",
   "mail:read",
   "mail:write",
+  "mail:reply",
 ] as const;
 export type McpScope = (typeof mcpScopes)[number];
 
@@ -43,6 +44,7 @@ export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
   "voice:write": ["admin", "editor", "press"],
   "mail:read": ["admin", "editor"],
   "mail:write": ["admin", "editor"],
+  "mail:reply": ["admin", "editor", "press", "community"],
 };
 
 type PendingAuthorization = {
@@ -427,6 +429,9 @@ const scopeLabel = (scope: string) =>
     "replacements:read": "Leer búsquedas de reemplazo",
     "voice:read": "Consultar voz editorial de noteros",
     "voice:write": "Modificar voz editorial de noteros",
+    "mail:read": "Leer conversaciones de correo",
+    "mail:write": "Administrar rutas y remitentes de correo",
+    "mail:reply": "Responder conversaciones de correo",
   })[scope] ?? scope;
 
 export class McpOAuthProvider implements OAuthServerProvider {
