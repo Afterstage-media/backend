@@ -25,6 +25,8 @@ import {
   audit,
   auditMiddleware,
   authenticateUser,
+  actorFromRequest,
+  clearAuthCookie,
   configureUserDirectory,
   decryptAuthSecret,
   getAuthEncryptionPublicKey,
@@ -517,7 +519,15 @@ export const createApp = async (
       status: "ready",
       mongo: Boolean(process.env.MONGODB_URI),
       ai: Boolean(process.env.AI_API_KEY),
-      smtp: Boolean(process.env.SMTP_HOST),
+      smtp: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
+      passwordRecovery: Boolean(
+        process.env.JWT_SECRET &&
+        process.env.MONGODB_URI &&
+        process.env.PUBLIC_BASE_URL?.startsWith("https://") &&
+        process.env.SMTP_HOST &&
+        process.env.SMTP_USER &&
+        process.env.SMTP_PASS,
+      ),
       meta: Boolean(
         process.env.META_ACCESS_TOKEN ||
         (process.env.META_INSTAGRAM_APP_ID &&
@@ -554,6 +564,13 @@ export const createApp = async (
     requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"),
     (request, response) => response.json({ user: (request as typeof request & { actor?: unknown }).actor }),
   );
+  app.get("/api/auth/session", async (request, response) => {
+    response.json({ user: (await actorFromRequest(request)) ?? null });
+  });
+  app.post("/api/auth/logout", (_request, response) => {
+    clearAuthCookie(response);
+    response.status(204).end();
+  });
   app.get("/api/auth/public-key", (_request, response) => response.json(getAuthEncryptionPublicKey()));
   const recoveryRateLimit = new RateLimiter(5, 15 * 60_000).middleware;
   app.post("/api/auth/recover", recoveryRateLimit, requireSecureTransport, async (request, response) => {
@@ -568,34 +585,62 @@ export const createApp = async (
       response.status(503).json({ error: "La recuperación de acceso todavía no está configurada" });
       return;
     }
+    const smtpReady = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+    if (!smtpReady) {
+      response.json({ message: genericMessage, serviceReady: false });
+      return;
+    }
+    let resetBaseUrl: URL;
+    try {
+      resetBaseUrl = new URL(process.env.PUBLIC_BASE_URL);
+      if (resetBaseUrl.protocol !== "https:" || resetBaseUrl.username || resetBaseUrl.password)
+        throw new Error("PUBLIC_BASE_URL debe ser un origen HTTPS válido");
+    } catch {
+      response.status(503).json({ error: "La recuperación de acceso todavía no está configurada" });
+      return;
+    }
     const user = await users.findByIdentifier(input.email);
-    if (!user?.email || !process.env.SMTP_HOST) {
-      response.json({ message: genericMessage });
+    if (!user?.email) {
+      response.json({ message: genericMessage, serviceReady: true });
       return;
     }
     const token = randomBytes(32).toString("base64url");
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     await users.createPasswordReset(user.id, tokenHash, expiresAt);
-    const resetUrl = `${process.env.PUBLIC_BASE_URL.replace(/\/$/, "")}/acceso?reset=${encodeURIComponent(token)}`;
-    await new PressMailer().send({
-      to: user.email,
-      subject: "Recuperá tu acceso a Afterstage",
-      text: `Recibimos un pedido para cambiar tu contraseña de Afterstage. Abrí este enlace dentro de la próxima hora: ${resetUrl}\n\nSi no fuiste vos, podés ignorar este mensaje.`,
-      html: `<p>Recibimos un pedido para cambiar tu contraseña de Afterstage.</p><p><a href="${resetUrl}">Elegir una contraseña nueva</a></p><p>El enlace vence en una hora. Si no fuiste vos, podés ignorar este mensaje.</p>`,
-      fromName: "Afterstage",
-    });
-    response.json({ message: genericMessage });
+    const resetUrl = new URL("/acceso", resetBaseUrl);
+    resetUrl.searchParams.set("reset", token);
+    try {
+      await outboundMailer.send({
+        to: user.email,
+        subject: "Recuperá tu acceso a Afterstage",
+        text: `Recibimos un pedido para cambiar tu contraseña de Afterstage. Abrí este enlace dentro de la próxima hora: ${resetUrl.toString()}\n\nSi no fuiste vos, podés ignorar este mensaje.`,
+        html: `<p>Recibimos un pedido para cambiar tu contraseña de Afterstage.</p><p><a href="${escapeHtml(resetUrl.toString())}">Elegir una contraseña nueva</a></p><p>El enlace vence en una hora. Si no fuiste vos, podés ignorar este mensaje.</p>`,
+        fromName: "Afterstage",
+      });
+    } catch (error) {
+      log("error", "password_recovery_email_failed", {
+        errorType: error instanceof Error ? error.name : "UnknownError",
+        errorCode:
+          typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+            ? error.code
+            : undefined,
+      });
+    }
+    response.json({ message: genericMessage, serviceReady: true });
   });
   app.post("/api/auth/reset", recoveryRateLimit, requireSecureTransport, async (request, response) => {
     const input = z
       .object({
-        token: z.string().min(20).max(200),
+        token: z
+          .string()
+          .length(43)
+          .regex(/^[A-Za-z0-9_-]+$/),
         keyId: z.string().length(16),
         passwordCiphertext: z.string().min(1).max(4096),
       })
       .parse(request.body);
-    if (!process.env.JWT_SECRET || !users?.consumePasswordReset || !users.updateUser) {
+    if (!process.env.JWT_SECRET || !users?.completePasswordReset) {
       response.status(503).json({ error: "La recuperación de acceso todavía no está configurada" });
       return;
     }
@@ -610,12 +655,14 @@ export const createApp = async (
       response.status(400).json({ error: "La contraseña debe tener al menos 12 caracteres" });
       return;
     }
-    const reset = await users.consumePasswordReset(createHash("sha256").update(input.token).digest("hex"));
+    const reset = await users.completePasswordReset(
+      createHash("sha256").update(input.token).digest("hex"),
+      await hashPassword(password),
+    );
     if (!reset) {
       response.status(400).json({ error: "El enlace venció o ya fue utilizado" });
       return;
     }
-    await users.updateUser(reset.userId, { passwordHash: await hashPassword(password) });
     response.json({ message: "Contraseña actualizada" });
   });
   const loginRateLimit = new RateLimiter(10, 60_000).middleware;
@@ -646,7 +693,6 @@ export const createApp = async (
     const accessToken = issueAccessToken(user);
     setAuthCookie(response, accessToken);
     response.json({
-      accessToken,
       user: {
         id: user.id,
         roles: user.roles,
@@ -683,7 +729,6 @@ export const createApp = async (
       const accessToken = issueAccessToken(user);
       setAuthCookie(response, accessToken);
       response.status(201).json({
-        accessToken,
         user: { id: user.id, roles: user.roles, permissions: user.permissions },
       });
     } catch (error) {

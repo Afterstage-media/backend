@@ -17,7 +17,14 @@ export const permissionNames = ["instagram:read", "instagram:metrics", "instagra
 export type Permission = (typeof permissionNames)[number];
 export type Actor = { id: string; roles: Role[]; permissions: Permission[] };
 
-export type ActiveUser = { id: string; roles: Role[]; permissions: Permission[]; active?: boolean; email?: string };
+export type ActiveUser = {
+  id: string;
+  roles: Role[];
+  permissions: Permission[];
+  active?: boolean;
+  email?: string;
+  sessionVersion?: number;
+};
 export type ManagedUser = ActiveUser & {
   username?: string;
   email?: string;
@@ -39,7 +46,7 @@ export type UserDirectory = {
   findByIdentifier?: (identifier: string) => Promise<(ActiveUser & { passwordHash?: string }) | undefined>;
   createCollaborator?: (email: string, passwordHash: string) => Promise<ActiveUser>;
   createPasswordReset?: (userId: string, tokenHash: string, expiresAt: string) => Promise<void>;
-  consumePasswordReset?: (tokenHash: string) => Promise<{ userId: string } | undefined>;
+  completePasswordReset?: (tokenHash: string, passwordHash: string) => Promise<boolean>;
   listUsers?: () => Promise<ManagedUser[]>;
   createUser?: (input: ManagedUserInput) => Promise<ManagedUser>;
   updateUser?: (
@@ -123,6 +130,7 @@ export const issueAccessToken = (user: ActiveUser): string => {
     sub: user.id,
     roles: user.roles,
     permissions: user.permissions,
+    sessionVersion: user.sessionVersion ?? 0,
     iat: now,
     exp: now + ttl,
     ...(process.env.JWT_ISSUER ? { iss: process.env.JWT_ISSUER } : {}),
@@ -160,6 +168,7 @@ export const authenticateUser = async (
     roles: user.roles,
     permissions: user.permissions,
     active: user.active,
+    sessionVersion: user.sessionVersion ?? 0,
     ...(user.email ? { email: user.email } : {}),
   };
 };
@@ -181,6 +190,7 @@ export const actorFromJwt = async (token: string): Promise<Actor | undefined> =>
       aud?: unknown;
       roles?: unknown;
       permissions?: unknown;
+      sessionVersion?: unknown;
     };
     if (header.alg !== "HS256" || header.typ !== "JWT" || typeof claims.sub !== "string" || !claims.sub)
       return undefined;
@@ -207,6 +217,7 @@ export const actorFromJwt = async (token: string): Promise<Actor | undefined> =>
       return undefined;
     const user = await userDirectory?.findActiveUser(claims.sub);
     if (!user || user.active === false) return undefined;
+    if ((claims.sessionVersion ?? 0) !== (user.sessionVersion ?? 0)) return undefined;
     if (
       !Array.isArray(claims.roles) ||
       JSON.stringify([...claims.roles].sort()) !== JSON.stringify([...user.roles].sort())
@@ -243,6 +254,10 @@ export const setAuthCookie = (response: Response, token: string): void => {
     "Set-Cookie",
     `${authCookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${accessTokenTtlSeconds()}`,
   );
+};
+
+export const clearAuthCookie = (response: Response): void => {
+  response.setHeader("Set-Cookie", `${authCookieName}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
 };
 
 export const requireRole =

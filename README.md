@@ -105,7 +105,7 @@ npm run dev
 | `INBOUND_EMAIL_WEBHOOK_SECRET` | Secreto compartido con el Email Worker de Cloudflare para aceptar mensajes entrantes. |
 | `INBOUND_EMAIL_DOMAIN` | Dominio permitido para destinatarios entrantes; por defecto `afterstage.ar`. |
 | `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
-| `JWT_ACCESS_TTL_SECONDS` | Duración del access token emitido por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
+| `JWT_ACCESS_TTL_SECONDS` | Duración de la sesión emitida por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
 | `MCP_PUBLIC_URL` | URL pública HTTPS del recurso MCP y su Authorization Server; por defecto usa `PUBLIC_BASE_URL`. |
 | `JSON_BODY_LIMIT` | Límite del cuerpo JSON para notas con imágenes base64; por defecto `32mb`. |
 | `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
@@ -198,7 +198,7 @@ npm audit --omit=dev --audit-level=moderate
 
 ## Seguridad y operación
 
-Las rutas privadas aceptan `Authorization: Bearer <JWT>` o la sesión de navegador `HttpOnly` emitida por el login. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Sincronizar roles y permisos en el JWT no alcanza: cada request se revalida contra MongoDB. La recuperación de acceso (`/api/auth/recover` y `/api/auth/reset`) usa tokens de un solo uso con vencimiento de una hora y requiere `PUBLIC_BASE_URL` y SMTP configurado. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
+Las rutas privadas aceptan `Authorization: Bearer <JWT>` para integraciones o la sesión de navegador `HttpOnly` emitida por el login. La aplicación web usa sólo la cookie y no persiste el JWT en `localStorage`. Cada usuario tiene un array obligatorio de roles y otro de permisos; no existe un rol singular. `admin` controla todo; `editor` gestiona contenido; `press` gestiona acreditaciones, eventos y dossier; `directory` gestiona el catálogo; `community` puede enviar propuestas autenticadas; `auditor` sólo puede consultar contenido, prensa, directorio y postulaciones; `social` habilita la operación de Instagram. Los permisos granulares son `instagram:read`, `instagram:metrics` e `instagram:publish`; las métricas y la publicación de Instagram no se habilitan para un editor común. Roles, permisos y versión de sesión se revalidan contra MongoDB en cada request. La recuperación de acceso (`/api/auth/recover` y `/api/auth/reset`) usa un token aleatorio de un solo uso con vencimiento de una hora, persiste sólo su hash y requiere `JWT_SECRET`, `PUBLIC_BASE_URL` HTTPS y SMTP configurado. El cambio de contraseña consume el token y actualiza la clave en una operación atómica, e invalida las sesiones anteriores. Al inicio las propuestas de comunidad se aprueban automáticamente (`AUTO_APPROVE_COMMUNITY_SUBMISSIONS=true` implícito); para exigir revisión manual configurar esa variable en `false`. Cada request queda registrado en `DATA_DIR/audit.jsonl` y el endpoint `/api/ops/status` muestra scheduler, persistencia y túnel para monitoreo.
 
 Para un backup local/Docker: `DATA_DIR=./data UPLOAD_DIR=./uploads ./scripts/backup.sh`. En Atlas, complementar con `mongodump` programado y retención en almacenamiento externo.
 
@@ -286,14 +286,18 @@ Para incluir una imagen en `crear_nota`, el agente puede enviar una entrada como
 - `POST /api/mail/threads/:id/reply` — envía y persiste una respuesta por SMTP.
 - `GET/POST/PATCH/DELETE /api/mail/routes` — administra alias y rutas de correo; una ruta con `destinations: []` archiva en la bandeja sin reenviar.
 - `GET /health`
-- `POST /api/auth/login` — recibe `identifier` (usuario o email) y `password`, devuelve un JWT de acceso y establece la sesión de navegador segura.
+- `POST /api/auth/login` — recibe `identifier` (usuario o email) y la contraseña cifrada con la clave pública vigente; establece una cookie de sesión `HttpOnly` y devuelve la identidad, nunca el JWT.
+- `POST /api/auth/register` — registra colaboradores y establece la misma cookie de sesión segura.
+- `GET /api/auth/session` — devuelve la identidad de la sesión actual o `user: null` si no hay sesión.
+- `POST /api/auth/logout` — elimina la cookie de sesión del navegador.
+- `POST /api/auth/recover` y `POST /api/auth/reset` — envían un enlace de un solo uso con vencimiento de una hora y cambian la contraseña; requieren `JWT_SECRET`, MongoDB, `PUBLIC_BASE_URL` HTTPS y SMTP configurado.
 - `GET /api/auth/me` — devuelve la identidad, roles y permisos del JWT actual.
 
 El detector de duplicados bloquea al guardar coincidencias fuertes (HTTP 409), pero permite consultar coincidencias preliminares con un umbral más amplio para que edición o IA decidan si continuar.
 
 Los listados públicos de contenido, eventos, directorio y reemplazos aplican un límite seguro por request (default 50, máximo 100). El backend devuelve sólo ese máximo efectivo; la paginación/cursor queda como siguiente evolución si el volumen editorial lo requiere.
 
-Las rutas `/api/*` requieren el JWT emitido por el login o la sesión de navegador segura; los roles y permisos se validan contra MongoDB en cada request.
+Las rutas `/api/*` requieren un JWT Bearer de integración o la cookie de sesión del navegador; los roles, permisos y versión de sesión se validan contra MongoDB en cada request.
 
 Cuando el flujo R2 está habilitado, la colección `media_assets` conserva una fila por foto y `media_quota` conserva los contadores reservados. Una foto queda en estado `uploaded` hasta que el contenido la referencia; al quitarla de una nota pasa a `delete_pending` y se elimina después del período de gracia. La reconciliación semanal detecta objetos de R2 sin fila Mongo y filas Mongo cuyo objeto ya no existe.
 

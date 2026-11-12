@@ -536,6 +536,7 @@ export class MongoUserDirectory implements UserDirectory {
           roles: user.roles as ActiveUser["roles"],
           permissions: user.permissions as ActiveUser["permissions"],
           active: user.active as boolean | undefined,
+          sessionVersion: typeof user.sessionVersion === "number" ? user.sessionVersion : 0,
         }
       : undefined;
   }
@@ -552,6 +553,7 @@ export class MongoUserDirectory implements UserDirectory {
           roles: user.roles as ActiveUser["roles"],
           permissions: user.permissions as ActiveUser["permissions"],
           active: user.active as boolean | undefined,
+          sessionVersion: typeof user.sessionVersion === "number" ? user.sessionVersion : 0,
           email: typeof user.email === "string" ? user.email : undefined,
           passwordHash: typeof user.passwordHash === "string" ? user.passwordHash : undefined,
         }
@@ -599,7 +601,10 @@ export class MongoUserDirectory implements UserDirectory {
     patch: Partial<Omit<ManagedUserInput, "id" | "passwordHash">> & { passwordHash?: string },
   ): Promise<ManagedUser | undefined> {
     const values = cleanPatch({ ...patch, updatedAt: timestamps() });
-    await this.collection.updateOne({ _id: id }, { $set: values });
+    await this.collection.updateOne(
+      { _id: id },
+      (patch.passwordHash ? { $set: values, $inc: { sessionVersion: 1 } } : { $set: values }) as never,
+    );
     const updated = await this.collection.findOne({ _id: id });
     return updated ? this.managed(updated) : undefined;
   }
@@ -624,18 +629,21 @@ export class MongoUserDirectory implements UserDirectory {
     });
   }
 
-  async consumePasswordReset(tokenHash: string): Promise<{ userId: string } | undefined> {
-    const document = await this.collection.findOne({
-      passwordResetTokenHash: tokenHash,
-      passwordResetExpiresAt: { $gt: timestamps() },
-      active: { $ne: false },
-    } as never);
-    if (!document) return undefined;
-    const result = await this.collection.updateOne({ _id: document._id, passwordResetTokenHash: tokenHash } as never, {
-      $unset: { passwordResetTokenHash: "", passwordResetExpiresAt: "" },
-      $set: { updatedAt: timestamps() },
-    });
-    return result.modifiedCount ? { userId: document._id } : undefined;
+  async completePasswordReset(tokenHash: string, passwordHash: string): Promise<boolean> {
+    const result = await this.collection.findOneAndUpdate(
+      {
+        passwordResetTokenHash: tokenHash,
+        passwordResetExpiresAt: { $gt: timestamps() },
+        active: { $ne: false },
+      } as never,
+      {
+        $set: { passwordHash, updatedAt: timestamps() },
+        $inc: { sessionVersion: 1 },
+        $unset: { passwordResetTokenHash: "", passwordResetExpiresAt: "" },
+      } as never,
+      { returnDocument: "after", projection: { _id: 1 } },
+    );
+    return Boolean(result);
   }
 }
 
