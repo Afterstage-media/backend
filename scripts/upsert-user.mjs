@@ -42,6 +42,7 @@ try {
         updatedAt: new Date().toISOString(),
       },
       $setOnInsert: { createdAt: new Date().toISOString() },
+      $inc: { sessionVersion: 1 },
     },
     { upsert: true },
   );
