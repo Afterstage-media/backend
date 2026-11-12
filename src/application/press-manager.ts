@@ -1,3 +1,4 @@
+import { createHash, createHmac } from "node:crypto";
 import { PressStore, type PressRepository } from "../infrastructure/persistence/press-store.js";
 import { PressMailer } from "../infrastructure/integrations/mailer.js";
 import {
@@ -18,6 +19,17 @@ import {
 import { parsePatch } from "../domain/parse-patch.js";
 
 const publicStatuses = new Set(["draft", "sent", "followup", "accepted", "rejected", "attended", "coverage_sent"]);
+
+export class IdempotentOperationError extends Error {
+  constructor(readonly reason: "pending" | "conflict") {
+    super(
+      reason === "pending"
+        ? "El envío con esta clave sigue pendiente de confirmación. Revisá la solicitud antes de volver a enviarla."
+        : "La clave de idempotencia ya se usó con otros datos.",
+    );
+    this.name = "IdempotentOperationError";
+  }
+}
 
 const normalizeEventDates = <T extends { startsAt?: string | null; dates?: string[] }>(event: T): T => {
   const dates = [...(event.dates ?? []), event.startsAt]
@@ -195,7 +207,7 @@ export class PressManager {
     return { applicationId: id, searchId: search.id, notification: mail };
   }
 
-  async sendAccreditation(id: string, dryRun = true) {
+  async sendAccreditation(id: string, dryRun = true, idempotency?: { key: string; actorId: string }) {
     const snapshot = await this.store.snapshot();
     const request = snapshot.accreditations.find((item) => item.id === id);
     if (!request) throw new Error("Solicitud de acreditación no encontrada");
@@ -227,22 +239,40 @@ export class PressManager {
           `<p>${paragraph.replace(/[&<>\"]|'/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character).replace(/\n/g, "<br>")}</p>`,
       )
       .join("");
-    const result = await this.mailer.send(
-      {
-        to: contact.email,
-        subject: request.subject,
-        text: message,
-        html,
-        fromName: snapshot.mediaKit.name,
-        replyTo: snapshot.mediaKit.email || undefined,
-      },
-      dryRun,
-    );
-    if (!dryRun)
-      await this.store.updateAccreditation(id, {
+    const mail = {
+      to: contact.email,
+      subject: request.subject,
+      text: message,
+      html,
+      fromName: snapshot.mediaKit.name,
+      replyTo: snapshot.mediaKit.email || undefined,
+    };
+    let operationKey: string | undefined;
+    if (!dryRun && idempotency) {
+      if (this.mailer.configured === false) throw new Error("El envío de correo no está configurado");
+      operationKey = createHash("sha256")
+        .update(`${idempotency.actorId}:press-accreditation-send:${id}:${idempotency.key}`)
+        .digest("hex");
+      const requestHash = createHmac("sha256", process.env.JWT_SECRET ?? "afterstage-local-idempotency")
+        .update(JSON.stringify({ to: mail.to, subject: mail.subject, text: mail.text, html: mail.html }))
+        .digest("hex");
+      const existing = await this.store.beginIdempotentOperation(operationKey, requestHash);
+      if (existing.status === "conflict") throw new IdempotentOperationError("conflict");
+      if (existing.status === "pending") throw new IdempotentOperationError("pending");
+      if (existing.status === "completed") {
+        const previous = existing.result as { messageId: string; dryRun: boolean };
+        return { ...previous, accreditationId: id, to: contact.email };
+      }
+    }
+    const result = await this.mailer.send(mail, dryRun);
+    if (!dryRun) {
+      const updated = await this.store.updateAccreditation(id, {
         status: "sent",
         sentAt: new Date().toISOString(),
       });
+      if (!updated) throw new Error("No se pudo confirmar el envío de la acreditación");
+      if (operationKey) await this.store.completeIdempotentOperation(operationKey, result);
+    }
     return { ...result, accreditationId: id, to: contact.email };
   }
 
@@ -254,7 +284,13 @@ export class PressManager {
     );
     const results = [];
     for (const item of due) {
-      const result = await this.sendAccreditation(item.id, dryRun);
+      const result = await this.sendAccreditation(
+        item.id,
+        dryRun,
+        dryRun || !item.followUpAt
+          ? undefined
+          : { actorId: "afterstage-scheduler", key: `followup:${item.followUpAt}` },
+      );
       results.push(result);
       if (!dryRun)
         await this.store.updateAccreditation(item.id, {
