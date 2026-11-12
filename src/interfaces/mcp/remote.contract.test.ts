@@ -110,6 +110,8 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "listar_series_sociales",
         "crear_borrador_serie_social",
         "gestionar_acreditacion",
+        "obtener_dossier_prensa",
+        "actualizar_dossier_prensa",
         "enviar_acreditacion",
         "get_profile",
         "instagram_leer_mensajes",
