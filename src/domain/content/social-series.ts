@@ -27,6 +27,21 @@ export const socialSeriesInputSchema = z.object({
     .nullable()
     .default(null),
   active: z.boolean().default(false),
+  autoPublish: z.boolean().default(false),
+  publishTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+    .default("12:00"),
+  fixedStoryTemplates: z
+    .array(
+      z.object({
+        templateSlug: z.string().trim().min(2).max(80),
+        data: z.record(z.string(), z.string().max(500)),
+      }),
+    )
+    .max(3)
+    .default([]),
+  lastAutoScheduledAt: z.string().nullable().default(null),
   lastDraftAt: z.string().nullable().default(null),
   lastDraftId: z.string().nullable().default(null),
   createdAt: z.string().optional(),
@@ -36,6 +51,27 @@ export const socialSeriesInputShape = socialSeriesInputSchema.shape;
 export const socialSeriesSchema = socialSeriesInputSchema.superRefine((series, context) => {
   if (series.active && !series.nextRunAt) {
     context.addIssue({ code: "custom", path: ["nextRunAt"], message: "Una serie activa necesita su próxima fecha" });
+  }
+  if (series.autoPublish && (series.cadence.every !== 1 || series.cadence.unit !== "day")) {
+    context.addIssue({
+      code: "custom",
+      path: ["cadence"],
+      message: "La publicación automática requiere frecuencia diaria",
+    });
+  }
+  if (series.autoPublish && series.fixedStoryTemplates.length !== 3) {
+    context.addIssue({
+      code: "custom",
+      path: ["fixedStoryTemplates"],
+      message: "La secuencia automática necesita tres plantillas editables",
+    });
+  }
+  if (series.autoPublish && new Set(series.fixedStoryTemplates.map((item) => item.templateSlug)).size !== 3) {
+    context.addIssue({
+      code: "custom",
+      path: ["fixedStoryTemplates"],
+      message: "Cada historia debe usar una plantilla distinta",
+    });
   }
 });
 
@@ -49,4 +85,5 @@ export interface SocialSeriesRepository {
   findBySlug(slug: string): Promise<SocialSeries | undefined>;
   save(input: SocialSeriesInput, id?: string): Promise<SocialSeries>;
   completeDraftRun(id: string, draftId: string): Promise<SocialSeries>;
+  completeAutoScheduleRun(id: string, runDate: string, nextRunAt: string): Promise<SocialSeries | undefined>;
 }

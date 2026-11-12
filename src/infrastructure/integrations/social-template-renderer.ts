@@ -65,6 +65,17 @@ export type RenderedTemplateAsset = { buffer: Buffer; altText: string; credit: s
 
 export class SocialTemplateRenderer {
   async render(template: SocialTemplate, item: ContentItem, data: Record<string, string>) {
+    if (template.artworkSvg) {
+      let artwork = template.artworkSvg;
+      for (const field of template.fields) {
+        const replacement = xml(String(data[field.key] ?? ""));
+        artwork = artwork.replaceAll(`{{${field.key}}}`, replacement);
+      }
+      if (/\{\{[a-zA-Z][a-zA-Z0-9]*\}\}/.test(artwork))
+        throw new Error("La plantilla gráfica tiene campos que no se pudieron completar");
+      const buffer = await sharp(Buffer.from(artwork)).png().toBuffer();
+      return [{ buffer, altText: item.title, credit: item.photographer || "" }];
+    }
     const assets: RenderedTemplateAsset[] = [];
     const photos = item.assets.filter(
       (asset) => asset.mediaType === "image" && !asset.altText.startsWith("[Plantilla:"),

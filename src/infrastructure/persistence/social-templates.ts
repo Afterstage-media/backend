@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { Collection } from "mongodb";
 import {
   socialTemplateSchema,
@@ -9,6 +11,7 @@ import {
 
 type RecordDoc = Record<string, unknown> & { _id: string };
 const now = () => new Date().toISOString();
+const storyArtwork = (filename: string) => readFileSync(path.resolve("public/story-templates", filename), "utf8");
 
 export const starterSocialTemplates: SocialTemplateInput[] = [
   {
@@ -384,6 +387,103 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
       { key: "photoCredit", label: "Crédito de fotografía", maxLength: 120 },
     ],
     slides: [{ eyebrow: "AFTERSTAGE · EN VIVO", titleField: "headline" }],
+  },
+  {
+    slug: "afterstage-historia-red",
+    name: "Afterstage · Una red para la escena",
+    description: "Historia 1/3 de la secuencia institucional editable de Afterstage.",
+    editorialSection: "show-announcement",
+    outputType: "story",
+    channels: ["instagram"],
+    status: "published",
+    visualStyle: {
+      id: "afterstage-institucional",
+      name: "Afterstage institucional",
+      description: "Composición editorial original en SVG con campos de texto editables.",
+      layout: "type-poster",
+      coverEyebrow: "AFTERSTAGE",
+      palette: { background: "#e8e6e0", foreground: "#242329", accent: "#6d38ba", overlay: "#242329" },
+    },
+    canvas: { width: 1080, height: 1920 },
+    fields: [
+      { key: "eyebrow", label: "Antetítulo", required: true, maxLength: 80 },
+      { key: "headline1", label: "Titular · línea 1", required: true, maxLength: 32 },
+      { key: "headline2", label: "Titular · línea 2", required: true, maxLength: 32 },
+      { key: "headline3", label: "Titular · línea 3", required: true, maxLength: 32 },
+      { key: "body1", label: "Texto principal · línea 1", required: true, maxLength: 36 },
+      { key: "body2", label: "Texto principal · línea 2", required: true, maxLength: 42 },
+      { key: "body3", label: "Texto principal · línea 3", required: true, maxLength: 42 },
+      { key: "service1", label: "Servicio · línea 1", required: true, maxLength: 35 },
+      { key: "service2", label: "Servicio · línea 2", required: true, maxLength: 42 },
+      { key: "badge", label: "Sello violeta", required: true, maxLength: 16 },
+    ],
+    slides: [{ eyebrow: "AFTERSTAGE", titleField: "headline1" }],
+    artworkSvg: storyArtwork("afterstage-red.svg"),
+  },
+  {
+    slug: "afterstage-historia-lugar",
+    name: "Afterstage · Este es tu lugar",
+    description: "Historia 2/3 de la secuencia institucional editable de Afterstage.",
+    editorialSection: "show-announcement",
+    outputType: "story",
+    channels: ["instagram"],
+    status: "published",
+    visualStyle: {
+      id: "afterstage-institucional",
+      name: "Afterstage institucional",
+      description: "Composición editorial original en SVG con campos de texto editables.",
+      layout: "type-poster",
+      coverEyebrow: "AFTERSTAGE",
+      palette: { background: "#28262c", foreground: "#e8e6e0", accent: "#6d38ba", overlay: "#242329" },
+    },
+    canvas: { width: 1080, height: 1920 },
+    fields: [
+      { key: "eyebrow", label: "Antetítulo", required: true, maxLength: 80 },
+      { key: "headline1", label: "Titular · línea 1", required: true, maxLength: 32 },
+      { key: "headline2", label: "Titular · línea 2", required: true, maxLength: 24 },
+      { key: "body1", label: "Texto principal · línea 1", required: true, maxLength: 42 },
+      { key: "body2", label: "Texto principal · línea 2", required: true, maxLength: 42 },
+      { key: "body3", label: "Texto principal · línea 3", required: true, maxLength: 32 },
+      { key: "banner", label: "Frase destacada", required: true, maxLength: 28 },
+      { key: "footer1", label: "Cierre · línea 1", required: true, maxLength: 42 },
+      { key: "footer2", label: "Cierre · línea 2", required: true, maxLength: 42 },
+    ],
+    slides: [{ eyebrow: "AFTERSTAGE", titleField: "headline1" }],
+    artworkSvg: storyArtwork("afterstage-lugar.svg"),
+  },
+  {
+    slug: "afterstage-historia-coberturas",
+    name: "Afterstage · Coberturas profesionales",
+    description: "Historia 3/3 de la secuencia institucional editable de Afterstage.",
+    editorialSection: "show-announcement",
+    outputType: "story",
+    channels: ["instagram"],
+    status: "published",
+    visualStyle: {
+      id: "afterstage-institucional",
+      name: "Afterstage institucional",
+      description: "Composición editorial original en SVG con campos de texto editables.",
+      layout: "type-poster",
+      coverEyebrow: "AFTERSTAGE",
+      palette: { background: "#e8e6e0", foreground: "#242329", accent: "#6d38ba", overlay: "#242329" },
+    },
+    canvas: { width: 1080, height: 1920 },
+    fields: [
+      { key: "eyebrow", label: "Antetítulo", required: true, maxLength: 80 },
+      { key: "headline1", label: "Titular · línea 1", required: true, maxLength: 32 },
+      { key: "headline2", label: "Titular · línea 2", required: true, maxLength: 22 },
+      { key: "headline3", label: "Titular · línea 3", required: true, maxLength: 22 },
+      { key: "services", label: "Servicios", required: true, maxLength: 54 },
+      { key: "body1", label: "Descripción · línea 1", required: true, maxLength: 37 },
+      { key: "body2", label: "Descripción · línea 2", required: true, maxLength: 42 },
+      { key: "body3", label: "Descripción · línea 3", required: true, maxLength: 36 },
+      { key: "question", label: "Subtítulo", required: true, maxLength: 32 },
+      { key: "footer1", label: "Cierre · línea 1", required: true, maxLength: 44 },
+      { key: "footer2", label: "Cierre · línea 2", required: true, maxLength: 42 },
+      { key: "badge", label: "Sello violeta", required: true, maxLength: 30 },
+    ],
+    slides: [{ eyebrow: "AFTERSTAGE", titleField: "headline1" }],
+    artworkSvg: storyArtwork("afterstage-coberturas.svg"),
   },
 ];
 
