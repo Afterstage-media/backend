@@ -2347,13 +2347,38 @@ export const createApp = async (
     requireRole("admin", "press", "auditor"),
     async (request, response) => response.json(await press.listReplacementApplications(String(request.params.id))),
   );
-  app.post("/api/press/replacement-applications/:id/assign", requireRole("admin", "press"), async (request, response) =>
-    response.json(
-      await press.assignReplacementApplication(
-        String(request.params.id),
-        z.object({ dryRun: z.boolean().default(true) }).parse(request.body ?? {}).dryRun,
-      ),
-    ),
+  app.post(
+    "/api/press/replacement-applications/:id/assign",
+    requireRole("admin", "press"),
+    async (request, response) => {
+      const { dryRun } = z.object({ dryRun: z.boolean().default(true) }).parse(request.body ?? {});
+      const parsedIdempotencyKey = mailReplyIdempotencyKeySchema.safeParse(request.get("Idempotency-Key"));
+      const idempotencyKey = parsedIdempotencyKey.success ? parsedIdempotencyKey.data : undefined;
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!dryRun && !idempotencyKey) {
+        response.status(400).json({ error: "Para notificar la asignación, incluí una clave Idempotency-Key válida." });
+        return;
+      }
+      if (!actor?.id) {
+        response.status(401).json({ error: "No autorizado" });
+        return;
+      }
+      try {
+        response.json(
+          await press.assignReplacementApplication(
+            String(request.params.id),
+            dryRun,
+            !dryRun && idempotencyKey ? { key: idempotencyKey, actorId: actor.id } : undefined,
+          ),
+        );
+      } catch (error) {
+        if (error instanceof IdempotentOperationError) {
+          response.status(409).json({ error: error.message, outcome: error.reason });
+          return;
+        }
+        throw error;
+      }
+    },
   );
   app.get("/api/press/media-kit", requireRole("admin", "press"), async (_request, response) =>
     response.json((await press.snapshot()).mediaKit),

@@ -187,12 +187,37 @@ export class PressManager {
       throw new Error("Búsqueda de reemplazo no encontrada");
     return snapshot.replacementApplications.filter((item) => item.searchId === searchId);
   }
-  async assignReplacementApplication(id: string, dryRun = true) {
+  async assignReplacementApplication(id: string, dryRun = true, idempotency?: { key: string; actorId: string }) {
     const snapshot = await this.store.snapshot();
     const application = snapshot.replacementApplications.find((item) => item.id === id);
     if (!application) throw new Error("Postulación no encontrada");
     const search = snapshot.replacementSearches.find((item) => item.id === application.searchId);
     if (!search) throw new Error("Búsqueda de reemplazo no encontrada");
+    const message = `Hola ${application.applicantName},\n\n${snapshot.mediaKit.name} seleccionó tu postulación para “${search.title}”. Nos pondremos en contacto para coordinar la cobertura.\n\nSaludos,\n${snapshot.mediaKit.name}`;
+    const mailInput = {
+      to: application.applicantEmail,
+      subject: `Reemplazo confirmado: ${search.title}`,
+      text: message,
+      html: `<p>${message.replace(/\n/g, "<br>")}</p>`,
+      fromName: snapshot.mediaKit.name,
+      replyTo: snapshot.mediaKit.email || undefined,
+    };
+    let operationKey: string | undefined;
+    if (!dryRun) {
+      if (!idempotency) throw new Error("Para enviar la asignación se necesita una clave de idempotencia");
+      if (this.mailer.configured === false) throw new Error("El envío de correo no está configurado");
+      operationKey = createHash("sha256")
+        .update(`${idempotency.actorId}:replacement-application-assign:${id}:${idempotency.key}`)
+        .digest("hex");
+      const requestHash = createHmac("sha256", process.env.JWT_SECRET ?? "afterstage-local-idempotency")
+        .update(JSON.stringify(mailInput))
+        .digest("hex");
+      const existing = await this.store.beginIdempotentOperation(operationKey, requestHash);
+      if (existing.status === "conflict") throw new IdempotentOperationError("conflict");
+      if (existing.status === "pending") throw new IdempotentOperationError("pending");
+      if (existing.status === "completed")
+        return existing.result as { applicationId: string; searchId: string; notification: unknown };
+    }
     await this.store.updateReplacementApplication(id, { status: "accepted" });
     for (const other of snapshot.replacementApplications.filter(
       (item) =>
@@ -200,19 +225,10 @@ export class PressManager {
     ))
       await this.store.updateReplacementApplication(other.id, { status: "rejected" });
     await this.store.updateReplacementSearch(search.id, { status: "assigned", assignedApplicationId: id });
-    const message = `Hola ${application.applicantName},\n\n${snapshot.mediaKit.name} seleccionó tu postulación para “${search.title}”. Nos pondremos en contacto para coordinar la cobertura.\n\nSaludos,\n${snapshot.mediaKit.name}`;
-    const mail = await this.mailer.send(
-      {
-        to: application.applicantEmail,
-        subject: `Reemplazo confirmado: ${search.title}`,
-        text: message,
-        html: `<p>${message.replace(/\n/g, "<br>")}</p>`,
-        fromName: snapshot.mediaKit.name,
-        replyTo: snapshot.mediaKit.email || undefined,
-      },
-      dryRun,
-    );
-    return { applicationId: id, searchId: search.id, notification: mail };
+    const notification = await this.mailer.send(mailInput, dryRun);
+    const result = { applicationId: id, searchId: search.id, notification };
+    if (operationKey) await this.store.completeIdempotentOperation(operationKey, result);
+    return result;
   }
 
   async sendAccreditation(id: string, dryRun = true, idempotency?: { key: string; actorId: string }) {

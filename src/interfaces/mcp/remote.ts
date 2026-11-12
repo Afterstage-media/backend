@@ -52,10 +52,14 @@ import {
 import {
   accreditationStatuses,
   accreditationSchema,
+  contactSchema,
+  coverageSchema,
+  eventSchema,
   mcpCreateEventSchema,
   eventStatuses,
   mediaKitSchema,
   replacementProfiles,
+  replacementSearchSchema,
   replacementStatuses,
 } from "../../domain/press/types.js";
 import { McpOAuthProvider, mcpScopeRoles, mcpScopes, type McpScope, type McpOAuthStore } from "./oauth.js";
@@ -227,6 +231,8 @@ const noteUpdateFields = {
 };
 const eventOutputSchema = z.object({ id: z.string(), createdBy: z.string() }).passthrough();
 const accreditationOutputSchema = z.object({ id: z.string(), managedBy: z.string() }).passthrough();
+const pressRecordOutputSchema = z.object({ id: z.string() }).passthrough();
+const pressRemovalOutputSchema = z.object({ id: z.string(), deleted: z.boolean() });
 const statisticsOutputSchema = z
   .object({
     publications: z.record(z.string(), z.unknown()),
@@ -336,13 +342,28 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   obtener_estadisticas: ["notes:read", "agenda:read"],
   listar_agenda: ["agenda:read"],
   crear_evento: ["agenda:write"],
+  actualizar_evento: ["agenda:write"],
+  eliminar_evento: ["agenda:write"],
+  crear_contacto_prensa: ["agenda:write"],
+  actualizar_contacto_prensa: ["agenda:write"],
+  eliminar_contacto_prensa: ["agenda:write"],
   gestionar_acreditacion: ["agenda:write"],
+  eliminar_acreditacion: ["agenda:write"],
+  crear_cobertura: ["agenda:write"],
+  actualizar_cobertura: ["agenda:write"],
+  eliminar_cobertura: ["agenda:write"],
+  ejecutar_seguimientos_prensa: ["agenda:write"],
   obtener_dossier_prensa: ["agenda:read"],
   actualizar_dossier_prensa: ["agenda:write"],
   buscar_directorio: ["directory:read"],
   crear_contacto: ["directory:write"],
   actualizar_contacto: ["directory:write"],
   listar_reemplazos: ["replacements:read"],
+  crear_busqueda_reemplazo: ["agenda:write"],
+  actualizar_busqueda_reemplazo: ["agenda:write"],
+  eliminar_busqueda_reemplazo: ["agenda:write"],
+  listar_postulaciones_reemplazo: ["replacements:read"],
+  asignar_postulacion_reemplazo: ["agenda:write"],
   crear_nota: ["notes:write"],
   crear_carrusel_instagram: ["notes:write"],
   crear_pieza_instagram: ["notes:write"],
@@ -939,6 +960,277 @@ export const createRemoteMcpServer = (
     async ({ id, idempotencyKey }, extra) => {
       const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
       return textResult(await press.sendAccreditation(id, false, { actorId: actor.userId, key: idempotencyKey }));
+    },
+  );
+
+  registerTool(
+    "actualizar_evento",
+    {
+      title: "Actualizar evento de prensa",
+      description: "Actualiza solo los campos enviados de un evento y vuelve a validar sus fechas relacionadas.",
+      inputSchema: { id: z.string().uuid(), ...eventSchema.partial().shape },
+      outputSchema: pressRecordOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id, ...patch }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para actualizar el evento");
+      const event = await press.updateEvent(id, patch);
+      if (!event) throw new Error("Evento no encontrado");
+      return textResult(event);
+    },
+  );
+
+  registerTool(
+    "eliminar_evento",
+    {
+      title: "Eliminar evento de prensa",
+      description: "Elimina un evento solo si no tiene acreditaciones ni coberturas vinculadas.",
+      inputSchema: { id: z.string().uuid() },
+      outputSchema: pressRemovalOutputSchema,
+      annotations: { destructiveHint: true, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult({ id, deleted: await press.remove("events", id) });
+    },
+  );
+
+  registerTool(
+    "crear_contacto_prensa",
+    {
+      title: "Crear contacto de prensa",
+      description: "Crea un contacto del módulo de prensa, separado del directorio editorial público.",
+      inputSchema: contactSchema.shape,
+      outputSchema: pressRecordOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult(await press.createContact(input));
+    },
+  );
+
+  registerTool(
+    "actualizar_contacto_prensa",
+    {
+      title: "Actualizar contacto de prensa",
+      description: "Actualiza solo los campos enviados de un contacto de prensa.",
+      inputSchema: { id: z.string().uuid(), ...contactSchema.partial().shape },
+      outputSchema: pressRecordOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id, ...patch }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para actualizar el contacto");
+      const contact = await press.updateContact(id, patch);
+      if (!contact) throw new Error("Contacto no encontrado");
+      return textResult(contact);
+    },
+  );
+
+  registerTool(
+    "eliminar_contacto_prensa",
+    {
+      title: "Eliminar contacto de prensa",
+      description: "Elimina un contacto solo si no tiene acreditaciones vinculadas.",
+      inputSchema: { id: z.string().uuid() },
+      outputSchema: pressRemovalOutputSchema,
+      annotations: { destructiveHint: true, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult({ id, deleted: await press.remove("contacts", id) });
+    },
+  );
+
+  registerTool(
+    "eliminar_acreditacion",
+    {
+      title: "Eliminar solicitud de acreditación",
+      description: "Elimina una solicitud de acreditación del módulo de prensa.",
+      inputSchema: { id: z.string().uuid() },
+      outputSchema: pressRemovalOutputSchema,
+      annotations: { destructiveHint: true, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult({ id, deleted: await press.remove("accreditations", id) });
+    },
+  );
+
+  registerTool(
+    "crear_cobertura",
+    {
+      title: "Registrar cobertura",
+      description: "Registra una cobertura y valida que el evento vinculado exista.",
+      inputSchema: coverageSchema.shape,
+      outputSchema: pressRecordOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult(await press.createCoverage(input));
+    },
+  );
+
+  registerTool(
+    "actualizar_cobertura",
+    {
+      title: "Actualizar cobertura",
+      description: "Actualiza solo los campos enviados de una cobertura.",
+      inputSchema: { id: z.string().uuid(), ...coverageSchema.partial().shape },
+      outputSchema: pressRecordOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id, ...patch }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para actualizar la cobertura");
+      const coverage = await press.updateCoverage(id, patch);
+      if (!coverage) throw new Error("Cobertura no encontrada");
+      return textResult(coverage);
+    },
+  );
+
+  registerTool(
+    "eliminar_cobertura",
+    {
+      title: "Eliminar cobertura",
+      description: "Elimina una cobertura registrada.",
+      inputSchema: { id: z.string().uuid() },
+      outputSchema: pressRemovalOutputSchema,
+      annotations: { destructiveHint: true, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult({ id, deleted: await press.remove("coverages", id) });
+    },
+  );
+
+  registerTool(
+    "ejecutar_seguimientos_prensa",
+    {
+      title: "Ejecutar seguimientos de prensa",
+      description:
+        "Revisa los seguimientos vencidos. Por defecto simula los envíos; indicá dryRun=false para enviar emails reales.",
+      inputSchema: { dryRun: z.boolean().default(true) },
+      outputSchema: z.object({ results: z.array(z.unknown()) }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ dryRun }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult({ results: await press.sendDueFollowups(dryRun) });
+    },
+  );
+
+  registerTool(
+    "crear_busqueda_reemplazo",
+    {
+      title: "Crear búsqueda de reemplazo",
+      description: "Publica una búsqueda interna de reemplazo y valida el evento relacionado cuando se informa.",
+      inputSchema: replacementSearchSchema.shape,
+      outputSchema: pressRecordOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult(await press.createReplacementSearch(input));
+    },
+  );
+
+  registerTool(
+    "actualizar_busqueda_reemplazo",
+    {
+      title: "Actualizar búsqueda de reemplazo",
+      description: "Actualiza solo los campos enviados de una búsqueda de reemplazo.",
+      inputSchema: { id: z.string().uuid(), ...replacementSearchSchema.partial().shape },
+      outputSchema: pressRecordOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id, ...patch }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      if (!Object.keys(patch).length) throw new Error("Enviá al menos un campo para actualizar la búsqueda");
+      const search = await press.updateReplacementSearch(id, patch);
+      if (!search) throw new Error("Búsqueda de reemplazo no encontrada");
+      return textResult(search);
+    },
+  );
+
+  registerTool(
+    "eliminar_busqueda_reemplazo",
+    {
+      title: "Eliminar búsqueda de reemplazo",
+      description: "Elimina una búsqueda solo si no tiene postulaciones vinculadas.",
+      inputSchema: { id: z.string().uuid() },
+      outputSchema: pressRemovalOutputSchema,
+      annotations: { destructiveHint: true, idempotentHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      return textResult({ id, deleted: await press.remove("replacementSearches", id) });
+    },
+  );
+
+  registerTool(
+    "listar_postulaciones_reemplazo",
+    {
+      title: "Listar postulaciones de reemplazo",
+      description: "Lista las postulaciones recibidas para una búsqueda de reemplazo específica.",
+      inputSchema: { searchId: z.string().uuid() },
+      outputSchema: z.object({ applications: z.array(z.unknown()) }),
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["replacements:read"] }] },
+    },
+    async ({ searchId }, extra) => {
+      authFromExtra(extra, "replacements:read", readReplacementsRoles);
+      return textResult({ applications: await press.listReplacementApplications(searchId) });
+    },
+  );
+
+  registerTool(
+    "asignar_postulacion_reemplazo",
+    {
+      title: "Asignar postulación de reemplazo",
+      description:
+        "Asigna la postulación seleccionada y rechaza las demás. Por defecto simula la notificación; para enviar el correo real se requiere Idempotency-Key.",
+      inputSchema: {
+        id: z.string().uuid(),
+        dryRun: z.boolean().default(true),
+        idempotencyKey: mailReplyIdempotencyKeySchema.optional(),
+      },
+      outputSchema: z.object({ applicationId: z.string(), searchId: z.string(), notification: z.unknown() }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
+    },
+    async ({ id, dryRun, idempotencyKey }, extra) => {
+      const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
+      if (!dryRun && !idempotencyKey) throw new Error("Para enviar la notificación se necesita Idempotency-Key");
+      try {
+        const result = await press.assignReplacementApplication(
+          id,
+          dryRun,
+          !dryRun && idempotencyKey ? { key: idempotencyKey, actorId: actor.userId } : undefined,
+        );
+        return textResult(result);
+      } catch (error) {
+        if (error instanceof IdempotentOperationError) {
+          throw new Error(`${error.message} (outcome=${error.reason})`);
+        }
+        throw error;
+      }
     },
   );
 
