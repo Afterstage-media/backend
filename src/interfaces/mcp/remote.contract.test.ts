@@ -466,6 +466,7 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
         "listar_rutas_correo",
         "listar_conversaciones_correo",
         "leer_conversacion_correo",
+        "responder_conversacion_correo",
         "listar_blacklist_correo",
         "modificar_nota",
         "obtener_nota",

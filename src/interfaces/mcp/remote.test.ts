@@ -73,6 +73,7 @@ test("publica metadata OAuth y desafía una llamada MCP sin credenciales", async
         "voice:write",
         "mail:read",
         "mail:write",
+        "mail:reply",
       ],
       resource_name: "Afterstage",
       resource_documentation: "https://afterstage.test/politica-editorial",
