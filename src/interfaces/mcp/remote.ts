@@ -14,6 +14,7 @@ import {
 import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { z } from "zod";
 import { ContentManager } from "../../application/content-manager.js";
+import { PlatformManager } from "../../application/platform-manager.js";
 import { IdempotentOperationError } from "../../application/press-manager.js";
 import { InstagramCommunity } from "../../infrastructure/integrations/instagram-community.js";
 import type { InstagramTrustedCollaboratorStore } from "../../infrastructure/persistence/instagram-trusted-collaborators.js";
@@ -397,6 +398,8 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   listar_colaboradores_confiables_instagram: ["notes:read"],
   agregar_colaborador_confiable_instagram: ["notes:write"],
   quitar_colaborador_confiable_instagram: ["notes:write"],
+  obtener_estado_plataforma: ["platform:read"],
+  gestionar_operacion_plataforma: ["platform:write"],
 };
 
 const toolsAllowedForRoles = (roles: readonly string[]): Set<string> =>
@@ -440,6 +443,7 @@ export const createRemoteMcpServer = (
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
   instagramConnections?: InstagramConnectionStore,
   socialSeries?: SocialSeriesRepository,
+  platform: PlatformManager = new PlatformManager(),
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
@@ -1996,6 +2000,121 @@ export const createRemoteMcpServer = (
     },
   );
 
+  registerTool(
+    "obtener_estado_plataforma",
+    {
+      title: "Consultar operaciones de plataforma",
+      description:
+        "Devuelve el estado de perfiles, búsquedas, postulaciones, traslados, seguros, conversaciones y catálogo. Los datos personales se omiten salvo que includePersonalData sea true y la cuenta tenga rol admin.",
+      inputSchema: { includePersonalData: z.boolean().default(false) },
+      outputSchema: z.object({ snapshot: z.unknown() }),
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["platform:read"] }] },
+    },
+    async ({ includePersonalData }, extra) => {
+      const actor = authFromExtra(extra, "platform:read", ["admin", "editor", "press", "community", "auditor"]);
+      const snapshot = await platform.snapshot();
+      const canReadPersonalData = includePersonalData && actor.roles.includes("admin");
+      if (canReadPersonalData) return textResult({ snapshot });
+      return textResult({
+        snapshot: {
+          ...snapshot,
+          photographers: snapshot.photographers.map(({ contactEmail: _contactEmail, ...item }) => item),
+          coverageRequests: snapshot.coverageRequests.map(({ requesterEmail: _requesterEmail, ...item }) => item),
+          coverageApplications: snapshot.coverageApplications.map(
+            ({ applicantEmail: _applicantEmail, ...item }) => item,
+          ),
+          transportRequests: snapshot.transportRequests.map(({ email: _email, ...item }) => item),
+          insuranceRequests: snapshot.insuranceRequests.map(
+            ({ dni: _dni, email: _email, phone: _phone, notificationTo: _notificationTo, ...item }) => item,
+          ),
+          forumThreads: snapshot.forumThreads.map(({ authorEmail: _authorEmail, ...item }) => item),
+          forumPosts: snapshot.forumPosts.map(({ authorEmail: _authorEmail, ...item }) => item),
+        },
+      });
+    },
+  );
+
+  registerTool(
+    "gestionar_operacion_plataforma",
+    {
+      title: "Gestionar operación de plataforma",
+      description:
+        "Actualiza un recurso existente del panel: photographer, coverage_request, coverage_application, transport_offer, transport_request, insurance_request, forum_thread, forum_post o marketplace. El servidor valida cada patch con el esquema de dominio.",
+      inputSchema: {
+        action: z.enum([
+          "update_photographer",
+          "update_coverage_request",
+          "update_coverage_application",
+          "update_transport_offer",
+          "update_transport_request",
+          "update_insurance_request",
+          "update_forum_thread",
+          "update_forum_post",
+          "update_marketplace_listing",
+        ]),
+        resourceId: z.string().uuid().optional(),
+        data: z.record(z.string(), z.unknown()).default({}),
+      },
+      outputSchema: z.object({ item: z.unknown() }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["platform:write"] }] },
+    },
+    async ({ action, resourceId, data }, extra) => {
+      const actor = authFromExtra(extra, "platform:write");
+      const allowedRoles: Record<string, readonly string[]> = {
+        update_photographer: ["admin", "editor", "directory"],
+        update_coverage_request: ["admin", "editor", "press", "community"],
+        update_coverage_application: ["admin", "editor", "press", "community"],
+        update_transport_offer: ["admin", "editor", "community"],
+        update_transport_request: ["admin", "editor", "community"],
+        update_insurance_request: ["admin", "editor", "press", "community"],
+        update_forum_thread: ["admin", "editor", "community"],
+        update_forum_post: ["admin", "editor", "community"],
+        update_marketplace_listing: ["admin", "editor"],
+      };
+      if (!allowedRoles[action]?.some((role) => actor.roles.includes(role))) {
+        throw new Error("Tu usuario no tiene permiso para esta operación de plataforma");
+      }
+      const requireId = () => {
+        if (!resourceId) throw new Error("Falta el ID del recurso");
+        return resourceId;
+      };
+      let item: unknown;
+      switch (action) {
+        case "update_photographer":
+          item = await platform.updatePhotographer(requireId(), data);
+          break;
+        case "update_coverage_request":
+          item = await platform.updateCoverageRequest(requireId(), data);
+          break;
+        case "update_coverage_application":
+          item = await platform.updateCoverageApplication(requireId(), data);
+          break;
+        case "update_transport_offer":
+          item = await platform.updateTransportOffer(requireId(), data);
+          break;
+        case "update_transport_request":
+          item = await platform.updateTransportRequest(requireId(), data);
+          break;
+        case "update_insurance_request":
+          item = await platform.updateInsuranceRequest(requireId(), data);
+          break;
+        case "update_forum_thread":
+          item = await platform.updateForumThread(requireId(), data);
+          break;
+        case "update_forum_post":
+          item = await platform.updateForumPost(requireId(), data);
+          break;
+        case "update_marketplace_listing":
+          item = await platform.updateMarketplaceListing(requireId(), data);
+          break;
+      }
+      if (!item) throw new Error("El recurso de plataforma no existe");
+      return textResult({ item, operatedBy: actor.userId });
+    },
+  );
+
   return server;
 };
 
@@ -2013,6 +2132,7 @@ export const mountRemoteMcp = (
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
   instagramConnections?: InstagramConnectionStore,
   socialSeries?: SocialSeriesRepository,
+  platform: PlatformManager = new PlatformManager(),
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
   const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
@@ -2175,6 +2295,7 @@ export const mountRemoteMcp = (
         instagramTrustedCollaborators,
         instagramConnections,
         socialSeries,
+        platform,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
