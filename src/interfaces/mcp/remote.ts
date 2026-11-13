@@ -1793,10 +1793,10 @@ export const createRemoteMcpServer = (
     {
       title: "Crear una serie recurrente",
       description:
-        "Guarda una serie editorial, que genera borradores manualmente, o una secuencia de tres Stories con publicación automática. La secuencia se renderiza cada día desde sus plantillas SVG editables; requiere frecuencia diaria, permiso instagram:publish y una cuenta de Instagram Business conectada.",
+        "Guarda una serie editorial, que genera borradores manualmente, o una secuencia de tres Stories con publicación automática. Repetir el mismo slug y contenido devuelve la serie existente; otro contenido con el mismo slug se rechaza. La secuencia automática requiere frecuencia diaria, permiso instagram:publish y una cuenta de Instagram Business conectada.",
       inputSchema: socialSeriesInputShape,
       outputSchema: socialSeriesMutationOutputSchema,
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async (input, extra) => {
