@@ -970,7 +970,9 @@ export class ContentManager {
     const resourceKey = createHash("sha256").update(`content-instagram-repost:${id}`).digest("hex");
     const secret = process.env.JWT_SECRET;
     if (!secret) throw new Error("La clave de idempotencia no está configurada");
-    const requestHash = createHmac("sha256", secret).update(JSON.stringify(instagramItem)).digest("hex");
+    const requestHash = createHmac("sha256", secret)
+      .update(JSON.stringify({ contentId: id, channels: instagramItem.channels, assets: instagramItem.assets }))
+      .digest("hex");
     const operation = await this.store.beginInstagramRepost(operationKey, resourceKey, requestHash);
     if (operation.status === "conflict") throw new ContentIdempotentOperationError("conflict");
     if (operation.status === "pending") throw new ContentIdempotentOperationError("pending");
