@@ -1173,6 +1173,7 @@ export const createApp = async (
         mailThreadId = inboxMessage.threadId;
       } catch (error) {
         log("error", "insurance_inbox_failed", {
+          correlationId: (request as typeof request & { correlationId?: string }).correlationId,
           errorType: error instanceof Error ? error.name : "UnknownError",
           insuranceRequestId: item.id,
         });
@@ -1194,6 +1195,7 @@ export const createApp = async (
       } catch (error) {
         notificationStatus = "failed";
         log("error", "insurance_notification_failed", {
+          correlationId: (request as typeof request & { correlationId?: string }).correlationId,
           errorType: error instanceof Error ? error.name : "UnknownError",
           insuranceRequestId: item.id,
         });
