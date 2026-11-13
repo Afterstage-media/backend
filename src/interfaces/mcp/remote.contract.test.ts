@@ -12,6 +12,8 @@ import { ContentStore } from "../../infrastructure/persistence/content-store.js"
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { MediaAssetStore } from "../../infrastructure/persistence/media-assets.js";
+import { PlatformManager } from "../../application/platform-manager.js";
+import { PlatformStore } from "../../infrastructure/persistence/platform-store.js";
 import { createRemoteMcpServer } from "./remote.js";
 
 const authInfo = (roles: string[]) => ({
@@ -28,6 +30,8 @@ const authInfo = (roles: string[]) => ({
     "voice:read",
     "voice:write",
     "instagram:publish",
+    "platform:read",
+    "platform:write",
   ],
   extra: { userId: "editor-1", roles, permissions: [] },
 });
@@ -52,6 +56,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
   );
   const press = new PressManager(new PressStore(directoryPath));
   const directory = new DirectoryManager(new DirectoryStore(directoryPath));
+  const platform = new PlatformManager(new PlatformStore(directoryPath));
 
   const firstNote = await manager.create({ title: "Primera nota", body: "Contenido verificable" });
   await manager.create({ title: "Segunda nota", body: "Otro contenido verificable" });
@@ -83,7 +88,19 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     contacts: [{ name: "Manager de prueba", email: "manager@example.com" }],
   });
 
-  const server = createRemoteMcpServer(manager, press, directory);
+  const server = createRemoteMcpServer(
+    manager,
+    press,
+    directory,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    platform,
+  );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   let currentAuth = authInfo(["editor"]);
   const send = clientTransport.send.bind(clientTransport);
@@ -165,6 +182,25 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "quitar_colaborador_confiable_instagram",
       ].sort(),
     );
+    const event = (await press.snapshot()).events[0]!;
+    const forumArguments = {
+      action: "create_forum_thread",
+      data: {
+        eventId: event.id,
+        title: "Consulta de transporte",
+        body: "¿Alguien sale desde zona oeste?",
+        authorName: "Persona de prueba",
+        authorEmail: "persona@example.com",
+      },
+    };
+    const forumFirst = await client.callTool({ name: "gestionar_operacion_plataforma", arguments: forumArguments });
+    const forumReplay = await client.callTool({ name: "gestionar_operacion_plataforma", arguments: forumArguments });
+    assert.equal(forumFirst.isError, undefined);
+    assert.equal(forumReplay.isError, undefined);
+    const firstItem = (forumFirst.structuredContent as { item: { id: string } }).item;
+    const replayItem = (forumReplay.structuredContent as { item: { id: string } }).item;
+    assert.equal(replayItem.id, firstItem.id);
+    assert.equal((await platform.snapshot()).forumThreads.length, 1);
     const createEventTool = tools.tools.find((tool) => tool.name === "crear_evento");
     const requiredEventFields = ((createEventTool?.inputSchema as { required?: string[] } | undefined)?.required ?? [])
       .slice()

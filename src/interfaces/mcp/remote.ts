@@ -2201,7 +2201,7 @@ export const createRemoteMcpServer = (
     {
       title: "Gestionar operación de plataforma",
       description:
-        "Crea y actualiza perfiles, búsquedas, postulaciones, traslados, seguros, conversaciones y elementos del catálogo. Las altas requieren idempotencyKey; el servidor valida y normaliza los datos con el esquema de dominio y limita cada acción por rol.",
+        "Crea y actualiza perfiles, búsquedas, postulaciones, traslados, seguros, conversaciones y elementos del catálogo. Las altas aceptan idempotencyKey; si se omite, el servidor deduplica por usuario, acción y datos normalizados. El servidor valida los datos con el esquema de dominio y limita cada acción por rol.",
       inputSchema: {
         action: z.enum([
           "create_photographer",
@@ -2295,24 +2295,19 @@ export const createRemoteMcpServer = (
       };
       let operationKey: string | undefined;
       if (createAction) {
-        if (!idempotencyKey) throw new Error("Para crear un recurso se necesita idempotencyKey");
         const secret = process.env.JWT_SECRET;
         if (!secret) throw new Error("No se puede asegurar el reintento de esta operación ahora");
         const requestHash = createHmac("sha256", secret)
           .update(JSON.stringify({ action, data: normalizedInput }))
           .digest("hex");
+        const requestIdentity = idempotencyKey ?? requestHash;
         operationKey = createHash("sha256")
-          .update(`mcp-platform:${actor.userId}:${action}:${idempotencyKey}`)
+          .update(`mcp-platform:${actor.userId}:${action}:${requestIdentity}`)
           .digest("hex");
         const operation = await press.beginIdempotentOperation(operationKey, requestHash);
         if (operation.status === "conflict" || operation.status === "pending")
           throw new IdempotentOperationError(operation.status);
-        if (operation.status === "completed")
-          return textResult({
-            item: operation.result as Record<string, unknown>,
-            operatedBy: actor.userId,
-            replayed: true,
-          });
+        if (operation.status === "completed") return textResult({ item: operation.result as Record<string, unknown> });
       }
       let item: unknown;
       switch (action) {
@@ -2380,7 +2375,7 @@ export const createRemoteMcpServer = (
           ...(typeof resource.active === "boolean" ? { active: resource.active } : {}),
         };
         await press.completeIdempotentOperation(operationKey!, minimalItem);
-        return textResult({ item: minimalItem, operatedBy: actor.userId, replayed: false });
+        return textResult({ item: minimalItem });
       }
       return textResult({ item, operatedBy: actor.userId });
     },
