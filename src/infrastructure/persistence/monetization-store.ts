@@ -30,7 +30,7 @@ export class MongoMonetizationStore implements MonetizationRepository {
     return item ? this.from(item) : undefined;
   }
   async findByIdempotencyKey(key: string) {
-    const item = await this.collection.findOne({ idempotencyKey: key });
+    const item = await this.collection.findOne({ idempotencyKey: key, status: { $ne: "creating" } } as never);
     return item ? this.from(item) : undefined;
   }
   async withIdempotencyLock<T>(key: string, operation: () => Promise<T>): Promise<T> {

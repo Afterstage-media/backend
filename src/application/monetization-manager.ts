@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { idempotencyKeySchema } from "../domain/idempotency.js";
 import {
   defaultMonetizationProducts,
@@ -132,17 +132,28 @@ export class MonetizationManager {
     const parsedKey = idempotencyKeySchema.safeParse(idempotencyInput);
     if (!parsedKey.success) throw new Error("Para enviar la solicitud incluí una clave de idempotencia válida");
     const idempotencyKey = createHash("sha256").update(`public-promotion:${parsedKey.data}`).digest("hex");
+    const secret = process.env.JWT_SECRET;
+    if (!secret) throw new Error("La idempotencia del checkout no está configurada");
+    const requestHash = createHmac("sha256", secret).update(JSON.stringify(parsed)).digest("hex");
     const createOnce = async () => {
       const existing = await this.repository.findByIdempotencyKey?.(idempotencyKey);
-      if (existing) return existing;
-      return this.createNewPromotion(parsed, idempotencyKey);
+      if (existing) {
+        if (existing.idempotencyRequestHash !== requestHash)
+          throw new Error("La clave de solicitud ya se usó con otros datos");
+        return existing;
+      }
+      return this.createNewPromotion(parsed, idempotencyKey, requestHash);
     };
     return this.repository.withIdempotencyLock
       ? this.repository.withIdempotencyLock(idempotencyKey, createOnce)
       : createOnce();
   }
 
-  private async createNewPromotion(parsed: ReturnType<typeof promotionInputSchema.parse>, idempotencyKey: string) {
+  private async createNewPromotion(
+    parsed: ReturnType<typeof promotionInputSchema.parse>,
+    idempotencyKey: string,
+    requestHash: string,
+  ) {
     const product = this.product(parsed.productId);
     if (!product) throw new Error("Producto no disponible");
     const now = new Date().toISOString();
@@ -160,6 +171,7 @@ export class MonetizationManager {
       rejectionReason: null,
       featuredUntil: null,
       idempotencyKey,
+      idempotencyRequestHash: requestHash,
     };
     const saved = await this.repository.create(item);
     if (saved.id !== item.id) return saved;
