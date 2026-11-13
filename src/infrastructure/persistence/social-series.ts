@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Collection } from "mongodb";
 import {
+  SocialSeriesConflictError,
   socialSeriesSchema,
   type SocialSeries,
   type SocialSeriesInput,
@@ -163,7 +164,7 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
   async init() {
     await this.collection.createIndex({ slug: 1 }, { unique: true });
     for (const series of starterSocialSeries) {
-      if (!(await this.findBySlug(series.slug))) await this.save(series);
+      if (!(await this.findBySlug(series.slug))) await this.create(series);
     }
     const obsoleteStorySeries = await this.findBySlug("historias-de-la-escena");
     if (
@@ -189,24 +190,48 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
     return doc ? normalize(doc) : undefined;
   }
 
-  async save(input: SocialSeriesInput, id?: string) {
+  async create(input: SocialSeriesInput) {
     const parsed = socialSeriesSchema.parse(input);
-    const existing = id ? await this.get(id) : await this.findBySlug(parsed.slug);
-    if (id && !existing) throw new Error("Serie social no encontrada");
-    if (existing && existing.slug !== parsed.slug) throw new Error("No se puede cambiar el identificador de una serie");
     const timestampNow = timestamp();
     const next = socialSeriesSchema.parse({
       ...parsed,
-      id: existing?.id ?? parsed.id ?? randomUUID(),
-      createdAt: existing?.createdAt ?? timestampNow,
+      id: parsed.id ?? randomUUID(),
+      createdAt: timestampNow,
       updatedAt: timestampNow,
-      lastDraftAt: existing?.lastDraftAt ?? parsed.lastDraftAt ?? null,
-      lastDraftId: existing?.lastDraftId ?? parsed.lastDraftId ?? null,
-      lastAutoScheduledAt: existing?.lastAutoScheduledAt ?? parsed.lastAutoScheduledAt ?? null,
+      lastDraftAt: parsed.lastDraftAt ?? null,
+      lastDraftId: parsed.lastDraftId ?? null,
+      lastAutoScheduledAt: parsed.lastAutoScheduledAt ?? null,
     }) as SocialSeries;
     const { id: _id, ...data } = next;
     const record = { ...data, _id: next.id } as SeriesRecord;
-    await this.collection.replaceOne({ _id: next.id }, record, { upsert: true });
+    try {
+      await this.collection.insertOne(record);
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) throw new SocialSeriesConflictError();
+      throw error;
+    }
+    return normalize(record);
+  }
+
+  async save(input: SocialSeriesInput, id: string) {
+    const parsed = socialSeriesSchema.parse(input);
+    const existing = await this.get(id);
+    if (!existing) throw new Error("Serie social no encontrada");
+    if (existing.slug !== parsed.slug) throw new Error("No se puede cambiar el identificador de una serie");
+    const timestampNow = timestamp();
+    const next = socialSeriesSchema.parse({
+      ...parsed,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: timestampNow,
+      lastDraftAt: existing.lastDraftAt ?? parsed.lastDraftAt ?? null,
+      lastDraftId: existing.lastDraftId ?? parsed.lastDraftId ?? null,
+      lastAutoScheduledAt: existing.lastAutoScheduledAt ?? parsed.lastAutoScheduledAt ?? null,
+    }) as SocialSeries;
+    const { id: _id, ...data } = next;
+    const record = { ...data, _id: next.id } as SeriesRecord;
+    const result = await this.collection.replaceOne({ _id: id }, record);
+    if (result.matchedCount === 0) throw new Error("Serie social no encontrada");
     return normalize(record);
   }
 
@@ -234,7 +259,7 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
 export class MemorySocialSeriesStore implements SocialSeriesRepository {
   private series: SocialSeries[] = [];
   async init() {
-    for (const item of starterSocialSeries) if (!(await this.findBySlug(item.slug))) await this.save(item);
+    for (const item of starterSocialSeries) if (!(await this.findBySlug(item.slug))) await this.create(item);
   }
   async list() {
     return [...this.series].sort(
@@ -247,20 +272,38 @@ export class MemorySocialSeriesStore implements SocialSeriesRepository {
   async findBySlug(slug: string) {
     return this.series.find((item) => item.slug === slug);
   }
-  async save(input: SocialSeriesInput, id?: string) {
+  async create(input: SocialSeriesInput) {
     const parsed = socialSeriesSchema.parse(input);
-    const existing = id ? await this.get(id) : await this.findBySlug(parsed.slug);
-    if (id && !existing) throw new Error("Serie social no encontrada");
-    if (existing && existing.slug !== parsed.slug) throw new Error("No se puede cambiar el identificador de una serie");
+    if (this.series.some((item) => item.slug === parsed.slug || (parsed.id && item.id === parsed.id))) {
+      throw new SocialSeriesConflictError();
+    }
     const timestampNow = timestamp();
     const next = socialSeriesSchema.parse({
       ...parsed,
-      id: existing?.id ?? parsed.id ?? randomUUID(),
-      createdAt: existing?.createdAt ?? timestampNow,
+      id: parsed.id ?? randomUUID(),
+      createdAt: timestampNow,
       updatedAt: timestampNow,
-      lastDraftAt: existing?.lastDraftAt ?? parsed.lastDraftAt ?? null,
-      lastDraftId: existing?.lastDraftId ?? parsed.lastDraftId ?? null,
-      lastAutoScheduledAt: existing?.lastAutoScheduledAt ?? parsed.lastAutoScheduledAt ?? null,
+      lastDraftAt: parsed.lastDraftAt ?? null,
+      lastDraftId: parsed.lastDraftId ?? null,
+      lastAutoScheduledAt: parsed.lastAutoScheduledAt ?? null,
+    }) as SocialSeries;
+    this.series = [...this.series, next];
+    return next;
+  }
+  async save(input: SocialSeriesInput, id: string) {
+    const parsed = socialSeriesSchema.parse(input);
+    const existing = await this.get(id);
+    if (!existing) throw new Error("Serie social no encontrada");
+    if (existing.slug !== parsed.slug) throw new Error("No se puede cambiar el identificador de una serie");
+    const timestampNow = timestamp();
+    const next = socialSeriesSchema.parse({
+      ...parsed,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: timestampNow,
+      lastDraftAt: existing.lastDraftAt ?? parsed.lastDraftAt ?? null,
+      lastDraftId: existing.lastDraftId ?? parsed.lastDraftId ?? null,
+      lastAutoScheduledAt: existing.lastAutoScheduledAt ?? parsed.lastAutoScheduledAt ?? null,
     }) as SocialSeries;
     this.series = [...this.series.filter((item) => item.id !== next.id), next];
     return next;
