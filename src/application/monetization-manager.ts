@@ -20,6 +20,13 @@ export interface MonetizationRepository {
   update(id: string, patch: Partial<MonetizationPromotion>): Promise<MonetizationPromotion | undefined>;
 }
 
+export class PromotionIdempotencyConflictError extends Error {
+  constructor(message = "La clave de solicitud ya se usó con otros datos") {
+    super(message);
+    this.name = "PromotionIdempotencyConflictError";
+  }
+}
+
 export class MemoryMonetizationRepository implements MonetizationRepository {
   private items: MonetizationPromotion[] = [];
   async list(status?: MonetizationStatus) {
@@ -138,8 +145,7 @@ export class MonetizationManager {
     const createOnce = async () => {
       const existing = await this.repository.findByIdempotencyKey?.(idempotencyKey);
       if (existing) {
-        if (existing.idempotencyRequestHash !== requestHash)
-          throw new Error("La clave de solicitud ya se usó con otros datos");
+        if (existing.idempotencyRequestHash !== requestHash) throw new PromotionIdempotencyConflictError();
         return existing;
       }
       return this.createNewPromotion(parsed, idempotencyKey, requestHash);

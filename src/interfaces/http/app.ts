@@ -57,7 +57,7 @@ import type { InstagramTrustedCollaboratorStore } from "../../infrastructure/per
 import { log } from "./logger.js";
 import type { DirectoryItem } from "../../domain/directory/types.js";
 import { distanceQuery, distanceKm } from "../../domain/location.js";
-import { MonetizationManager } from "../../application/monetization-manager.js";
+import { MonetizationManager, PromotionIdempotencyConflictError } from "../../application/monetization-manager.js";
 import { monetizationStatuses } from "../../domain/monetization/types.js";
 import { mountRemoteMcp } from "../mcp/remote.js";
 import type { McpOAuthStore } from "../mcp/oauth.js";
@@ -2490,13 +2490,15 @@ export const createApp = async (
     const status =
       error instanceof SessionVerificationUnavailable
         ? 503
-        : error instanceof DuplicateContentError
+        : error instanceof PromotionIdempotencyConflictError
           ? 409
-          : error instanceof ZodError
-            ? 400
-            : /no encontrado/i.test(error.message)
-              ? 404
-              : 422;
+          : error instanceof DuplicateContentError
+            ? 409
+            : error instanceof ZodError
+              ? 400
+              : /no encontrado/i.test(error.message)
+                ? 404
+                : 422;
     const errorCode =
       typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
         ? error.code
