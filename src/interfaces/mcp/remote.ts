@@ -2307,12 +2307,7 @@ export const createRemoteMcpServer = (
         const operation = await press.beginIdempotentOperation(operationKey, requestHash);
         if (operation.status === "conflict" || operation.status === "pending")
           throw new IdempotentOperationError(operation.status);
-        if (operation.status === "completed")
-          return textResult({
-            item: operation.result as Record<string, unknown>,
-            operatedBy: actor.userId,
-            replayed: true,
-          });
+        if (operation.status === "completed") return textResult({ item: operation.result as Record<string, unknown> });
       }
       let item: unknown;
       switch (action) {
@@ -2380,7 +2375,7 @@ export const createRemoteMcpServer = (
           ...(typeof resource.active === "boolean" ? { active: resource.active } : {}),
         };
         await press.completeIdempotentOperation(operationKey!, minimalItem);
-        return textResult({ item: minimalItem, operatedBy: actor.userId, replayed: false });
+        return textResult({ item: minimalItem });
       }
       return textResult({ item, operatedBy: actor.userId });
     },

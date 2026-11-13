@@ -198,7 +198,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal(forumFirst.isError, undefined);
     assert.equal(forumReplay.isError, undefined);
     const firstItem = (forumFirst.structuredContent as { item: { id: string } }).item;
-    const replayItem = (forumReplay.structuredContent as { item: { id: string }; replayed: boolean }).item;
+    const replayItem = (forumReplay.structuredContent as { item: { id: string } }).item;
     assert.equal(replayItem.id, firstItem.id);
     assert.equal((await platform.snapshot()).forumThreads.length, 1);
     const createEventTool = tools.tools.find((tool) => tool.name === "crear_evento");
