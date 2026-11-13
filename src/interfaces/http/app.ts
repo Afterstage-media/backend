@@ -2492,13 +2492,13 @@ export const createApp = async (
         ? 503
         : error instanceof PromotionIdempotencyConflictError
           ? 409
-        : error instanceof DuplicateContentError
-          ? 409
-          : error instanceof ZodError
-            ? 400
-            : /no encontrado/i.test(error.message)
-              ? 404
-              : 422;
+          : error instanceof DuplicateContentError
+            ? 409
+            : error instanceof ZodError
+              ? 400
+              : /no encontrado/i.test(error.message)
+                ? 404
+                : 422;
     const errorCode =
       typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
         ? error.code

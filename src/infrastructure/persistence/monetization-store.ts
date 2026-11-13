@@ -47,7 +47,9 @@ export class MongoMonetizationStore implements MonetizationRepository {
       if ((error as { code?: number }).code === 11000) {
         const existing = await this.findByIdempotencyKey(key);
         if (existing) return existing as T;
-        throw new PromotionIdempotencyConflictError("La solicitud ya se está procesando. Esperá un momento y reintentá.");
+        throw new PromotionIdempotencyConflictError(
+          "La solicitud ya se está procesando. Esperá un momento y reintentá.",
+        );
       }
       throw error;
     }
