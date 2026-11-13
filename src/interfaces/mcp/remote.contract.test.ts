@@ -57,6 +57,15 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
   const press = new PressManager(new PressStore(directoryPath));
   const directory = new DirectoryManager(new DirectoryStore(directoryPath));
   const platform = new PlatformManager(new PlatformStore(directoryPath));
+  const instagramCollaborators = {
+    init: async () => undefined,
+    list: async () => [],
+    add: async () => {
+      throw new Error("Not used in this contract test");
+    },
+    remove: async () => false,
+    seedDefaultsOnce: async () => undefined,
+  };
 
   const firstNote = await manager.create({ title: "Primera nota", body: "Contenido verificable" });
   await manager.create({ title: "Segunda nota", body: "Otro contenido verificable" });
@@ -96,7 +105,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     undefined,
     undefined,
     undefined,
-    undefined,
+    instagramCollaborators,
     undefined,
     undefined,
     platform,
@@ -182,6 +191,67 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "quitar_colaborador_confiable_instagram",
       ].sort(),
     );
+    const instagramReplyTool = tools.tools.find((tool) => tool.name === "instagram_responder_mensaje");
+    assert.deepEqual(
+      ((instagramReplyTool?.inputSchema as { required?: string[] } | undefined)?.required ?? []).sort(),
+      ["idempotencyKey", "message", "recipientId"],
+    );
+    const previousToken = process.env.META_ACCESS_TOKEN;
+    const previousAccount = process.env.META_INSTAGRAM_ACCOUNT_ID;
+    const previousFetch = globalThis.fetch;
+    let sendCount = 0;
+    process.env.META_ACCESS_TOKEN = "test-token-not-a-secret";
+    process.env.META_INSTAGRAM_ACCOUNT_ID = "test-account";
+    globalThis.fetch = async () => {
+      sendCount += 1;
+      return new Response(JSON.stringify({ message_id: "meta-message-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    currentAuth = authInfo(["admin"]);
+    try {
+      const sendArguments = {
+        recipientId: "recipient-1",
+        message: "Gracias por escribirnos.",
+        idempotencyKey: "instagram-send-1",
+      };
+      const sent = await client.callTool({ name: "instagram_responder_mensaje", arguments: sendArguments });
+      const replay = await client.callTool({ name: "instagram_responder_mensaje", arguments: sendArguments });
+      const conflict = await client.callTool({
+        name: "instagram_responder_mensaje",
+        arguments: { ...sendArguments, message: "Otro mensaje." },
+      });
+      assert.equal(sent.isError, undefined);
+      assert.equal(replay.isError, undefined);
+      assert.equal(conflict.isError, true);
+      assert.deepEqual(replay.structuredContent, sent.structuredContent);
+      assert.equal(sendCount, 1);
+      const replyArguments = {
+        commentId: "comment-1",
+        message: "Gracias por comentar.",
+        idempotencyKey: "instagram-comment-reply-1",
+      };
+      const replySent = await client.callTool({
+        name: "instagram_responder_comentario",
+        arguments: replyArguments,
+      });
+      const replyReplay = await client.callTool({
+        name: "instagram_responder_comentario",
+        arguments: replyArguments,
+      });
+      assert.equal(replySent.isError, undefined);
+      assert.equal(replyReplay.isError, undefined);
+      assert.deepEqual(replyReplay.structuredContent, replySent.structuredContent);
+      assert.equal(sendCount, 2);
+    } finally {
+      globalThis.fetch = previousFetch;
+      if (previousToken === undefined) delete process.env.META_ACCESS_TOKEN;
+      else process.env.META_ACCESS_TOKEN = previousToken;
+      if (previousAccount === undefined) delete process.env.META_INSTAGRAM_ACCOUNT_ID;
+      else process.env.META_INSTAGRAM_ACCOUNT_ID = previousAccount;
+      currentAuth = authInfo(["editor"]);
+    }
     const event = (await press.snapshot()).events[0]!;
     const forumArguments = {
       action: "create_forum_thread",

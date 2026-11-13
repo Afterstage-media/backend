@@ -109,6 +109,28 @@ const textResult = (value: Record<string, unknown>) => ({
   content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
   structuredContent: value,
 });
+
+const runMcpIdempotentOperation = async <T extends Record<string, unknown>>(
+  press: PressManager,
+  actorId: string,
+  action: string,
+  idempotencyKey: string,
+  payload: Record<string, unknown>,
+  perform: () => Promise<T>,
+): Promise<T> => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("No se puede asegurar el reintento de esta operación ahora");
+  const requestHash = createHmac("sha256", secret).update(JSON.stringify({ action, payload })).digest("hex");
+  const operationKey = createHash("sha256").update(`mcp:${action}:${actorId}:${idempotencyKey}`).digest("hex");
+  const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+  if (operation.status === "conflict" || operation.status === "pending")
+    throw new IdempotentOperationError(operation.status);
+  if (operation.status === "completed") return operation.result as T;
+  const result = await perform();
+  await press.completeIdempotentOperation(operationKey, result);
+  return result;
+};
+
 const publicNote = ({ idempotencyKey: _idempotencyKey, ...note }: ContentItem) => note;
 const publicCarousel = (note: ContentItem, createdBy: string) => ({
   id: note.id,
@@ -566,15 +588,30 @@ export const createRemoteMcpServer = (
     "instagram_responder_mensaje",
     {
       title: "Responder un mensaje de Instagram",
-      description: "Envía un mensaje de texto a una persona que ya inició una conversación con Afterstage.",
-      inputSchema: { recipientId: z.string().trim().min(1).max(180), message: z.string().trim().min(1).max(1000) },
+      description:
+        "Envía un mensaje de texto a una persona que ya inició una conversación con Afterstage. Requiere una idempotencyKey única; al reintentar el mismo envío, reutilizá la clave para no duplicarlo. Una operación cuyo resultado externo sea incierto queda pendiente y no se reenvía automáticamente.",
+      inputSchema: {
+        recipientId: z.string().trim().min(1).max(180),
+        message: z.string().trim().min(1).max(1000),
+        idempotencyKey: idempotencyKeySchema,
+      },
       outputSchema: z.object({ recipientId: z.string(), messageId: z.unknown().nullable() }),
+      annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
-    async ({ recipientId, message }, extra) => {
-      requireInstagramAdmin(extra, "notes:write");
+    async ({ recipientId, message, idempotencyKey }, extra) => {
+      const actor = requireInstagramAdmin(extra, "notes:write");
       if (!instagramService) throw new Error("La integración de Instagram no está configurada");
-      return textResult(await instagramService.sendMessage(recipientId, message));
+      return textResult(
+        await runMcpIdempotentOperation(
+          press,
+          actor.userId,
+          "instagram-send-message",
+          idempotencyKey,
+          { recipientId, message },
+          () => instagramService.sendMessage(recipientId, message),
+        ),
+      );
     },
   );
   registerTool(
@@ -597,15 +634,30 @@ export const createRemoteMcpServer = (
     "instagram_responder_comentario",
     {
       title: "Responder un comentario de Instagram",
-      description: "Publica una respuesta a un comentario en una publicación de Afterstage.",
-      inputSchema: { commentId: z.string().trim().min(1).max(180), message: z.string().trim().min(1).max(2200) },
+      description:
+        "Publica una respuesta a un comentario en una publicación de Afterstage. Requiere una idempotencyKey única; al reintentar el mismo envío, reutilizá la clave para no duplicarlo. Una operación cuyo resultado externo sea incierto queda pendiente y no se reenvía automáticamente.",
+      inputSchema: {
+        commentId: z.string().trim().min(1).max(180),
+        message: z.string().trim().min(1).max(2200),
+        idempotencyKey: idempotencyKeySchema,
+      },
       outputSchema: z.object({ commentId: z.string(), replyId: z.unknown().nullable() }),
+      annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
-    async ({ commentId, message }, extra) => {
-      requireInstagramAdmin(extra, "notes:write");
+    async ({ commentId, message, idempotencyKey }, extra) => {
+      const actor = requireInstagramAdmin(extra, "notes:write");
       if (!instagramService) throw new Error("La integración de Instagram no está configurada");
-      return textResult(await instagramService.replyToComment(commentId, message));
+      return textResult(
+        await runMcpIdempotentOperation(
+          press,
+          actor.userId,
+          "instagram-reply-comment",
+          idempotencyKey,
+          { commentId, message },
+          () => instagramService.replyToComment(commentId, message),
+        ),
+      );
     },
   );
   registerTool(
