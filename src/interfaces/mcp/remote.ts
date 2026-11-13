@@ -920,7 +920,7 @@ export const createRemoteMcpServer = (
     {
       title: "Gestionar acreditación",
       description:
-        "Registra o actualiza una solicitud de acreditación de prensa. Para crear, enviá una idempotencyKey estable para evitar duplicados ante reintentos. No envía correos automáticamente; el envío queda bajo una acción separada.",
+        "Registra o actualiza una solicitud de acreditación de prensa. Para crear, podés enviar una idempotencyKey estable; si se omite, las solicitudes con el mismo contenido se deduplican. No envía correos automáticamente; el envío queda bajo una acción separada.",
       inputSchema: {
         action: z.enum(["crear", "actualizar"]).default("crear"),
         id: z.string().uuid().optional(),
@@ -943,15 +943,15 @@ export const createRemoteMcpServer = (
       const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
       const patch = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
       if (action === "crear") {
-        if (!idempotencyKey) throw new Error("Para crear una acreditación se necesita idempotencyKey");
         const accreditationInput = accreditationSchema.parse(patch);
         const secret = process.env.JWT_SECRET;
         if (!secret) throw new Error("No se puede asegurar el reintento de esta operación ahora");
         const requestHash = createHmac("sha256", secret)
           .update(JSON.stringify({ action, data: accreditationInput }))
           .digest("hex");
+        const operationIdentity = idempotencyKey ? `key:${idempotencyKey}` : `payload:${requestHash}`;
         const operationKey = createHash("sha256")
-          .update(`mcp-accreditation:${actor.userId}:${idempotencyKey}`)
+          .update(`mcp-accreditation:${actor.userId}:${operationIdentity}`)
           .digest("hex");
         const operation = await press.beginIdempotentOperation(operationKey, requestHash);
         if (operation.status === "conflict" || operation.status === "pending")
