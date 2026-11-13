@@ -597,7 +597,11 @@ test("permite recompartir una nota publicada en Instagram con el permiso corresp
   await withServer(app, async (base) => {
     const response = await fetch(`${base}/api/content/${item.id}/repost/instagram`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${testTokens.admin}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "repost-1",
+      },
       body: JSON.stringify({}),
     });
     assert.equal(response.status, 200);
