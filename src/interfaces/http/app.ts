@@ -13,7 +13,11 @@ import {
 import { PlatformManager } from "../../application/platform-manager.js";
 import { contentStatuses, type ContentItem } from "../../domain/content/types.js";
 import { socialTemplateSchema, type SocialTemplateRepository } from "../../domain/content/social-template.js";
-import { socialSeriesSchema, type SocialSeriesRepository } from "../../domain/content/social-series.js";
+import {
+  SocialSeriesConflictError,
+  socialSeriesSchema,
+  type SocialSeriesRepository,
+} from "../../domain/content/social-series.js";
 import { idempotencyKeySchema } from "../../domain/idempotency.js";
 import {
   correctedCarouselImageSchema,
@@ -1975,7 +1979,7 @@ export const createApp = async (
     const template = await templateStore.findBySlug(input.templateSlug);
     if (!template || template.status !== "published")
       return response.status(404).json({ error: "El formato seleccionado no está disponible" });
-    response.status(201).json(await seriesStore.save(input));
+    response.status(201).json(await seriesStore.create(input));
   });
   app.put("/api/social-series/:id", requireRole("admin", "editor"), async (request, response) => {
     const input = socialSeriesSchema.parse(request.body);
@@ -2748,15 +2752,17 @@ export const createApp = async (
     const status =
       error instanceof SessionVerificationUnavailable
         ? 503
-        : error instanceof PromotionIdempotencyConflictError
+        : error instanceof SocialSeriesConflictError
           ? 409
-          : error instanceof DuplicateContentError
+          : error instanceof PromotionIdempotencyConflictError
             ? 409
-            : error instanceof ZodError
-              ? 400
-              : /no encontrado/i.test(error.message)
-                ? 404
-                : 422;
+            : error instanceof DuplicateContentError
+              ? 409
+              : error instanceof ZodError
+                ? 400
+                : /no encontrado/i.test(error.message)
+                  ? 404
+                  : 422;
     const errorCode =
       typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
         ? error.code
@@ -2769,13 +2775,16 @@ export const createApp = async (
     });
     const production = process.env.NODE_ENV === "production";
     response.status(status).json({
-      error: production
-        ? status === 400
-          ? "Solicitud inválida"
-          : status === 404
-            ? "Recurso no encontrado"
-            : "No se pudo procesar la solicitud"
-        : error.message,
+      error:
+        error instanceof SocialSeriesConflictError
+          ? error.message
+          : production
+            ? status === 400
+              ? "Solicitud inválida"
+              : status === 404
+                ? "Recurso no encontrado"
+                : "No se pudo procesar la solicitud"
+            : error.message,
       details: production ? undefined : error instanceof ZodError ? error.issues : undefined,
     });
   };

@@ -1815,7 +1815,7 @@ export const createRemoteMcpServer = (
       }
       const template = await socialTemplates.findBySlug(parsed.templateSlug);
       if (!template || template.status !== "published") throw new Error("El formato social no está disponible");
-      const series = await socialSeries.save(parsed);
+      const series = await socialSeries.create(parsed);
       return textResult({ series });
     },
   );

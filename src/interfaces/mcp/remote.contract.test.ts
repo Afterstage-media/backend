@@ -214,7 +214,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       assert.equal((tool.annotations as { idempotentHint?: boolean } | undefined)?.idempotentHint, true);
     }
     const template = (await socialTemplates.list({ status: "published", type: "carousel" }))[0]!;
-    const series = await socialSeries.save({
+    const series = await socialSeries.create({
       slug: "contract-series",
       name: "Serie de prueba",
       description: "Serie de contrato",
