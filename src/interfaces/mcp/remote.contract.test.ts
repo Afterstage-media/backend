@@ -33,6 +33,12 @@ const authInfo = (roles: string[]) => ({
 });
 
 test("expone contratos de salida como objetos y aplica filtros, límites y roles MCP", async (context) => {
+  const previousJwtSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "mcp-contract-idempotency-secret";
+  context.after(() => {
+    if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousJwtSecret;
+  });
   const directoryPath = await mkdtemp(path.join(os.tmpdir(), "afterstage-mcp-contract-"));
   const mediaPath = await mkdtemp(path.join(os.tmpdir(), "afterstage-mcp-contract-media-"));
   context.after(() => rm(directoryPath, { recursive: true, force: true }));
@@ -386,6 +392,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       name: "gestionar_acreditacion",
       arguments: {
         action: "crear",
+        idempotencyKey: "accreditation-contract-1",
         eventId: createdEventResult.id,
         contactId: contact.id,
         subject: "Acreditación MCP",
