@@ -74,11 +74,7 @@ import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/ro
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
-import {
-  insuranceProductLabels,
-  insuranceRequestSchema,
-  type InsuranceProduct,
-} from "../../domain/platform/types.js";
+import { insuranceProductLabels, insuranceRequestSchema, type InsuranceProduct } from "../../domain/platform/types.js";
 import {
   exchangeFacebookInstagramCode,
   exchangeInstagramCode,
@@ -1146,9 +1142,7 @@ export const createApp = async (
     const operationKey = createHash("sha256")
       .update(`public-insurance-request:${parsedIdempotencyKey.data}`)
       .digest("hex");
-    const requestHash = createHmac("sha256", idempotencySecret)
-      .update(JSON.stringify(insuranceInput))
-      .digest("hex");
+    const requestHash = createHmac("sha256", idempotencySecret).update(JSON.stringify(insuranceInput)).digest("hex");
     const operation = await press.beginIdempotentOperation(operationKey, requestHash);
     if (operation.status === "conflict" || operation.status === "pending") {
       const error = new IdempotentOperationError(operation.status);
