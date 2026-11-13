@@ -367,6 +367,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const createdEvent = await client.callTool({
       name: "crear_evento",
       arguments: {
+        idempotencyKey: "event-contract-1",
         name: "Fecha creada por MCP",
         artist: "Artista de prueba",
         venue: "Sala MCP",

@@ -902,16 +902,35 @@ export const createRemoteMcpServer = (
     {
       title: "Crear evento",
       description:
-        "Agrega un recital, fecha o encuentro a la agenda editorial de Afterstage. Artista, fecha, venue, ciudad, coordenadas y género son obligatorios.",
-      inputSchema: mcpCreateEventSchema.shape,
+        "Agrega un recital, fecha o encuentro a la agenda editorial de Afterstage. Las solicitudes idénticas se deduplican; también podés enviar una idempotencyKey estable. Artista, fecha, venue, ciudad, coordenadas y género son obligatorios.",
+      inputSchema: { ...mcpCreateEventSchema.shape, idempotencyKey: idempotencyKeySchema.optional() },
       outputSchema: eventOutputSchema,
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
     },
-    async (input, extra) => {
+    async ({ idempotencyKey, ...input }, extra) => {
       const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
-      const event = await press.createEvent(input);
-      return textResult({ ...event, createdBy: actor.userId });
+      const eventInput = mcpCreateEventSchema.parse(input);
+      const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error("No se puede asegurar el reintento de esta operación ahora");
+      const requestHash = createHmac("sha256", secret)
+        .update(JSON.stringify({ action: "crear_evento", data: eventInput }))
+        .digest("hex");
+      const operationIdentity = idempotencyKey ? `key:${idempotencyKey}` : `payload:${requestHash}`;
+      const operationKey = createHash("sha256").update(`mcp-event:${actor.userId}:${operationIdentity}`).digest("hex");
+      const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+      if (operation.status === "conflict" || operation.status === "pending")
+        throw new IdempotentOperationError(operation.status);
+      if (operation.status === "completed")
+        return textResult({
+          ...(operation.result as { id: string }),
+          createdBy: actor.userId,
+          replayed: true,
+        });
+      const event = await press.createEvent(eventInput);
+      const result = { id: event.id };
+      await press.completeIdempotentOperation(operationKey, result);
+      return textResult({ ...result, createdBy: actor.userId, replayed: false });
     },
   );
 
