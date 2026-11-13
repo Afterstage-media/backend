@@ -84,6 +84,7 @@ import {
   setAuthCookie,
   type UserDirectory,
 } from "../http/security.js";
+import { log } from "../http/logger.js";
 
 type McpExtra = { authInfo?: { scopes: string[]; extra?: Record<string, unknown> } };
 
@@ -458,6 +459,7 @@ export const createRemoteMcpServer = (
   instagramConnections?: InstagramConnectionStore,
   socialSeries?: SocialSeriesRepository,
   platform: PlatformManager = new PlatformManager(),
+  correlationId?: string,
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
@@ -484,7 +486,26 @@ export const createRemoteMcpServer = (
     callback: ToolCallback<InputArgs>,
   ) => {
     if (allowedTools && !allowedTools.has(name)) return;
-    return server.registerTool(name, config, callback);
+    return server.registerTool(name, config, async (input, extra) => {
+      const startedAt = Date.now();
+      try {
+        const result = await callback(input, extra);
+        log("info", "mcp_tool_completed", {
+          correlationId,
+          tool: name,
+          durationMs: Date.now() - startedAt,
+        });
+        return result;
+      } catch (error) {
+        log("error", "mcp_tool_failed", {
+          correlationId,
+          tool: name,
+          durationMs: Date.now() - startedAt,
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        });
+        throw error;
+      }
+    });
   };
 
   registerTool(
@@ -2562,6 +2583,7 @@ export const mountRemoteMcp = (
         instagramConnections,
         socialSeries,
         platform,
+        (request as typeof request & { correlationId?: string }).correlationId,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
