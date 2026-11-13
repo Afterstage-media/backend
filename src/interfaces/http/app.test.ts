@@ -61,7 +61,6 @@ const withServer = async (
 test("arma una solicitud de seguros lista para copiar y pegar por producto", () => {
   const text = insuranceNotificationText({
     name: "Productora Completa",
-    dni: "30123456",
     organization: "Productora Completa SRL",
     email: "cotizaciones@example.com",
     phone: "",
@@ -84,7 +83,7 @@ test("arma una solicitud de seguros lista para copiar y pegar por producto", () 
   assert.match(text, /Asunto sugerido: Solicitud de cotización · Accidentes personales \+ ART/);
   assert.match(text, /\[ACCIDENTES PERSONALES\]/);
   assert.match(text, /\[ART\]/);
-  assert.match(text, /DNI: 30123456/);
+  assert.doesNotMatch(text, /DNI:/);
 });
 
 test("rechaza login y registro sin HTTPS y no acepta contraseñas en claro", async (context) => {

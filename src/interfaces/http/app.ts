@@ -221,7 +221,6 @@ const runSocialDraftIdempotent = async <T>(
 
 export const insuranceNotificationText = (item: {
   name: string;
-  dni?: string;
   organization: string;
   email: string;
   phone: string;
@@ -261,7 +260,6 @@ export const insuranceNotificationText = (item: {
       "",
       "DATOS DEL SOLICITANTE",
       `Nombre y apellido: ${item.name}`,
-      `DNI: ${item.dni || "No indicado"}`,
       `Organización: ${item.organization || "No indicada"}`,
       `Email: ${item.email}`,
       `Teléfono: ${item.phone || "No indicado"}`,
