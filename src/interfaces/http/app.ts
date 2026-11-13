@@ -75,8 +75,13 @@ import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
 import {
+  coverageApplicationSchema,
+  coverageRequestSchema,
+  forumPostSchema,
+  forumThreadSchema,
   insuranceProductLabels,
   insuranceRequestSchema,
+  photographerProfileSchema,
   transportRequestSchema,
   type InsuranceProduct,
 } from "../../domain/platform/types.js";
@@ -126,6 +131,56 @@ const insuranceRecipients = (): string[] =>
 
 const insuranceProductNames = (coverageTypes: InsuranceProduct[] | undefined, fallback: string): string[] =>
   coverageTypes?.length ? coverageTypes.map((product) => insuranceProductLabels[product]) : fallback ? [fallback] : [];
+
+const createIdempotentPublicOperation = async <T extends object>(
+  request: express.Request,
+  response: express.Response,
+  press: PressManager,
+  operation: string,
+  resourceId: string,
+  payload: unknown,
+  create: () => Promise<T>,
+): Promise<{ body: T; replayed: boolean } | undefined> => {
+  const parsedKey = idempotencyKeySchema.safeParse(request.get("Idempotency-Key"));
+  if (!parsedKey.success) {
+    response.status(400).json({ error: "Para enviar el formulario, incluí una clave de idempotencia válida." });
+    return undefined;
+  }
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    response.status(503).json({ error: "No se puede asegurar el reintento del formulario ahora." });
+    return undefined;
+  }
+  const normalized = { payload, ...(resourceId ? { resourceId } : {}) };
+  const requestHash = createHmac("sha256", secret).update(JSON.stringify(normalized)).digest("hex");
+  const operationKey = createHash("sha256").update(`public-${operation}:${resourceId}:${parsedKey.data}`).digest("hex");
+  const operationResult = await press.beginIdempotentOperation(operationKey, requestHash);
+  if (operationResult.status === "conflict" || operationResult.status === "pending") {
+    response.status(409).json({
+      error:
+        operationResult.status === "conflict"
+          ? "La clave de idempotencia ya se usó con otros datos."
+          : "El formulario sigue procesándose. Revisá su estado antes de volver a enviarlo.",
+      outcome: operationResult.status,
+    });
+    return undefined;
+  }
+  if (operationResult.status === "completed") return { body: operationResult.result as T, replayed: true };
+  try {
+    const body = await create();
+    await press.completeIdempotentOperation(operationKey, body);
+    return { body, replayed: false };
+  } catch (error) {
+    const requestContext = request as express.Request & { correlationId?: string };
+    log("error", "public_submission_create_failed", {
+      correlationId: requestContext.correlationId,
+      operation,
+      resourceId: resourceId || undefined,
+      errorType: error instanceof Error ? error.name : "UnknownError",
+    });
+    throw error;
+  }
+};
 
 export const insuranceNotificationText = (item: {
   name: string;
@@ -1091,30 +1146,66 @@ export const createApp = async (
     response.json((await platform.publicPhotographers(query, city)).slice(0, parsePublicLimit(request.query.limit)));
   });
   app.post("/api/public/photographers", new RateLimiter(5, 60_000).middleware, async (request, response) => {
-    const profile = await platform.createPhotographer({ ...request.body, status: "pending" });
-    response.status(201).json({
-      id: profile.id,
-      status: profile.status,
-      message: "Recibimos tu perfil. Lo vamos a revisar antes de publicarlo en la red.",
-    });
+    const input = photographerProfileSchema.parse({ ...request.body, status: "pending" });
+    const result = await createIdempotentPublicOperation(
+      request,
+      response,
+      press,
+      "photographer-profile",
+      "",
+      input,
+      async () => {
+        const profile = await platform.createPhotographer(input);
+        return {
+          id: profile.id,
+          status: profile.status,
+          message: "Recibimos tu perfil. Lo vamos a revisar antes de publicarlo en la red.",
+        };
+      },
+    );
+    if (result) response.status(result.replayed ? 200 : 201).json(result.body);
   });
   app.get("/api/public/coverage-requests", async (request, response) => {
     const eventId = typeof request.query.eventId === "string" ? request.query.eventId : undefined;
     response.json((await platform.publicCoverageRequests(eventId)).slice(0, parsePublicLimit(request.query.limit)));
   });
   app.post("/api/public/coverage-requests", new RateLimiter(5, 60_000).middleware, async (request, response) => {
+    const input = coverageRequestSchema.parse({ ...request.body, status: "open" });
     const snapshot = await press.snapshot();
-    if (request.body?.eventId && !snapshot.events.some((event) => event.id === request.body.eventId))
+    if (input.eventId && !snapshot.events.some((event) => event.id === input.eventId))
       return response.status(404).json({ error: "Evento no encontrado" });
-    const item = await platform.createCoverageRequest({ ...request.body, status: "open" });
-    response.status(201).json({ id: item.id, status: item.status, message: "La búsqueda quedó publicada." });
+    const result = await createIdempotentPublicOperation(
+      request,
+      response,
+      press,
+      "coverage-request",
+      "",
+      input,
+      async () => {
+        const item = await platform.createCoverageRequest(input);
+        return { id: item.id, status: item.status, message: "La búsqueda quedó publicada." };
+      },
+    );
+    if (result) response.status(result.replayed ? 200 : 201).json(result.body);
   });
   app.post(
     "/api/public/coverage-requests/:id/applications",
     new RateLimiter(5, 60_000).middleware,
     async (request, response) => {
-      const item = await platform.createCoverageApplication({ ...request.body, requestId: String(request.params.id) });
-      response.status(201).json({ id: item.id, status: item.status, message: "Recibimos tu postulación." });
+      const input = coverageApplicationSchema.parse({ ...request.body, requestId: String(request.params.id) });
+      const result = await createIdempotentPublicOperation(
+        request,
+        response,
+        press,
+        "coverage-application",
+        String(request.params.id),
+        input,
+        async () => {
+          const item = await platform.createCoverageApplication(input);
+          return { id: item.id, status: item.status, message: "Recibimos tu postulación." };
+        },
+      );
+      if (result) response.status(result.replayed ? 200 : 201).json(result.body);
     },
   );
   app.post("/api/public/insurance-requests", new RateLimiter(5, 60_000).middleware, async (request, response) => {
@@ -1246,21 +1337,37 @@ export const createApp = async (
       const snapshot = await press.snapshot();
       if (!snapshot.events.some((event) => event.id === request.params.id && !isDemoEvent(event)))
         return response.status(404).json({ error: "Evento no encontrado" });
-      const item = await platform.createForumThread({
-        ...request.body,
-        eventId: String(request.params.id),
-        status: "visible",
-      });
-      response.status(201).json({ id: item.id, message: "Abrimos la conversación." });
+      const input = forumThreadSchema.parse({ ...request.body, eventId: String(request.params.id), status: "visible" });
+      const result = await createIdempotentPublicOperation(
+        request,
+        response,
+        press,
+        "forum-thread",
+        String(request.params.id),
+        input,
+        async () => {
+          const item = await platform.createForumThread(input);
+          return { id: item.id, message: "Abrimos la conversación." };
+        },
+      );
+      if (result) response.status(result.replayed ? 200 : 201).json(result.body);
     },
   );
   app.post("/api/public/forum/threads/:id/posts", new RateLimiter(10, 60_000).middleware, async (request, response) => {
-    const item = await platform.createForumPost({
-      ...request.body,
-      threadId: String(request.params.id),
-      status: "visible",
-    });
-    response.status(201).json({ id: item.id, message: "Sumamos tu respuesta." });
+    const input = forumPostSchema.parse({ ...request.body, threadId: String(request.params.id), status: "visible" });
+    const result = await createIdempotentPublicOperation(
+      request,
+      response,
+      press,
+      "forum-post",
+      String(request.params.id),
+      input,
+      async () => {
+        const item = await platform.createForumPost(input);
+        return { id: item.id, message: "Sumamos tu respuesta." };
+      },
+    );
+    if (result) response.status(result.replayed ? 200 : 201).json(result.body);
   });
   app.get("/api/public/events/:id/transport", async (request, response) => {
     const snapshot = await press.snapshot();
