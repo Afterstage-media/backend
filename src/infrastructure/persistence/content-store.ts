@@ -34,17 +34,32 @@ export interface ContentRepository {
   ): Promise<ContentItem | undefined>;
   remove(id: string): Promise<boolean>;
   claimForPublishing(id: string): Promise<ContentItem | undefined>;
+  beginInstagramRepost(key: string, resourceKey: string, requestHash: string): Promise<IdempotentOperationResult>;
+  completeInstagramRepost(key: string, result: unknown): Promise<void>;
   incrementViews(id: string): Promise<ContentItem | undefined>;
 }
+
+export type IdempotentOperationResult =
+  { status: "started" } | { status: "pending" } | { status: "completed"; result: unknown } | { status: "conflict" };
+
+type InstagramRepostOperation = {
+  key: string;
+  resourceKey: string;
+  requestHash: string;
+  status: "pending" | "completed";
+  result?: unknown;
+};
 
 export class ContentStore implements ContentRepository {
   private readonly file: string;
   private readonly lock: string;
+  private readonly instagramRepostOperationsFile: string;
   private queue: Promise<unknown> = Promise.resolve();
 
   constructor(dataDir = process.env.DATA_DIR ?? path.resolve("data")) {
     this.file = path.join(dataDir, "content.json");
     this.lock = path.join(dataDir, ".content.lock");
+    this.instagramRepostOperationsFile = path.join(dataDir, "content-instagram-repost-operations.json");
   }
 
   private async read(): Promise<Database> {
@@ -217,6 +232,59 @@ export class ContentStore implements ContentRepository {
       database.contents[index] = updated;
       await this.write(database);
       return updated;
+    });
+  }
+
+  async beginInstagramRepost(
+    key: string,
+    resourceKey: string,
+    requestHash: string,
+  ): Promise<IdempotentOperationResult> {
+    return this.serialize(async () => {
+      let operations: InstagramRepostOperation[] = [];
+      try {
+        operations = JSON.parse(
+          await readFile(this.instagramRepostOperationsFile, "utf8"),
+        ) as InstagramRepostOperation[];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const existing = operations.find((operation) => operation.key === key);
+      if (existing) {
+        if (existing.requestHash !== requestHash) return { status: "conflict" };
+        if (existing.status === "completed") return { status: "completed", result: existing.result };
+        return { status: "pending" };
+      }
+      if (operations.some((operation) => operation.resourceKey === resourceKey && operation.status === "pending")) {
+        return { status: "pending" };
+      }
+      operations.push({ key, resourceKey, requestHash, status: "pending" });
+      await mkdir(path.dirname(this.instagramRepostOperationsFile), { recursive: true });
+      const temporary = `${this.instagramRepostOperationsFile}.${process.pid}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(operations)}\n`, "utf8");
+      await rename(temporary, this.instagramRepostOperationsFile);
+      return { status: "started" };
+    });
+  }
+
+  async completeInstagramRepost(key: string, result: unknown): Promise<void> {
+    await this.serialize(async () => {
+      let operations: InstagramRepostOperation[];
+      try {
+        operations = JSON.parse(
+          await readFile(this.instagramRepostOperationsFile, "utf8"),
+        ) as InstagramRepostOperation[];
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Operación idempotente no encontrada");
+        throw error;
+      }
+      const operation = operations.find((item) => item.key === key);
+      if (!operation || operation.status !== "pending") throw new Error("Operación idempotente no encontrada");
+      operation.status = "completed";
+      operation.result = result;
+      const temporary = `${this.instagramRepostOperationsFile}.${process.pid}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(operations)}\n`, "utf8");
+      await rename(temporary, this.instagramRepostOperationsFile);
     });
   }
 

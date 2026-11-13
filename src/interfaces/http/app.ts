@@ -5,11 +5,16 @@ import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
 import multer from "multer";
 import { ZodError, z } from "zod";
-import { ContentManager, DuplicateContentError } from "../../application/content-manager.js";
+import {
+  ContentIdempotentOperationError,
+  ContentManager,
+  DuplicateContentError,
+} from "../../application/content-manager.js";
 import { PlatformManager } from "../../application/platform-manager.js";
 import { contentStatuses, type ContentItem } from "../../domain/content/types.js";
 import { socialTemplateSchema, type SocialTemplateRepository } from "../../domain/content/social-template.js";
 import { socialSeriesSchema, type SocialSeriesRepository } from "../../domain/content/social-series.js";
+import { idempotencyKeySchema } from "../../domain/idempotency.js";
 import {
   correctedCarouselImageSchema,
   instagramCarouselInputSchema,
@@ -2175,7 +2180,28 @@ export const createApp = async (
       response.status(400).json({ error: "La nota no tiene Instagram entre sus canales" });
       return;
     }
-    response.json(await manager.repostInstagram(String(request.params.id), input.dryRun));
+    const parsedIdempotencyKey = idempotencyKeySchema.safeParse(request.get("Idempotency-Key"));
+    if (!input.dryRun && (!parsedIdempotencyKey.success || !actor)) {
+      response.status(400).json({ error: "Para recompartir la nota, incluí una clave Idempotency-Key válida." });
+      return;
+    }
+    try {
+      response.json(
+        await manager.repostInstagram(
+          String(request.params.id),
+          input.dryRun,
+          !input.dryRun && parsedIdempotencyKey.success && actor
+            ? { key: parsedIdempotencyKey.data, actorId: actor.id }
+            : undefined,
+        ),
+      );
+    } catch (error) {
+      if (error instanceof ContentIdempotentOperationError) {
+        response.status(409).json({ error: error.message, outcome: error.reason });
+        return;
+      }
+      throw error;
+    }
   });
   app.post("/api/assets", requireRole("admin", "editor"), upload.array("images", 10), async (request, response) => {
     const uploaded = request.files as Express.Multer.File[];

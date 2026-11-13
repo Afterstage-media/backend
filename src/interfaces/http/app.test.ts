@@ -397,7 +397,11 @@ test("expone el catálogo público sin contactos privados y protege el directori
     assert.equal((await privateResponse.json())[0].contacts[0].email, "private@example.com");
     const verification = await fetch(`${base}/api/directory/${publicItem.id}/verification`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${testTokens.admin}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": "repost-1",
+      },
       body: JSON.stringify({ status: "verified", reliabilityScore: 90 }),
     });
     assert.equal(verification.status, 200);
@@ -604,7 +608,36 @@ test("permite recompartir una nota publicada en Instagram con el permiso corresp
       (
         await fetch(`${base}/api/content/${item.id}/repost/instagram`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${testTokens.editor}`, "Content-Type": "application/json" },
+          headers: {
+            Authorization: `Bearer ${testTokens.admin}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": "repost-1",
+          },
+          body: JSON.stringify({}),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(calls.length, 2);
+    assert.equal(
+      (
+        await fetch(`${base}/api/content/${item.id}/repost/instagram`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${testTokens.admin}`, "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await fetch(`${base}/api/content/${item.id}/repost/instagram`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${testTokens.editor}`,
+            "Content-Type": "application/json",
+            "Idempotency-Key": "repost-2",
+          },
           body: JSON.stringify({}),
         })
       ).status,
