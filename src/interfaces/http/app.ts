@@ -2777,7 +2777,7 @@ export const createApp = async (
     response.status(status).json({
       error:
         error instanceof SocialSeriesConflictError
-          ? error.message
+          ? "social_series_conflict"
           : production
             ? status === 400
               ? "Solicitud inválida"
@@ -2785,6 +2785,7 @@ export const createApp = async (
                 ? "Recurso no encontrado"
                 : "No se pudo procesar la solicitud"
             : error.message,
+      code: error instanceof SocialSeriesConflictError ? "SOCIAL_SERIES_CONFLICT" : undefined,
       details: production ? undefined : error instanceof ZodError ? error.issues : undefined,
     });
   };

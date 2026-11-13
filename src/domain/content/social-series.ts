@@ -78,6 +78,23 @@ export const socialSeriesSchema = socialSeriesInputSchema.superRefine((series, c
 export type SocialSeries = z.infer<typeof socialSeriesSchema> & { id: string };
 export type SocialSeriesInput = z.input<typeof socialSeriesSchema>;
 
+export const socialSeriesCreationIdentity = (input: SocialSeriesInput) => {
+  const series = socialSeriesSchema.parse(input);
+  return JSON.stringify({
+    slug: series.slug,
+    name: series.name,
+    description: series.description,
+    templateSlug: series.templateSlug,
+    editorialBrief: series.editorialBrief,
+    cadence: series.cadence,
+    nextRunAt: series.nextRunAt,
+    active: series.active,
+    autoPublish: series.autoPublish,
+    publishTime: series.publishTime,
+    fixedStoryTemplates: series.fixedStoryTemplates,
+  });
+};
+
 export class SocialSeriesConflictError extends Error {
   constructor() {
     super("Ya existe una serie con ese nombre o identificador. Editá la serie existente o elegí otro nombre.");

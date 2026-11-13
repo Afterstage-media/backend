@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Collection } from "mongodb";
 import {
   SocialSeriesConflictError,
+  socialSeriesCreationIdentity,
   socialSeriesSchema,
   type SocialSeries,
   type SocialSeriesInput,
@@ -192,6 +193,11 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
 
   async create(input: SocialSeriesInput) {
     const parsed = socialSeriesSchema.parse(input);
+    const existing = await this.findBySlug(parsed.slug);
+    if (existing) {
+      if (socialSeriesCreationIdentity(existing) === socialSeriesCreationIdentity(parsed)) return existing;
+      throw new SocialSeriesConflictError();
+    }
     const timestampNow = timestamp();
     const next = socialSeriesSchema.parse({
       ...parsed,
@@ -207,7 +213,11 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
     try {
       await this.collection.insertOne(record);
     } catch (error) {
-      if ((error as { code?: number }).code === 11000) throw new SocialSeriesConflictError();
+      if ((error as { code?: number }).code === 11000) {
+        const raced = await this.findBySlug(parsed.slug);
+        if (raced && socialSeriesCreationIdentity(raced) === socialSeriesCreationIdentity(parsed)) return raced;
+        throw new SocialSeriesConflictError();
+      }
       throw error;
     }
     return normalize(record);
@@ -274,9 +284,12 @@ export class MemorySocialSeriesStore implements SocialSeriesRepository {
   }
   async create(input: SocialSeriesInput) {
     const parsed = socialSeriesSchema.parse(input);
-    if (this.series.some((item) => item.slug === parsed.slug || (parsed.id && item.id === parsed.id))) {
+    const existing = this.series.find((item) => item.slug === parsed.slug);
+    if (existing) {
+      if (socialSeriesCreationIdentity(existing) === socialSeriesCreationIdentity(parsed)) return existing;
       throw new SocialSeriesConflictError();
     }
+    if (parsed.id && this.series.some((item) => item.id === parsed.id)) throw new SocialSeriesConflictError();
     const timestampNow = timestamp();
     const next = socialSeriesSchema.parse({
       ...parsed,
