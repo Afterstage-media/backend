@@ -1,6 +1,7 @@
 import type { Collection } from "mongodb";
 import type { MonetizationPromotion, MonetizationStatus } from "../../domain/monetization/types.js";
 import type { MonetizationRepository } from "../../application/monetization-manager.js";
+import { PromotionIdempotencyConflictError } from "../../application/monetization-manager.js";
 
 type RecordShape = MonetizationPromotion & { _id: string };
 export class MongoMonetizationStore implements MonetizationRepository {
@@ -46,6 +47,7 @@ export class MongoMonetizationStore implements MonetizationRepository {
       if ((error as { code?: number }).code === 11000) {
         const existing = await this.findByIdempotencyKey(key);
         if (existing) return existing as T;
+        throw new PromotionIdempotencyConflictError("La solicitud ya se está procesando. Esperá un momento y reintentá.");
       }
       throw error;
     }
