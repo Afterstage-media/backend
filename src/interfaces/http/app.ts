@@ -69,7 +69,7 @@ import { MemorySocialSeriesStore } from "../../infrastructure/persistence/social
 import { SocialTemplateRenderer } from "../../infrastructure/integrations/social-template-renderer.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
-import { MailboxManager } from "../../application/mailbox-manager.js";
+import { MailboxManager, MailSendingNotConfiguredError } from "../../application/mailbox-manager.js";
 import { inboundMailSchema, mailReplyIdempotencyKeySchema, mailReplySchema } from "../../domain/mail/types.js";
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
@@ -1645,7 +1645,10 @@ export const createApp = async (
       response.status(503).json({ error: "mailbox_not_configured" });
       return;
     }
-    response.json({ threads: await mailboxManager.listThreads() });
+    response.json({
+      threads: await mailboxManager.listThreads(),
+      replyAvailable: mailboxManager.replyAvailable,
+    });
   });
   app.get("/api/mail/threads/:id", requireRole("admin", "editor", "press", "community"), async (request, response) => {
     if (!mailboxManager) {
@@ -1781,9 +1784,26 @@ export const createApp = async (
           response.status(409).json({ error: error.message, outcome: error.reason });
           return;
         }
+        if (error instanceof MailSendingNotConfiguredError) {
+          response.status(503).json({ error: "mail_sending_not_configured" });
+          return;
+        }
+        const mailError = error as { code?: unknown; responseCode?: unknown };
+        const errorCode =
+          typeof mailError?.code === "string" && /^E[A-Z0-9_]{1,31}$/.test(mailError.code) ? mailError.code : undefined;
+        const responseCode =
+          typeof mailError?.responseCode === "number" &&
+          Number.isInteger(mailError.responseCode) &&
+          mailError.responseCode >= 100 &&
+          mailError.responseCode <= 599
+            ? mailError.responseCode
+            : undefined;
+        const requestContext = request as typeof request & { correlationId?: string };
         log("error", "mail_reply_failed", {
-          error: error instanceof Error ? error.message : String(error),
-          threadId: String(request.params.id),
+          correlationId: requestContext.correlationId,
+          errorType: error instanceof Error ? error.name : "UnknownError",
+          ...(errorCode ? { errorCode } : {}),
+          ...(responseCode ? { responseCode } : {}),
         });
         const status = error instanceof Error && error.message === "Conversación no encontrada" ? 404 : 502;
         response.status(status).json({ error: status === 404 ? "thread_not_found" : "mail_reply_failed" });
