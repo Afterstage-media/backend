@@ -1119,11 +1119,17 @@ export const createApp = async (
   app.post("/api/public/insurance-requests", new RateLimiter(5, 60_000).middleware, async (request, response) => {
     const rawIdempotencyKey = request.get("Idempotency-Key");
     const parsedIdempotencyKey = idempotencyKeySchema.safeParse(rawIdempotencyKey);
-    if (!parsedIdempotencyKey.success)
-      return response.status(400).json({ error: "Para enviar la solicitud necesitás una clave de reintento válida." });
+    if (!parsedIdempotencyKey.success) {
+      return response.status(400).json({
+        error: "Para enviar la solicitud necesitás una clave de reintento válida.",
+      });
+    }
     const idempotencySecret = process.env.JWT_SECRET;
-    if (!idempotencySecret)
-      return response.status(503).json({ error: "No se puede asegurar el reintento de la solicitud ahora." });
+    if (!idempotencySecret) {
+      return response.status(503).json({
+        error: "No se puede asegurar el reintento de la solicitud ahora.",
+      });
+    }
     const snapshot = await press.snapshot();
     if (request.body?.eventId && !snapshot.events.some((event) => event.id === request.body.eventId))
       return response.status(404).json({ error: "Evento no encontrado" });
