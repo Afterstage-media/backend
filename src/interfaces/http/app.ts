@@ -21,6 +21,7 @@ import {
   instagramCarouselUpdateSchema,
   instagramSocialPublicationInputSchema,
   instagramSocialPublicationUpdateSchema,
+  publicInstagramDraft,
 } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import { IdempotentOperationError, PressManager } from "../../application/press-manager.js";
@@ -189,6 +190,29 @@ const createIdempotentPublicOperation = async <T extends object>(
     });
     throw error;
   }
+};
+
+const runSocialDraftIdempotent = async <T>(
+  press: PressManager,
+  actorId: string,
+  action: string,
+  rawKey: string | undefined,
+  payload: Record<string, unknown>,
+  perform: () => Promise<T>,
+): Promise<T> => {
+  const parsedKey = idempotencyKeySchema.safeParse(rawKey);
+  if (!parsedKey.success) throw new Error("Para guardar el borrador, incluí una clave Idempotency-Key válida.");
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("No se puede asegurar el reintento de este borrador ahora.");
+  const requestHash = createHmac("sha256", secret).update(JSON.stringify({ action, payload })).digest("hex");
+  const operationKey = createHash("sha256").update(`mcp:${action}:${actorId}:${parsedKey.data}`).digest("hex");
+  const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+  if (operation.status === "conflict" || operation.status === "pending")
+    throw new IdempotentOperationError(operation.status);
+  if (operation.status === "completed") return operation.result as T;
+  const result = await perform();
+  await press.completeIdempotentOperation(operationKey, result);
+  return result;
 };
 
 export const insuranceNotificationText = (item: {
@@ -1959,30 +1983,31 @@ export const createApp = async (
     }
     const actor = (request as typeof request & { actor?: { id: string } }).actor;
     if (!actor?.id) return response.status(401).json({ error: "No autorizado" });
-    const item = await manager.createInstagramCarousel(input, actor.id, template);
-    if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
-    response.status(201).json({
-      id: item.id,
-      status: item.status,
-      title: item.title,
-      instagramCopy: item.instagramCopy,
-      templateId: item.socialTemplateId,
-      templateVersion: item.socialTemplateVersion,
-      images: item.assets.map((asset, index) => ({
-        slide: index + 1,
-        url: asset.url,
-        altText: asset.altText,
-        credit: asset.credit,
-      })),
-      slides: (item.socialSlides ?? []).map((slide, index) => ({
-        slide: index + 1,
-        sourceAssetId: slide.source.id,
-        imageUrl: slide.source.url,
-        text: slide.text,
-        altText: slide.source.altText,
-        credit: slide.source.credit,
-      })),
-    });
+    try {
+      const result = await runSocialDraftIdempotent(
+        press,
+        actor.id,
+        "crear_carrusel_instagram",
+        request.get("Idempotency-Key"),
+        input,
+        async () => {
+          const item = await manager.createInstagramCarousel(input, actor.id, template);
+          if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
+          return publicInstagramDraft(item, actor.id);
+        },
+      );
+      response.status(201).json(result);
+    } catch (error) {
+      if (error instanceof IdempotentOperationError) {
+        response.status(409).json({ error: error.message, outcome: error.reason });
+        return;
+      }
+      if (error instanceof Error && error.message.startsWith("Para guardar el borrador")) {
+        response.status(400).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
   });
   app.post("/api/social-publication", requireRole("admin", "editor"), async (request, response) => {
     const input = instagramSocialPublicationInputSchema.parse(request.body);
@@ -1998,30 +2023,31 @@ export const createApp = async (
     }
     const actor = (request as typeof request & { actor?: { id: string } }).actor;
     if (!actor?.id) return response.status(401).json({ error: "No autorizado" });
-    const item = await manager.createInstagramSocialPublication(input, actor.id, template);
-    if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
-    response.status(201).json({
-      id: item.id,
-      status: item.status,
-      title: item.title,
-      instagramCopy: item.instagramCopy,
-      templateId: item.socialTemplateId,
-      templateVersion: item.socialTemplateVersion,
-      images: item.assets.map((asset, index) => ({
-        slide: index + 1,
-        url: asset.url,
-        altText: asset.altText,
-        credit: asset.credit,
-      })),
-      slides: (item.socialSlides ?? []).map((slide, index) => ({
-        slide: index + 1,
-        sourceAssetId: slide.source.id,
-        imageUrl: slide.source.url,
-        text: slide.text,
-        altText: slide.source.altText,
-        credit: slide.source.credit,
-      })),
-    });
+    try {
+      const result = await runSocialDraftIdempotent(
+        press,
+        actor.id,
+        "crear_pieza_instagram",
+        request.get("Idempotency-Key"),
+        input,
+        async () => {
+          const item = await manager.createInstagramSocialPublication(input, actor.id, template);
+          if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
+          return publicInstagramDraft(item, actor.id);
+        },
+      );
+      response.status(201).json(result);
+    } catch (error) {
+      if (error instanceof IdempotentOperationError) {
+        response.status(409).json({ error: error.message, outcome: error.reason });
+        return;
+      }
+      if (error instanceof Error && error.message.startsWith("Para guardar el borrador")) {
+        response.status(400).json({ error: error.message });
+        return;
+      }
+      throw error;
+    }
   });
   app.put("/api/social-publication/:id", requireRole("admin", "editor"), async (request, response) => {
     const input = instagramSocialPublicationUpdateSchema.parse(request.body);

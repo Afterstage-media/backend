@@ -1,4 +1,29 @@
 import { z } from "zod";
+import type { ContentItem } from "./types.js";
+
+export const publicInstagramDraft = (note: ContentItem, createdBy: string) => ({
+  id: note.id,
+  status: note.status,
+  createdBy,
+  title: note.title,
+  instagramCopy: note.instagramCopy,
+  templateId: note.socialTemplateId ?? "",
+  templateVersion: note.socialTemplateVersion ?? 1,
+  images: note.assets.map((asset, index) => ({
+    slide: index + 1,
+    url: asset.url,
+    altText: asset.altText,
+    credit: asset.credit,
+  })),
+  slides: (note.socialSlides ?? []).map((slide, index) => ({
+    slide: index + 1,
+    sourceAssetId: slide.source.id,
+    imageUrl: slide.source.url,
+    text: slide.text,
+    altText: slide.source.altText,
+    credit: slide.source.credit,
+  })),
+});
 
 const imageInput = z.object({
   base64: z.string().trim().min(1).max(3_500_000),

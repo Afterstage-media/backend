@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import sharp from "sharp";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { constants, publicEncrypt } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
@@ -8,10 +11,13 @@ import { createApp, insuranceNotificationText } from "./app.js";
 import { ContentManager } from "../../application/content-manager.js";
 import { MetaPublisher } from "../../infrastructure/integrations/meta.js";
 import { ContentStore } from "../../infrastructure/persistence/content-store.js";
+import { MediaAssetStore } from "../../infrastructure/persistence/media-assets.js";
+import { MemorySocialTemplateStore } from "../../infrastructure/persistence/social-templates.js";
 import { PressManager } from "../../application/press-manager.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { DirectoryManager } from "../../application/directory-manager.js";
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
+import { createRemoteMcpServer } from "../mcp/remote.js";
 import {
   configureUserDirectory,
   getAuthEncryptionPublicKey,
@@ -727,5 +733,96 @@ test("guarda una nota redactada por el agente desde el endpoint autenticado", as
     assert.equal(note.title, "Nota generada por el agente");
     assert.equal(note.status, "draft");
     assert.equal((await manager.required(note.id)).status, "draft");
+  });
+});
+
+test("deduplica la creación HTTP de piezas sociales con la misma clave MCP", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-social-idempotency-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new ContentManager(
+    new ContentStore(directory),
+    undefined,
+    undefined,
+    new MediaAssetStore(directory, "https://afterstage.test"),
+  );
+  const press = new PressManager(new PressStore(directory));
+  const templates = new MemorySocialTemplateStore();
+  await templates.init();
+  const template = (await templates.list({ status: "published", type: "post" }))[0]!;
+  const app = await createApp(
+    manager,
+    press,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    templates,
+  );
+  const mcpServer = createRemoteMcpServer(manager, press, new DirectoryManager(), undefined, undefined, templates);
+  const [mcpClientTransport, mcpServerTransport] = InMemoryTransport.createLinkedPair();
+  const send = mcpClientTransport.send.bind(mcpClientTransport);
+  mcpClientTransport.send = (message, options) =>
+    send(message, {
+      ...options,
+      authInfo: {
+        token: "contract-token",
+        clientId: "contract-client",
+        scopes: ["notes:write"],
+        extra: { userId: "admin", roles: ["admin"], permissions: [] },
+      },
+    });
+  await mcpServer.connect(mcpServerTransport);
+  const mcpClient = new Client({ name: "cross-channel-contract", version: "1.0.0" });
+  await mcpClient.connect(mcpClientTransport);
+  context.after(async () => {
+    await mcpClient.close();
+    await mcpServer.close();
+  });
+  const image = (
+    await sharp({ create: { width: 64, height: 80, channels: 3, background: "#aa2255" } })
+      .jpeg()
+      .toBuffer()
+  ).toString("base64");
+  const payload = {
+    templateId: template.id,
+    type: "post",
+    title: "Borrador HTTP de prueba",
+    instagramCopy: "Copy de prueba",
+    slides: [{ image: { base64: image, altText: "Prueba" }, text: "Texto de prueba" }],
+    source: "Fuente de prueba",
+  };
+  await withServer(app, async (base) => {
+    const request = (body: typeof payload) =>
+      fetch(`${base}/api/social-publication`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${testTokens.admin}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": "social-cross-channel-1",
+        },
+        body: JSON.stringify(body),
+      });
+    const created = await request(payload);
+    const replay = await request(payload);
+    const conflict = await request({ ...payload, title: "Otro borrador" });
+    const mcpReplay = await mcpClient.callTool({
+      name: "crear_pieza_instagram",
+      arguments: { ...payload, idempotencyKey: "social-cross-channel-1" },
+    });
+    assert.equal(created.status, 201);
+    assert.equal(replay.status, 201);
+    assert.equal(conflict.status, 409);
+    const firstResult = await created.json();
+    assert.deepEqual(await replay.json(), firstResult);
+    assert.equal(mcpReplay.isError, undefined);
+    assert.deepEqual(mcpReplay.structuredContent, firstResult);
+    assert.equal((await manager.store.list()).length, 1);
   });
 });

@@ -12,6 +12,8 @@ import { ContentStore } from "../../infrastructure/persistence/content-store.js"
 import { DirectoryStore } from "../../infrastructure/persistence/directory-store.js";
 import { PressStore } from "../../infrastructure/persistence/press-store.js";
 import { MediaAssetStore } from "../../infrastructure/persistence/media-assets.js";
+import { MemorySocialTemplateStore } from "../../infrastructure/persistence/social-templates.js";
+import { MemorySocialSeriesStore } from "../../infrastructure/persistence/social-series.js";
 import { PlatformManager } from "../../application/platform-manager.js";
 import { PlatformStore } from "../../infrastructure/persistence/platform-store.js";
 import { createRemoteMcpServer } from "./remote.js";
@@ -57,6 +59,9 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
   const press = new PressManager(new PressStore(directoryPath));
   const directory = new DirectoryManager(new DirectoryStore(directoryPath));
   const platform = new PlatformManager(new PlatformStore(directoryPath));
+  const socialTemplates = new MemorySocialTemplateStore();
+  await socialTemplates.init();
+  const socialSeries = new MemorySocialSeriesStore();
   const instagramCollaborators = {
     init: async () => undefined,
     list: async () => [],
@@ -103,11 +108,11 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     directory,
     undefined,
     undefined,
-    undefined,
+    socialTemplates,
     undefined,
     instagramCollaborators,
     undefined,
-    undefined,
+    socialSeries,
     platform,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -196,6 +201,69 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       ((instagramReplyTool?.inputSchema as { required?: string[] } | undefined)?.required ?? []).sort(),
       ["idempotencyKey", "message", "recipientId"],
     );
+    const carouselTool = tools.tools.find((tool) => tool.name === "crear_carrusel_instagram");
+    const publicationTool = tools.tools.find((tool) => tool.name === "crear_pieza_instagram");
+    const seriesDraftTool = tools.tools.find((tool) => tool.name === "crear_borrador_serie_social");
+    const socialCreationTools = [carouselTool, publicationTool, seriesDraftTool];
+    if (socialCreationTools.some((tool) => !tool)) throw new Error("Falta una herramienta de borrador social");
+    const presentSocialCreationTools = socialCreationTools.filter((tool) => tool !== undefined);
+    for (const tool of presentSocialCreationTools) {
+      assert.deepEqual(((tool.inputSchema as { required?: string[] }).required ?? []).includes("idempotencyKey"), true);
+    }
+    for (const tool of presentSocialCreationTools) {
+      assert.equal((tool.annotations as { idempotentHint?: boolean } | undefined)?.idempotentHint, true);
+    }
+    const template = (await socialTemplates.list({ status: "published", type: "carousel" }))[0]!;
+    const series = await socialSeries.save({
+      slug: "contract-series",
+      name: "Serie de prueba",
+      description: "Serie de contrato",
+      templateSlug: template.slug,
+      editorialBrief: "Crear contenido verificable para la prueba",
+      active: true,
+      autoPublish: false,
+      cadence: { every: 1, unit: "week" },
+      nextRunAt: "2026-11-13",
+    });
+    const priorCarouselCount = (await manager.store.list()).length;
+    const testImage =
+      "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCABQAEADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDj6KKKs+5CiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigD//Z";
+    const seriesDraftArguments = {
+      seriesId: series.id,
+      title: "Carrusel de prueba",
+      instagramCopy: "Caption verificable",
+      slides: [
+        {
+          image: { base64: testImage, altText: "Primera foto" },
+          text: "Lámina uno",
+        },
+        {
+          image: { base64: testImage, altText: "Segunda foto" },
+          text: "Lámina dos",
+        },
+      ],
+      source: "Fuente de prueba",
+      idempotencyKey: "series-draft-contract-1",
+    };
+    const seriesDraftFirst = await client.callTool({
+      name: "crear_borrador_serie_social",
+      arguments: seriesDraftArguments,
+    });
+    const seriesDraftReplay = await client.callTool({
+      name: "crear_borrador_serie_social",
+      arguments: seriesDraftArguments,
+    });
+    assert.equal(seriesDraftFirst.isError, undefined);
+    assert.equal(seriesDraftReplay.isError, undefined);
+    assert.deepEqual(seriesDraftReplay.structuredContent, seriesDraftFirst.structuredContent);
+    assert.equal((await manager.store.list()).length, priorCarouselCount + 1);
+    const seriesAfterDraft = await socialSeries.get(series.id);
+    assert.equal(seriesAfterDraft?.lastDraftId, (seriesDraftFirst.structuredContent as { id: string }).id);
+    const keyConflict = await client.callTool({
+      name: "crear_borrador_serie_social",
+      arguments: { ...seriesDraftArguments, title: "Otro carrusel" },
+    });
+    assert.equal(keyConflict.isError, true);
     const previousToken = process.env.META_ACCESS_TOKEN;
     const previousAccount = process.env.META_INSTAGRAM_ACCOUNT_ID;
     const previousFetch = globalThis.fetch;
@@ -289,7 +357,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal(notes.isError, undefined);
     const noteResult = notes.structuredContent as { notes: unknown[]; total: number; limit: number };
     assert.equal(Array.isArray(noteResult.notes), true);
-    assert.equal(noteResult.total, 2);
+    assert.equal(noteResult.total, 3);
     const forbiddenRepost = await client.callTool({
       name: "recompartir_nota_instagram",
       arguments: { id: firstNote.id, idempotencyKey: "mcp-repost-1" },
