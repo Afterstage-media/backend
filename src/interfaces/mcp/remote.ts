@@ -486,7 +486,7 @@ export const createRemoteMcpServer = (
     callback: ToolCallback<InputArgs>,
   ) => {
     if (allowedTools && !allowedTools.has(name)) return;
-    return server.registerTool(name, config, async (input, extra) => {
+    const tracedCallback: ToolCallback<InputArgs> = async (input, extra) => {
       const startedAt = Date.now();
       try {
         const result = await callback(input, extra);
@@ -505,7 +505,8 @@ export const createRemoteMcpServer = (
         });
         throw error;
       }
-    });
+    };
+    return server.registerTool(name, config, tracedCallback);
   };
 
   registerTool(
