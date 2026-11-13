@@ -1,4 +1,5 @@
 import cors from "cors";
+import { createHash, createHmac } from "node:crypto";
 import express, { type Express } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -40,6 +41,17 @@ import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/ro
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import { mailReplyIdempotencyKeySchema, mailReplySchema } from "../../domain/mail/types.js";
 import { idempotencyKeySchema } from "../../domain/idempotency.js";
+import {
+  coverageApplicationSchema,
+  coverageRequestSchema,
+  forumPostSchema,
+  forumThreadSchema,
+  insuranceRequestSchema,
+  marketplaceListingSchema,
+  photographerProfileSchema,
+  transportOfferSchema,
+  transportRequestSchema,
+} from "../../domain/platform/types.js";
 import { editorialVoiceInputSchema } from "../../domain/editorial-voice/types.js";
 import {
   MemoryEditorialVoiceStore,
@@ -2130,9 +2142,18 @@ export const createRemoteMcpServer = (
     {
       title: "Gestionar operación de plataforma",
       description:
-        "Actualiza un recurso existente del panel: photographer, coverage_request, coverage_application, transport_offer, transport_request, insurance_request, forum_thread, forum_post o marketplace. El servidor valida cada patch con el esquema de dominio.",
+        "Crea y actualiza perfiles, búsquedas, postulaciones, traslados, seguros, conversaciones y elementos del catálogo. Las altas requieren idempotencyKey; el servidor valida y normaliza los datos con el esquema de dominio y limita cada acción por rol.",
       inputSchema: {
         action: z.enum([
+          "create_photographer",
+          "create_coverage_request",
+          "create_coverage_application",
+          "create_transport_offer",
+          "create_transport_request",
+          "create_insurance_request",
+          "create_forum_thread",
+          "create_forum_post",
+          "create_marketplace_listing",
           "update_photographer",
           "update_coverage_request",
           "update_coverage_application",
@@ -2145,14 +2166,24 @@ export const createRemoteMcpServer = (
         ]),
         resourceId: z.string().uuid().optional(),
         data: z.record(z.string(), z.unknown()).default({}),
+        idempotencyKey: idempotencyKeySchema.optional(),
       },
       outputSchema: z.object({ item: z.unknown() }),
       annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["platform:write"] }] },
     },
-    async ({ action, resourceId, data }, extra) => {
+    async ({ action, resourceId, data, idempotencyKey }, extra) => {
       const actor = authFromExtra(extra, "platform:write");
       const allowedRoles: Record<string, readonly string[]> = {
+        create_photographer: ["admin", "editor", "directory"],
+        create_coverage_request: ["admin", "editor", "press", "community"],
+        create_coverage_application: ["admin", "editor", "press", "community"],
+        create_transport_offer: ["admin", "editor", "community"],
+        create_transport_request: ["admin", "editor", "community"],
+        create_insurance_request: ["admin", "editor", "press", "community"],
+        create_forum_thread: ["admin", "editor", "community"],
+        create_forum_post: ["admin", "editor", "community"],
+        create_marketplace_listing: ["admin", "editor"],
         update_photographer: ["admin", "editor", "directory"],
         update_coverage_request: ["admin", "editor", "press", "community"],
         update_coverage_application: ["admin", "editor", "press", "community"],
@@ -2166,12 +2197,93 @@ export const createRemoteMcpServer = (
       if (!allowedRoles[action]?.some((role) => actor.roles.includes(role))) {
         throw new Error("Tu usuario no tiene permiso para esta operación de plataforma");
       }
+      const createAction = action.startsWith("create_");
+      let normalizedInput: unknown;
+      if (createAction) {
+        switch (action) {
+          case "create_photographer":
+            normalizedInput = photographerProfileSchema.parse({ ...data, status: "pending" });
+            break;
+          case "create_coverage_request":
+            normalizedInput = coverageRequestSchema.parse({ ...data, status: "open" });
+            break;
+          case "create_coverage_application":
+            normalizedInput = coverageApplicationSchema.parse({ ...data, status: "pending" });
+            break;
+          case "create_transport_offer":
+            normalizedInput = transportOfferSchema.parse({ ...data, status: "open" });
+            break;
+          case "create_transport_request":
+            normalizedInput = transportRequestSchema.parse({ ...data, status: "new" });
+            break;
+          case "create_insurance_request":
+            normalizedInput = insuranceRequestSchema.parse({ ...data, status: "new" });
+            break;
+          case "create_forum_thread":
+            normalizedInput = forumThreadSchema.parse({ ...data, status: "visible" });
+            break;
+          case "create_forum_post":
+            normalizedInput = forumPostSchema.parse({ ...data, status: "visible" });
+            break;
+          case "create_marketplace_listing":
+            normalizedInput = marketplaceListingSchema.parse(data);
+            break;
+        }
+      }
       const requireId = () => {
         if (!resourceId) throw new Error("Falta el ID del recurso");
         return resourceId;
       };
+      let operationKey: string | undefined;
+      if (createAction) {
+        if (!idempotencyKey) throw new Error("Para crear un recurso se necesita idempotencyKey");
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new Error("No se puede asegurar el reintento de esta operación ahora");
+        const requestHash = createHmac("sha256", secret)
+          .update(JSON.stringify({ action, data: normalizedInput }))
+          .digest("hex");
+        operationKey = createHash("sha256")
+          .update(`mcp-platform:${actor.userId}:${action}:${idempotencyKey}`)
+          .digest("hex");
+        const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+        if (operation.status === "conflict" || operation.status === "pending")
+          throw new IdempotentOperationError(operation.status);
+        if (operation.status === "completed")
+          return textResult({
+            item: operation.result as Record<string, unknown>,
+            operatedBy: actor.userId,
+            replayed: true,
+          });
+      }
       let item: unknown;
       switch (action) {
+        case "create_photographer":
+          item = await platform.createPhotographer(normalizedInput);
+          break;
+        case "create_coverage_request":
+          item = await platform.createCoverageRequest(normalizedInput);
+          break;
+        case "create_coverage_application":
+          item = await platform.createCoverageApplication(normalizedInput);
+          break;
+        case "create_transport_offer":
+          item = await platform.createTransportOffer(normalizedInput);
+          break;
+        case "create_transport_request":
+          item = await platform.createTransportRequest(normalizedInput);
+          break;
+        case "create_insurance_request":
+          item = await platform.createInsuranceRequest(normalizedInput);
+          break;
+        case "create_forum_thread":
+          item = await platform.createForumThread(normalizedInput);
+          break;
+        case "create_forum_post":
+          item = await platform.createForumPost(normalizedInput);
+          break;
+        case "create_marketplace_listing":
+          item = await platform.createMarketplaceListing(normalizedInput);
+          break;
         case "update_photographer":
           item = await platform.updatePhotographer(requireId(), data);
           break;
@@ -2201,6 +2313,16 @@ export const createRemoteMcpServer = (
           break;
       }
       if (!item) throw new Error("El recurso de plataforma no existe");
+      if (createAction) {
+        const resource = item as { id?: string; status?: string; active?: boolean };
+        const minimalItem = {
+          id: resource.id,
+          ...(resource.status ? { status: resource.status } : {}),
+          ...(typeof resource.active === "boolean" ? { active: resource.active } : {}),
+        };
+        await press.completeIdempotentOperation(operationKey!, minimalItem);
+        return textResult({ item: minimalItem, operatedBy: actor.userId, replayed: false });
+      }
       return textResult({ item, operatedBy: actor.userId });
     },
   );
