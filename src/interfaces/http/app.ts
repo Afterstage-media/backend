@@ -74,7 +74,7 @@ import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/ro
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
-import { insuranceProductLabels, type InsuranceProduct } from "../../domain/platform/types.js";
+import { insuranceProductLabels, insuranceRequestSchema, type InsuranceProduct } from "../../domain/platform/types.js";
 import {
   exchangeFacebookInstagramCode,
   exchangeInstagramCode,
@@ -1113,6 +1113,19 @@ export const createApp = async (
     },
   );
   app.post("/api/public/insurance-requests", new RateLimiter(5, 60_000).middleware, async (request, response) => {
+    const rawIdempotencyKey = request.get("Idempotency-Key");
+    const parsedIdempotencyKey = idempotencyKeySchema.safeParse(rawIdempotencyKey);
+    if (!parsedIdempotencyKey.success) {
+      return response.status(400).json({
+        error: "Para enviar la solicitud necesitás una clave de reintento válida.",
+      });
+    }
+    const idempotencySecret = process.env.JWT_SECRET;
+    if (!idempotencySecret) {
+      return response.status(503).json({
+        error: "No se puede asegurar el reintento de la solicitud ahora.",
+      });
+    }
     const snapshot = await press.snapshot();
     if (request.body?.eventId && !snapshot.events.some((event) => event.id === request.body.eventId))
       return response.status(404).json({ error: "Evento no encontrado" });
@@ -1120,12 +1133,23 @@ export const createApp = async (
     const coverageType = requestedProducts.length
       ? requestedProducts.map((product: InsuranceProduct) => insuranceProductLabels[product] ?? product).join(" + ")
       : String(request.body?.coverageType ?? "");
-    const item = await platform.createInsuranceRequest({
+    const insuranceInput = insuranceRequestSchema.parse({
       ...request.body,
       coverageType,
       coverageTypes: requestedProducts,
       status: "new",
     });
+    const operationKey = createHash("sha256")
+      .update(`public-insurance-request:${parsedIdempotencyKey.data}`)
+      .digest("hex");
+    const requestHash = createHmac("sha256", idempotencySecret).update(JSON.stringify(insuranceInput)).digest("hex");
+    const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+    if (operation.status === "conflict" || operation.status === "pending") {
+      const error = new IdempotentOperationError(operation.status);
+      return response.status(409).json({ error: error.message, outcome: error.reason });
+    }
+    if (operation.status === "completed") return response.status(200).json(operation.result);
+    const item = await platform.createInsuranceRequest(insuranceInput);
     const from = (process.env.INSURANCE_FROM_EMAIL ?? "seguros@afterstage.ar").trim().toLowerCase();
     const recipients = insuranceRecipients();
     const eventName = item.eventId ? snapshot.events.find((event) => event.id === item.eventId)?.name : undefined;
@@ -1149,7 +1173,7 @@ export const createApp = async (
         mailThreadId = inboxMessage.threadId;
       } catch (error) {
         log("error", "insurance_inbox_failed", {
-          error: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Error ? error.name : "UnknownError",
           insuranceRequestId: item.id,
         });
       }
@@ -1170,9 +1194,8 @@ export const createApp = async (
       } catch (error) {
         notificationStatus = "failed";
         log("error", "insurance_notification_failed", {
-          error: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Error ? error.name : "UnknownError",
           insuranceRequestId: item.id,
-          recipients,
         });
       }
     }
@@ -1186,15 +1209,17 @@ export const createApp = async (
       notificationStatus === "sent"
         ? "Recibimos la consulta y la enviamos al productor."
         : notificationStatus === "failed"
-          ? "Recibimos la consulta, pero el aviso por email quedó pendiente de reintento."
+          ? "Recibimos la consulta, pero no se pudo enviar el aviso interno por email."
           : "Recibimos la consulta; falta configurar el destinatario de seguros.";
-    response.status(201).json({
+    const result = {
       id: updated?.id ?? item.id,
       status: updated?.status ?? item.status,
       notificationStatus,
       mailThreadId,
       message,
-    });
+    };
+    await press.completeIdempotentOperation(operationKey, result);
+    response.status(201).json(result);
   });
   app.get("/api/public/marketplace", async (request, response) => {
     const category = typeof request.query.category === "string" ? request.query.category : undefined;
