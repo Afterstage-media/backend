@@ -25,9 +25,11 @@ import {
   correctedCarouselImageSchema,
   instagramCarouselInputSchema,
   instagramSocialPublicationInputShape,
+  publicInstagramDraft,
 } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
 import type { SocialTemplateRepository } from "../../domain/content/social-template.js";
+import { MemorySocialTemplateStore } from "../../infrastructure/persistence/social-templates.js";
 import {
   socialSeriesSchema,
   socialSeriesInputShape,
@@ -132,21 +134,7 @@ const runMcpIdempotentOperation = async <T extends Record<string, unknown>>(
 };
 
 const publicNote = ({ idempotencyKey: _idempotencyKey, ...note }: ContentItem) => note;
-const publicCarousel = (note: ContentItem, createdBy: string) => ({
-  id: note.id,
-  status: note.status,
-  createdBy,
-  title: note.title,
-  instagramCopy: note.instagramCopy,
-  templateId: note.socialTemplateId ?? "",
-  templateVersion: note.socialTemplateVersion ?? 1,
-  images: note.assets.map((asset, index) => ({
-    slide: index + 1,
-    url: asset.url,
-    altText: asset.altText,
-    credit: asset.credit,
-  })),
-});
+const publicCarousel = publicInstagramDraft;
 
 const profileOutputSchema = z.object({
   userId: z.string(),
@@ -245,7 +233,18 @@ const carouselOutputSchema = z.object({
   images: z.array(
     z.object({ slide: z.number().int().positive(), url: z.string().url(), altText: z.string(), credit: z.string() }),
   ),
+  slides: z.array(
+    z.object({
+      slide: z.number().int().positive(),
+      sourceAssetId: z.string(),
+      imageUrl: z.string().url(),
+      text: z.string(),
+      altText: z.string(),
+      credit: z.string(),
+    }),
+  ),
 });
+const seriesDraftOutputSchema = carouselOutputSchema.extend({ seriesNextRunAt: z.string().nullable() });
 const noteOutputSchema = z.object({ id: z.string(), status: z.enum(contentStatuses) }).passthrough();
 const noteUpdateFields = {
   type: z.enum(["article", "post", "carousel", "reel", "story"]).optional(),
@@ -489,6 +488,7 @@ export const createRemoteMcpServer = (
   });
   const allowedTools = roles ? toolsAllowedForRoles(roles) : undefined;
   const mailboxManager = mailbox ? new MailboxManager(mailbox, undefined, press) : undefined;
+  const templates = socialTemplates ?? new MemorySocialTemplateStore();
   const instagramService = instagramTrustedCollaborators
     ? new InstagramCommunity(instagramTrustedCollaborators, instagramConnections)
     : undefined;
@@ -1646,19 +1646,29 @@ export const createRemoteMcpServer = (
     {
       title: "Crear carrusel de Instagram",
       description:
-        "Antes de redactar, consultá listar_plantillas_sociales y seguí sus reglas editoriales y la estructura de la plantilla elegida. No inventes datos; si faltan hechos esenciales, pedí fuentes o excluilos. Recibe fotos, texto por lámina, caption, fuente y créditos; renderiza y guarda un borrador con URLs para revisión. Nunca publica automáticamente.",
-      inputSchema: instagramCarouselInputSchema.shape,
+        "Antes de redactar, consultá listar_plantillas_sociales y seguí sus reglas editoriales y la estructura de la plantilla elegida. No inventes datos; si faltan hechos esenciales, pedí fuentes o excluilos. Recibe fotos, texto por lámina, caption, fuente y créditos; renderiza y guarda un borrador con URLs para revisión. Nunca publica automáticamente. Reutilizá la misma idempotencyKey si reintentás la misma solicitud.",
+      inputSchema: { ...instagramCarouselInputSchema.shape, idempotencyKey: idempotencyKeySchema },
       outputSchema: carouselOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
-    async (input, extra) => {
+    async ({ idempotencyKey, ...input }, extra) => {
       const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
-      if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
-      const template = await socialTemplates.get(input.templateId);
+      const template = await templates.get(input.templateId);
       if (!template) throw new Error("No se encontró la plantilla seleccionada");
-      const note = await manager.createInstagramCarousel(input, actor.userId, template);
-      return textResult(publicCarousel(note, actor.userId));
+      const note = await runMcpIdempotentOperation(
+        press,
+        actor.userId,
+        "crear_carrusel_instagram",
+        idempotencyKey,
+        input,
+        async () => {
+          const created = await manager.createInstagramCarousel(input, actor.userId, template);
+          if (input.seriesId && socialSeries) await socialSeries.completeDraftRun(input.seriesId, created.id);
+          return publicCarousel(created, actor.userId);
+        },
+      );
+      return textResult(note);
     },
   );
 
@@ -1720,19 +1730,29 @@ export const createRemoteMcpServer = (
     {
       title: "Crear post o historias de Instagram",
       description:
-        "Crea como borrador un post 4:5 o una historia 9:16 a partir de una plantilla visual. Incluí una foto y el texto integrado; Afterstage compone la imagen y devuelve su URL para que puedas revisarla. Nunca publica automáticamente.",
-      inputSchema: instagramSocialPublicationInputShape,
+        "Crea como borrador un post 4:5 o una historia 9:16 a partir de una plantilla visual. Incluí una foto y el texto integrado; Afterstage compone la imagen y devuelve su URL para que puedas revisarla. Nunca publica automáticamente. Reutilizá la misma idempotencyKey si reintentás la misma solicitud.",
+      inputSchema: { ...instagramSocialPublicationInputShape, idempotencyKey: idempotencyKeySchema },
       outputSchema: carouselOutputSchema,
       annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
-    async (input, extra) => {
+    async ({ idempotencyKey, ...input }, extra) => {
       const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
-      if (!socialTemplates) throw new Error("Las plantillas sociales no están configuradas");
-      const template = await socialTemplates.get(input.templateId);
+      const template = await templates.get(input.templateId);
       if (!template) throw new Error("No se encontró la plantilla seleccionada");
-      const note = await manager.createInstagramSocialPublication(input, actor.userId, template);
-      return textResult(publicCarousel(note, actor.userId));
+      const note = await runMcpIdempotentOperation(
+        press,
+        actor.userId,
+        "crear_pieza_instagram",
+        idempotencyKey,
+        input,
+        async () => {
+          const created = await manager.createInstagramSocialPublication(input, actor.userId, template);
+          if (input.seriesId && socialSeries) await socialSeries.completeDraftRun(input.seriesId, created.id);
+          return publicCarousel(created, actor.userId);
+        },
+      );
+      return textResult(note);
     },
   );
 
@@ -1849,12 +1869,13 @@ export const createRemoteMcpServer = (
         source: z.string().trim().min(1).max(500),
         author: z.string().trim().max(180).default(""),
         photographer: z.string().trim().max(180).default(""),
+        idempotencyKey: idempotencyKeySchema,
       },
-      outputSchema: carouselOutputSchema,
-      annotations: { destructiveHint: false, idempotentHint: false },
+      outputSchema: seriesDraftOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
-    async (input, extra) => {
+    async ({ idempotencyKey, ...input }, extra) => {
       const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!socialSeries || !socialTemplates) throw new Error("La gestión de series sociales no está configurada");
       const series = await socialSeries.get(input.seriesId);
@@ -1868,16 +1889,26 @@ export const createRemoteMcpServer = (
       if (template.outputType !== "carousel" && input.slides.length !== 1)
         throw new Error("Este formato usa una sola lámina");
       const content = { ...input, templateId: template.id };
-      const draft =
-        template.outputType === "carousel"
-          ? await manager.createInstagramCarousel(content, actor.userId, template)
-          : await manager.createInstagramSocialPublication(
-              { ...content, type: template.outputType },
-              actor.userId,
-              template,
-            );
-      const updatedSeries = await socialSeries.completeDraftRun(series.id, draft.id);
-      return textResult({ ...publicCarousel(draft, actor.userId), seriesNextRunAt: updatedSeries.nextRunAt });
+      const result = await runMcpIdempotentOperation(
+        press,
+        actor.userId,
+        "crear_borrador_serie_social",
+        idempotencyKey,
+        input,
+        async () => {
+          const draft =
+            template.outputType === "carousel"
+              ? await manager.createInstagramCarousel(content, actor.userId, template)
+              : await manager.createInstagramSocialPublication(
+                  { ...content, type: template.outputType },
+                  actor.userId,
+                  template,
+                );
+          const updatedSeries = await socialSeries.completeDraftRun(series.id, draft.id);
+          return { ...publicCarousel(draft, actor.userId), seriesNextRunAt: updatedSeries.nextRunAt };
+        },
+      );
+      return textResult(result as unknown as Record<string, unknown>);
     },
   );
 
