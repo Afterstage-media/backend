@@ -74,7 +74,12 @@ import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/ro
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
-import { insuranceProductLabels, insuranceRequestSchema, type InsuranceProduct } from "../../domain/platform/types.js";
+import {
+  insuranceProductLabels,
+  insuranceRequestSchema,
+  transportRequestSchema,
+  type InsuranceProduct,
+} from "../../domain/platform/types.js";
 import {
   exchangeFacebookInstagramCode,
   exchangeInstagramCode,
@@ -1273,8 +1278,45 @@ export const createApp = async (
       const snapshot = await press.snapshot();
       if (!snapshot.events.some((event) => event.id === request.params.id && !isDemoEvent(event)))
         return response.status(404).json({ error: "Evento no encontrado" });
-      const item = await platform.createTransportRequest({ ...request.body, eventId: String(request.params.id) });
-      response.status(201).json({ id: item.id, status: item.status, message: "Recibimos tu pedido de traslado." });
+      const parsedIdempotencyKey = idempotencyKeySchema.safeParse(request.get("Idempotency-Key"));
+      if (!parsedIdempotencyKey.success)
+        return response.status(400).json({ error: "Para enviar el pedido, incluí una clave de idempotencia válida." });
+      const parsedRequest = transportRequestSchema.safeParse({ ...request.body, eventId: String(request.params.id) });
+      if (!parsedRequest.success)
+        return response.status(400).json({ error: "Revisá los datos del pedido de traslado." });
+
+      const requestHash = createHmac("sha256", process.env.JWT_SECRET ?? "afterstage-local-idempotency")
+        .update(JSON.stringify(parsedRequest.data))
+        .digest("hex");
+      const operationKey = createHash("sha256")
+        .update(`public-transport-request:${request.params.id}:${parsedIdempotencyKey.data}`)
+        .digest("hex");
+      const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+      if (operation.status === "conflict")
+        return response
+          .status(409)
+          .json({ error: "La clave de idempotencia ya se usó con otros datos.", outcome: "conflict" });
+      if (operation.status === "pending")
+        return response.status(409).json({
+          error: "El pedido sigue procesándose. Revisá su estado antes de volver a enviarlo.",
+          outcome: "pending",
+        });
+      if (operation.status === "completed") return response.status(201).json(operation.result);
+
+      try {
+        const item = await platform.createTransportRequest(parsedRequest.data);
+        const result = { id: item.id, status: item.status, message: "Recibimos tu pedido de traslado." };
+        await press.completeIdempotentOperation(operationKey, result);
+        response.status(201).json(result);
+      } catch (error) {
+        const requestContext = request as typeof request & { correlationId?: string };
+        log("error", "transport_request_create_failed", {
+          correlationId: requestContext.correlationId,
+          eventId: String(request.params.id),
+          errorType: error instanceof Error ? error.name : "unknown",
+        });
+        throw error;
+      }
     },
   );
   const publicSubmissionRateLimit = new RateLimiter(5, 60_000).middleware;
