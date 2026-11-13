@@ -1369,16 +1369,34 @@ export const createRemoteMcpServer = (
     {
       title: "Crear entrada de directorio",
       description:
-        "Crea una entrada del directorio editorial —banda, artista, medio, sala u organización— con sus contactos y datos de comunicación.",
-      inputSchema: directoryInputSchema.shape,
+        "Crea una entrada del directorio editorial —banda, artista, medio, sala u organización— con sus contactos y datos de comunicación. Los reintentos idénticos se deduplican; también podés enviar una idempotencyKey estable.",
+      inputSchema: { ...directoryInputSchema.shape, idempotencyKey: idempotencyKeySchema.optional() },
       outputSchema: z.object({ id: z.string() }).passthrough(),
-      annotations: { destructiveHint: false, idempotentHint: false },
+      annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["directory:write"] }] },
     },
-    async (input, extra) => {
+    async ({ idempotencyKey, ...input }, extra) => {
       const actor = authFromExtra(extra, "directory:write", writeDirectoryRoles);
-      const item = await directory.create(input);
-      return textResult({ ...item, createdBy: actor.userId });
+      const directoryInput = directoryInputSchema.parse(input);
+      const secret = process.env.JWT_SECRET;
+      if (!secret) throw new Error("No se puede asegurar el reintento de esta operación ahora");
+      const requestHash = createHmac("sha256", secret)
+        .update(JSON.stringify({ action: "crear_contacto", data: directoryInput }))
+        .digest("hex");
+      const operationIdentity = idempotencyKey ? `key:${idempotencyKey}` : `payload:${requestHash}`;
+      const operationKey = createHash("sha256")
+        .update(`mcp-directory-contact:${actor.userId}:${operationIdentity}`)
+        .digest("hex");
+      const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+      if (operation.status === "conflict" || operation.status === "pending")
+        throw new IdempotentOperationError(operation.status);
+      if (operation.status === "completed") {
+        const item = await directory.get((operation.result as { id: string }).id);
+        return textResult({ ...item, createdBy: actor.userId, replayed: true });
+      }
+      const item = await directory.create(directoryInput);
+      await press.completeIdempotentOperation(operationKey, { id: item.id });
+      return textResult({ ...item, createdBy: actor.userId, replayed: false });
     },
   );
 

@@ -251,6 +251,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const createdDirectoryItem = await client.callTool({
       name: "crear_contacto",
       arguments: {
+        idempotencyKey: "directory-contact-contract-1",
         kind: "media",
         name: "Medio creado por MCP",
         city: "CABA",
