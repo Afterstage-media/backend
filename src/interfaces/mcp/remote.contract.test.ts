@@ -99,7 +99,6 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     undefined,
     undefined,
     undefined,
-    undefined,
     platform,
   );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
