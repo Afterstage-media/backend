@@ -74,6 +74,7 @@ import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/ro
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import type { MailRepository } from "../../infrastructure/persistence/mail-store.js";
 import { PressMailer, type Mail } from "../../infrastructure/integrations/mailer.js";
+import { replacementApplicationSchema } from "../../domain/press/types.js";
 import {
   coverageApplicationSchema,
   coverageRequestSchema,
@@ -140,6 +141,7 @@ const createIdempotentPublicOperation = async <T extends object>(
   resourceId: string,
   payload: unknown,
   create: () => Promise<T>,
+  bindToActor = false,
 ): Promise<{ body: T; replayed: boolean } | undefined> => {
   const parsedKey = idempotencyKeySchema.safeParse(request.get("Idempotency-Key"));
   if (!parsedKey.success) {
@@ -153,7 +155,14 @@ const createIdempotentPublicOperation = async <T extends object>(
   }
   const normalized = { payload, ...(resourceId ? { resourceId } : {}) };
   const requestHash = createHmac("sha256", secret).update(JSON.stringify(normalized)).digest("hex");
-  const operationKey = createHash("sha256").update(`public-${operation}:${resourceId}:${parsedKey.data}`).digest("hex");
+  const actorId = bindToActor ? (request as express.Request & { actor?: { id: string } }).actor?.id : undefined;
+  if (bindToActor && !actorId) {
+    response.status(401).json({ error: "Iniciá sesión para enviar este formulario." });
+    return undefined;
+  }
+  const operationKey = createHash("sha256")
+    .update(`public-${operation}:${resourceId}:${actorId ? `${actorId}:` : ""}${parsedKey.data}`)
+    .digest("hex");
   const operationResult = await press.beginIdempotentOperation(operationKey, requestHash);
   if (operationResult.status === "conflict" || operationResult.status === "pending") {
     response.status(409).json({
@@ -1441,24 +1450,35 @@ export const createApp = async (
         })
         .parse(request.body);
       const autoApprove = process.env.AUTO_APPROVE_COMMUNITY_SUBMISSIONS !== "false";
-      let item = await manager.create({
-        title: `[Comunidad] ${input.title}`,
-        body: input.description,
-        summary: input.description.slice(0, 600),
-        status: "idea",
-        channels: ["website"],
-        notes: `Tipo: ${input.kind}\nContacto: ${input.contact}`,
-      });
-      if (autoApprove) item = await manager.update(item.id, { status: "draft" });
-      if (autoApprove) item = await manager.update(item.id, { status: "review" });
-      if (autoApprove) item = await manager.update(item.id, { status: "approved" });
-      response.status(201).json({
-        accepted: true,
-        id: item.id,
-        message: autoApprove
-          ? "La propuesta fue aprobada automáticamente y quedó disponible para edición."
-          : "La propuesta quedó en revisión editorial.",
-      });
+      const result = await createIdempotentPublicOperation(
+        request,
+        response,
+        press,
+        "community-submission",
+        "",
+        input,
+        async () => {
+          let item = await manager.create({
+            title: `[Comunidad] ${input.title}`,
+            body: input.description,
+            summary: input.description.slice(0, 600),
+            status: "idea",
+            channels: ["website"],
+            notes: `Tipo: ${input.kind}\nContacto: ${input.contact}`,
+          });
+          if (autoApprove) item = await manager.update(item.id, { status: "draft" });
+          if (autoApprove) item = await manager.update(item.id, { status: "review" });
+          if (autoApprove) item = await manager.update(item.id, { status: "approved" });
+          return {
+            accepted: true,
+            id: item.id,
+            message: autoApprove
+              ? "La propuesta fue aprobada automáticamente y quedó disponible para edición."
+              : "La propuesta quedó en revisión editorial.",
+          };
+        },
+      );
+      if (result) response.status(result.replayed ? 200 : 201).json(result.body);
     },
   );
   app.get(
@@ -1494,9 +1514,25 @@ export const createApp = async (
     new RateLimiter(5, 60_000).middleware,
     requireRole("admin", "editor", "press", "community", "social"),
     async (request, response) => {
-      response
-        .status(201)
-        .json(await press.createReplacementApplication({ ...request.body, searchId: String(request.params.id) }));
+      const input = replacementApplicationSchema.parse({ ...request.body, searchId: String(request.params.id) });
+      const snapshot = await press.snapshot();
+      const search = snapshot.replacementSearches.find((item) => item.id === input.searchId);
+      if (!search) return response.status(404).json({ error: "Búsqueda de reemplazo no encontrada" });
+      if (!["open", "screening"].includes(search.status))
+        return response.status(422).json({ error: "La búsqueda ya no acepta postulaciones" });
+      if (search.profile !== input.profile)
+        return response.status(422).json({ error: "El perfil no coincide con la búsqueda" });
+      const result = await createIdempotentPublicOperation(
+        request,
+        response,
+        press,
+        "replacement-application",
+        input.searchId,
+        input,
+        async () => press.createReplacementApplication(input),
+        true,
+      );
+      if (result) response.status(result.replayed ? 200 : 201).json(result.body);
     },
   );
   app.get("/rss.xml", async (_request, response) => {
