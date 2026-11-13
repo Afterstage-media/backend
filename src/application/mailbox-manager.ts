@@ -12,12 +12,23 @@ import {
 import type { MailRepository } from "../infrastructure/persistence/mail-store.js";
 import { blockedSendersSchema, senderMatchesBlacklist } from "../domain/mail/blacklist.js";
 
+export class MailSendingNotConfiguredError extends Error {
+  constructor() {
+    super("El envío de correo no está configurado");
+    this.name = "MailSendingNotConfiguredError";
+  }
+}
+
 export class MailboxManager {
   constructor(
     private readonly repository: MailRepository,
     private readonly mailer: Pick<PressMailer, "send"> & Partial<Pick<PressMailer, "configured">> = new PressMailer(),
     private readonly press: PressManager = new PressManager(),
   ) {}
+
+  get replyAvailable(): boolean {
+    return this.mailer.configured !== false;
+  }
 
   async listThreads(): Promise<MailThreadSummary[]> {
     const [threads, routes] = await Promise.all([this.repository.listThreads(), this.listRoutes()]);
@@ -97,7 +108,7 @@ export class MailboxManager {
   }
 
   async reply(id: string, input: MailReplyInput, idempotency: { key: string; actorId: string }) {
-    if (this.mailer.configured === false) throw new Error("El envío de correo no está configurado");
+    if (!this.replyAvailable) throw new MailSendingNotConfiguredError();
     const thread = await this.repository.getThread(id);
     if (!thread) throw new Error("Conversación no encontrada");
     const latestInbound = [...thread.messages].reverse().find((message) => message.direction === "inbound");
