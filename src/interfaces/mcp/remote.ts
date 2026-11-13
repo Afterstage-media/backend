@@ -1,6 +1,6 @@
 import cors from "cors";
 import { createHash, createHmac } from "node:crypto";
-import express, { type Express } from "express";
+import express, { type Express, type RequestHandler } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AnySchema, ZodRawShapeCompat } from "@modelcontextprotocol/sdk/server/zod-compat.js";
@@ -2495,6 +2495,28 @@ export const createRemoteMcpServer = (
   return server;
 };
 
+const withMcpAuthFailureLogging =
+  (auth: RequestHandler): RequestHandler =>
+  (request, response, next) => {
+    const startedAt = Date.now();
+    let forwardedToNext = false;
+    response.once("finish", () => {
+      const status = response.statusCode;
+      if (forwardedToNext || status < 400) return;
+      const requestContext = request as express.Request & { correlationId?: string };
+      log("warn", "mcp_auth_rejected", {
+        correlationId: requestContext.correlationId,
+        method: request.method,
+        status,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+    auth(request, response, (error) => {
+      forwardedToNext = true;
+      next(error);
+    });
+  };
+
 export const mountRemoteMcp = (
   app: Express,
   manager: ContentManager,
@@ -2656,7 +2678,7 @@ export const mountRemoteMcp = (
     }
   });
 
-  app.all("/mcp", cors(), auth, async (request, response, next) => {
+  app.all("/mcp", cors(), withMcpAuthFailureLogging(auth), async (request, response, next) => {
     try {
       const roles = Array.isArray(request.auth?.extra?.roles)
         ? request.auth.extra.roles.filter((role): role is string => typeof role === "string")
