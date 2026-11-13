@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import path from "node:path";
 import { AiWriter, type GenerationKind } from "../infrastructure/integrations/ai.js";
 import { MetaPublisher } from "../infrastructure/integrations/meta.js";
@@ -15,6 +15,7 @@ import {
   slugify,
 } from "../domain/content/types.js";
 import { parsePatch } from "../domain/parse-patch.js";
+import { idempotencyKeySchema } from "../domain/idempotency.js";
 import { assertTransition } from "../domain/content/workflow.js";
 import { detectDuplicates, type DuplicateMatch } from "../domain/content/duplicate-detector.js";
 import { MediaAssetStore } from "../infrastructure/persistence/media-assets.js";
@@ -39,6 +40,17 @@ export class DuplicateContentError extends Error {
   constructor(readonly matches: DuplicateMatch[]) {
     super(`Contenido duplicado detectado: ${matches.map((match) => match.item.id).join(", ")}`);
     this.name = "DuplicateContentError";
+  }
+}
+
+export class ContentIdempotentOperationError extends Error {
+  constructor(readonly reason: "pending" | "conflict") {
+    super(
+      reason === "pending"
+        ? "La publicación con esta clave sigue pendiente de confirmación. Revisá su estado antes de volver a enviarla."
+        : "La clave de idempotencia ya se usó con otros datos.",
+    );
+    this.name = "ContentIdempotentOperationError";
   }
 }
 
@@ -927,7 +939,11 @@ export class ContentManager {
     }
   }
 
-  async repostInstagram(id: string, dryRun = false): Promise<ContentItem> {
+  async repostInstagram(
+    id: string,
+    dryRun = false,
+    idempotency?: { key: string; actorId: string },
+  ): Promise<ContentItem> {
     const current = await this.required(id);
     if (current.status !== "published") throw new Error("Solo se puede recompartir una nota publicada");
     if (!current.channels.includes("instagram")) throw new Error("La nota no tiene Instagram entre sus canales");
@@ -945,6 +961,23 @@ export class ContentManager {
       return current;
     }
 
+    const parsedKey = idempotencyKeySchema.safeParse(idempotency?.key);
+    if (!idempotency || !parsedKey.success || !idempotency.actorId.trim())
+      throw new Error("Para recompartir la nota se necesita una clave Idempotency-Key válida");
+    const operationKey = createHash("sha256")
+      .update(`${idempotency.actorId}:content-instagram-repost:${id}:${parsedKey.data}`)
+      .digest("hex");
+    const resourceKey = createHash("sha256").update(`content-instagram-repost:${id}`).digest("hex");
+    const secret = process.env.JWT_SECRET;
+    if (!secret) throw new Error("La clave de idempotencia no está configurada");
+    const requestHash = createHmac("sha256", secret)
+      .update(JSON.stringify({ contentId: id, channels: instagramItem.channels, assets: instagramItem.assets }))
+      .digest("hex");
+    const operation = await this.store.beginInstagramRepost(operationKey, resourceKey, requestHash);
+    if (operation.status === "conflict") throw new ContentIdempotentOperationError("conflict");
+    if (operation.status === "pending") throw new ContentIdempotentOperationError("pending");
+    if (operation.status === "completed") return operation.result as ContentItem;
+
     const remote = await this.publisher.publish(instagramItem, false);
     const updated = await this.store.update(id, {
       remoteIds: {
@@ -956,6 +989,7 @@ export class ContentManager {
       lastError: null,
     });
     if (!updated) throw new Error("Contenido no encontrado luego de recompartir en Instagram");
+    await this.store.completeInstagramRepost(operationKey, updated);
     return updated;
   }
 

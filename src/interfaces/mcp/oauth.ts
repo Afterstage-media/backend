@@ -31,6 +31,7 @@ export const mcpScopes = [
   "mail:reply",
   "platform:read",
   "platform:write",
+  "instagram:publish",
 ] as const;
 export type McpScope = (typeof mcpScopes)[number];
 
@@ -49,6 +50,7 @@ export const mcpScopeRoles: Record<McpScope, readonly Role[]> = {
   "mail:reply": ["admin", "editor", "press", "community"],
   "platform:read": ["admin", "editor", "press", "community", "auditor"],
   "platform:write": ["admin", "editor", "press", "community", "directory"],
+  "instagram:publish": ["admin", "editor", "social"],
 };
 
 type PendingAuthorization = {
@@ -438,6 +440,7 @@ const scopeLabel = (scope: string) =>
     "mail:reply": "Responder conversaciones de correo",
     "platform:read": "Leer operaciones de plataforma",
     "platform:write": "Gestionar operaciones de plataforma",
+    "instagram:publish": "Publicar y recompartir en Instagram",
   })[scope] ?? scope;
 
 export class McpOAuthProvider implements OAuthServerProvider {

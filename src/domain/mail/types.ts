@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { idempotencyKeySchema } from "../idempotency.js";
 
 export const mailAddressSchema = z.string().trim().min(3).max(998);
 
@@ -21,12 +22,7 @@ export const mailReplySchema = z.object({
   text: z.string().trim().min(1).max(10_000_000),
   html: z.string().max(10_000_000).optional(),
 });
-export const mailReplyIdempotencyKeySchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(200)
-  .regex(/^[A-Za-z0-9._:-]+$/);
+export const mailReplyIdempotencyKeySchema = idempotencyKeySchema;
 
 export type InboundMailInput = z.infer<typeof inboundMailSchema>;
 export type MailReplyInput = z.infer<typeof mailReplySchema>;

@@ -27,6 +27,7 @@ const authInfo = (roles: string[]) => ({
     "replacements:read",
     "voice:read",
     "voice:write",
+    "instagram:publish",
   ],
   extra: { userId: "editor-1", roles, permissions: [] },
 });
@@ -97,6 +98,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "cambiar_estado_nota",
         "crear_contacto",
         "crear_nota",
+        "recompartir_nota_instagram",
         "crear_ruta_correo",
         "eliminar_ruta_correo",
         "crear_evento",
@@ -176,6 +178,11 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     const noteResult = notes.structuredContent as { notes: unknown[]; total: number; limit: number };
     assert.equal(Array.isArray(noteResult.notes), true);
     assert.equal(noteResult.total, 2);
+    const forbiddenRepost = await client.callTool({
+      name: "recompartir_nota_instagram",
+      arguments: { id: firstNote.id, idempotencyKey: "mcp-repost-1" },
+    });
+    assert.equal(forbiddenRepost.isError, true);
     assert.equal(noteResult.limit, 1);
     assert.equal(noteResult.notes.length, 1);
 
@@ -477,6 +484,7 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
         "crear_borrador_serie_social",
         "crear_contacto",
         "crear_nota",
+        "recompartir_nota_instagram",
         "crear_ruta_correo",
         "eliminar_ruta_correo",
         "get_profile",

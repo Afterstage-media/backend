@@ -79,7 +79,10 @@ const cleanPatch = (patch: Record<string, unknown>) =>
 
 /** MongoDB adapter for the editorial collection. IDs remain strings so API/MCP contracts do not change. */
 export class MongoContentStore implements ContentRepository {
-  constructor(private readonly collection: Collection<MongoRecord>) {}
+  constructor(
+    private readonly collection: Collection<MongoRecord>,
+    private readonly instagramRepostOperations: Collection<MongoRecord>,
+  ) {}
 
   async init() {
     await Promise.all([
@@ -87,6 +90,10 @@ export class MongoContentStore implements ContentRepository {
       this.collection.createIndex({ slug: 1 }, { unique: true }),
       this.collection.createIndex({ scheduledAt: 1, status: 1 }),
       this.collection.createIndex({ idempotencyKey: 1 }, { unique: true, sparse: true }),
+      this.instagramRepostOperations.createIndex(
+        { resourceKey: 1, status: 1 },
+        { unique: true, partialFilterExpression: { status: "pending" } },
+      ),
     ]);
   }
 
@@ -191,6 +198,39 @@ export class MongoContentStore implements ContentRepository {
       { returnDocument: "after" },
     );
     return result ? this.fromDocument(result) : undefined;
+  }
+
+  async beginInstagramRepost(
+    key: string,
+    resourceKey: string,
+    requestHash: string,
+  ): Promise<IdempotentOperationResult> {
+    try {
+      await this.instagramRepostOperations.insertOne({
+        _id: key,
+        resourceKey,
+        requestHash,
+        status: "pending",
+        createdAt: timestamps(),
+      });
+      return { status: "started" };
+    } catch (error) {
+      if ((error as { code?: number }).code !== 11000) throw error;
+      const existing = await this.instagramRepostOperations.findOne({ _id: key });
+      if (existing) {
+        if (existing.requestHash !== requestHash) return { status: "conflict" };
+        if (existing.status === "completed") return { status: "completed", result: existing.result };
+      }
+      return { status: "pending" };
+    }
+  }
+
+  async completeInstagramRepost(key: string, result: unknown): Promise<void> {
+    const updated = await this.instagramRepostOperations.updateOne(
+      { _id: key, status: "pending" },
+      { $set: { status: "completed", result, updatedAt: timestamps() } },
+    );
+    if (updated.matchedCount !== 1) throw new Error("Operación idempotente no encontrada");
   }
 
   async incrementViews(id: string): Promise<ContentItem | undefined> {
@@ -794,7 +834,10 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   });
   await client.connect();
   const db = client.db(process.env.MONGODB_DB ?? "afterstage");
-  const content = new MongoContentStore(db.collection<MongoRecord>("contents"));
+  const content = new MongoContentStore(
+    db.collection<MongoRecord>("contents"),
+    db.collection<MongoRecord>("content_instagram_repost_operations"),
+  );
   const press = new MongoPressStore(db);
   const platform = new MongoPlatformStore(db);
   const users = new MongoUserDirectory(

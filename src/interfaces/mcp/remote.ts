@@ -39,6 +39,7 @@ import type { MailRepository } from "../../infrastructure/persistence/mail-store
 import { mailRouteInputSchema, mailRoutePatchSchema } from "../../domain/mail/routing.js";
 import { blockedSendersSchema } from "../../domain/mail/blacklist.js";
 import { mailReplyIdempotencyKeySchema, mailReplySchema } from "../../domain/mail/types.js";
+import { idempotencyKeySchema } from "../../domain/idempotency.js";
 import { editorialVoiceInputSchema } from "../../domain/editorial-voice/types.js";
 import {
   MemoryEditorialVoiceStore,
@@ -366,6 +367,7 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   listar_postulaciones_reemplazo: ["replacements:read"],
   asignar_postulacion_reemplazo: ["agenda:write"],
   crear_nota: ["notes:write"],
+  recompartir_nota_instagram: ["instagram:publish"],
   crear_carrusel_instagram: ["notes:write"],
   crear_pieza_instagram: ["notes:write"],
   crear_serie_social: ["notes:write"],
@@ -1440,6 +1442,33 @@ export const createRemoteMcpServer = (
       const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const note = await manager.createAgentNote(input, actor.userId);
       return textResult({ ...publicNote(note), createdBy: actor.userId });
+    },
+  );
+
+  registerTool(
+    "recompartir_nota_instagram",
+    {
+      title: "Recompartir nota en Instagram",
+      description:
+        "Publica en Instagram una nueva versión de una nota ya publicada. Requiere instagram:publish y una clave estable para impedir publicaciones duplicadas al reintentar.",
+      inputSchema: {
+        id: z.string().trim().min(1).max(180),
+        idempotencyKey: idempotencyKeySchema,
+      },
+      outputSchema: noteOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["instagram:publish"] }] },
+    },
+    async ({ id, idempotencyKey }, extra) => {
+      const actor = authFromExtra(extra, "instagram:publish", ["admin", "editor", "social"]);
+      if (
+        !actor.roles.includes("admin") &&
+        !actor.roles.includes("social") &&
+        !actor.permissions.includes("instagram:publish")
+      )
+        throw new Error("Se requiere el permiso instagram:publish");
+      const note = await manager.repostInstagram(id, false, { key: idempotencyKey, actorId: actor.userId });
+      return textResult({ ...publicNote(note), updatedBy: actor.userId });
     },
   );
 

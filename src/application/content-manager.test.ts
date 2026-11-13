@@ -83,12 +83,20 @@ test("recomparte una nota publicada solamente en Instagram", async (context) => 
   await manager.update(created.id, { status: "approved" });
   await manager.publish(created.id);
 
-  const result = await manager.repostInstagram(created.id);
+  const previousJwtSecret = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = "content-manager-repost-test-secret";
+  const idempotency = { key: "repost-1", actorId: "admin-1" };
+  const result = await manager.repostInstagram(created.id, false, idempotency);
   assert.equal(result.status, "published");
   assert.equal(result.remoteIds.instagram, "reposted-media");
   assert.equal(calls.length, 2);
+  const replay = await manager.repostInstagram(created.id, false, idempotency);
+  assert.equal(replay.remoteIds.instagram, "reposted-media");
+  assert.equal(calls.length, 2);
   assert.deepEqual(calls[1].channels, ["instagram"]);
   assert.equal(calls[1].containerId, null);
+  if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = previousJwtSecret;
 });
 
 test("rechaza crear contenidos en estados internos y programar sin fecha", async (context) => {
