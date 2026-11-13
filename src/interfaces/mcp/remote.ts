@@ -486,10 +486,13 @@ export const createRemoteMcpServer = (
     callback: ToolCallback<InputArgs>,
   ) => {
     if (allowedTools && !allowedTools.has(name)) return;
-    const tracedCallback: ToolCallback<InputArgs> = async (input, extra) => {
+    const tracedCallback = async (
+      input: Parameters<ToolCallback<InputArgs>>[0],
+      extra: Parameters<ToolCallback<InputArgs>>[1],
+    ) => {
       const startedAt = Date.now();
       try {
-        const result = await callback(input, extra);
+        const result = await callback(input, extra!);
         log("info", "mcp_tool_completed", {
           correlationId,
           tool: name,
@@ -506,7 +509,7 @@ export const createRemoteMcpServer = (
         throw error;
       }
     };
-    return server.registerTool(name, config, tracedCallback);
+    return server.registerTool(name, config, tracedCallback as ToolCallback<InputArgs>);
   };
 
   registerTool(
