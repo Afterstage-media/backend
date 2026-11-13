@@ -240,7 +240,11 @@ test("expone health, readiness y feed editorial público", async (context) => {
     assert.match(articleHtml, /src="\/share-ux-final-20261021\.js"/);
     const submission = await fetch(`${base}/api/public/submissions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${testTokens.admin}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${testTokens.admin}`,
+        "Idempotency-Key": "public-submission-article-test",
+      },
       body: JSON.stringify({
         kind: "Una historia",
         title: "Propuesta real",
@@ -512,7 +516,11 @@ test("permite buscar reemplazo para una cobertura cuando el fotógrafo o notero 
   await withServer(app, async (base) => {
     const response = await fetch(`${base}/api/public/submissions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${testTokens.admin}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${testTokens.admin}`,
+        "Idempotency-Key": "public-submission-replacement-test",
+      },
       body: JSON.stringify({
         kind: "Reemplazo de fotógrafo",
         title: "Buscamos fotógrafa para cubrir recital",
