@@ -1993,10 +1993,10 @@ export const createApp = async (
         async () => {
           const item = await manager.createInstagramCarousel(input, actor.id, template);
           if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
-          return publicInstagramDraft(item, actor.id);
+          return { id: item.id };
         },
       );
-      response.status(201).json(result);
+      response.status(201).json(publicInstagramDraft(await manager.required(result.id), actor.id));
     } catch (error) {
       if (error instanceof IdempotentOperationError) {
         response.status(409).json({ error: error.message, outcome: error.reason });
@@ -2033,10 +2033,10 @@ export const createApp = async (
         async () => {
           const item = await manager.createInstagramSocialPublication(input, actor.id, template);
           if (input.seriesId) await seriesStore.completeDraftRun(input.seriesId, item.id);
-          return publicInstagramDraft(item, actor.id);
+          return { id: item.id };
         },
       );
-      response.status(201).json(result);
+      response.status(201).json(publicInstagramDraft(await manager.required(result.id), actor.id));
     } catch (error) {
       if (error instanceof IdempotentOperationError) {
         response.status(409).json({ error: error.message, outcome: error.reason });

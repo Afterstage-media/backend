@@ -4,7 +4,7 @@ import sharp from "sharp";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { constants, publicEncrypt } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { createApp, insuranceNotificationText } from "./app.js";
@@ -824,5 +824,12 @@ test("deduplica la creación HTTP de piezas sociales con la misma clave MCP", as
     assert.equal(mcpReplay.isError, undefined);
     assert.deepEqual(mcpReplay.structuredContent, firstResult);
     assert.equal((await manager.store.list()).length, 1);
+    const operations = JSON.parse(await readFile(path.join(directory, "press-idempotency.json"), "utf8")) as Array<{
+      result?: Record<string, unknown>;
+      status: string;
+    }>;
+    assert.equal(operations.length, 1);
+    assert.equal(operations[0]?.status, "completed");
+    assert.deepEqual(Object.keys(operations[0]?.result ?? {}), ["id"]);
   });
 });

@@ -1656,7 +1656,7 @@ export const createRemoteMcpServer = (
       const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const template = await templates.get(input.templateId);
       if (!template) throw new Error("No se encontró la plantilla seleccionada");
-      const note = await runMcpIdempotentOperation(
+      const operation = await runMcpIdempotentOperation(
         press,
         actor.userId,
         "crear_carrusel_instagram",
@@ -1665,9 +1665,10 @@ export const createRemoteMcpServer = (
         async () => {
           const created = await manager.createInstagramCarousel(input, actor.userId, template);
           if (input.seriesId && socialSeries) await socialSeries.completeDraftRun(input.seriesId, created.id);
-          return publicCarousel(created, actor.userId);
+          return { id: created.id };
         },
       );
+      const note = publicCarousel(await manager.required(operation.id), actor.userId);
       return textResult(note);
     },
   );
@@ -1740,7 +1741,7 @@ export const createRemoteMcpServer = (
       const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
       const template = await templates.get(input.templateId);
       if (!template) throw new Error("No se encontró la plantilla seleccionada");
-      const note = await runMcpIdempotentOperation(
+      const operation = await runMcpIdempotentOperation(
         press,
         actor.userId,
         "crear_pieza_instagram",
@@ -1749,9 +1750,10 @@ export const createRemoteMcpServer = (
         async () => {
           const created = await manager.createInstagramSocialPublication(input, actor.userId, template);
           if (input.seriesId && socialSeries) await socialSeries.completeDraftRun(input.seriesId, created.id);
-          return publicCarousel(created, actor.userId);
+          return { id: created.id };
         },
       );
+      const note = publicCarousel(await manager.required(operation.id), actor.userId);
       return textResult(note);
     },
   );
@@ -1889,7 +1891,7 @@ export const createRemoteMcpServer = (
       if (template.outputType !== "carousel" && input.slides.length !== 1)
         throw new Error("Este formato usa una sola lámina");
       const content = { ...input, templateId: template.id };
-      const result = await runMcpIdempotentOperation(
+      const operation = await runMcpIdempotentOperation(
         press,
         actor.userId,
         "crear_borrador_serie_social",
@@ -1905,10 +1907,11 @@ export const createRemoteMcpServer = (
                   template,
                 );
           const updatedSeries = await socialSeries.completeDraftRun(series.id, draft.id);
-          return { ...publicCarousel(draft, actor.userId), seriesNextRunAt: updatedSeries.nextRunAt };
+          return { id: draft.id, seriesNextRunAt: updatedSeries.nextRunAt };
         },
       );
-      return textResult(result as unknown as Record<string, unknown>);
+      const draft = publicCarousel(await manager.required(operation.id), actor.userId);
+      return textResult({ ...draft, seriesNextRunAt: operation.seriesNextRunAt });
     },
   );
 

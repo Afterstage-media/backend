@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -259,6 +259,14 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.equal((await manager.store.list()).length, priorCarouselCount + 1);
     const seriesAfterDraft = await socialSeries.get(series.id);
     assert.equal(seriesAfterDraft?.lastDraftId, (seriesDraftFirst.structuredContent as { id: string }).id);
+    const storedOperations = JSON.parse(
+      await readFile(path.join(directoryPath, "press-idempotency.json"), "utf8"),
+    ) as Array<{
+      result?: Record<string, unknown>;
+      status: string;
+    }>;
+    const storedSeriesDraft = storedOperations.find((operation) => operation.result?.seriesNextRunAt);
+    assert.deepEqual(Object.keys(storedSeriesDraft?.result ?? {}).sort(), ["id", "seriesNextRunAt"]);
     const keyConflict = await client.callTool({
       name: "crear_borrador_serie_social",
       arguments: { ...seriesDraftArguments, title: "Otro carrusel" },
