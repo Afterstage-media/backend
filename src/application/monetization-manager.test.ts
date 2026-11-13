@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { MemoryMonetizationRepository, MonetizationManager } from "./monetization-manager.js";
 
+process.env.JWT_SECRET ??= "monetization-test-secret";
+
 test("crea una solicitud paga sin exponer datos privados en el catálogo", async () => {
   const repository = new MemoryMonetizationRepository();
   const manager = new MonetizationManager(repository);
@@ -24,6 +26,10 @@ test("crea una solicitud paga sin exponer datos privados en el catálogo", async
   assert.equal(replay.id, item.id);
   assert.equal(concurrent.id, item.id);
   assert.equal((await repository.list()).length, 1);
+  await assert.rejects(
+    () => manager.create({ ...input, title: "Otro título" }, "promotion-1"),
+    /clave de solicitud ya se usó con otros datos/,
+  );
   assert.deepEqual(
     manager
       .listProducts()
