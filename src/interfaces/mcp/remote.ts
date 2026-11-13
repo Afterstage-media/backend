@@ -920,10 +920,11 @@ export const createRemoteMcpServer = (
     {
       title: "Gestionar acreditación",
       description:
-        "Registra o actualiza una solicitud de acreditación de prensa. No envía correos automáticamente; el envío queda bajo una acción separada.",
+        "Registra o actualiza una solicitud de acreditación de prensa. Para crear, enviá una idempotencyKey estable para evitar duplicados ante reintentos. No envía correos automáticamente; el envío queda bajo una acción separada.",
       inputSchema: {
         action: z.enum(["crear", "actualizar"]).default("crear"),
         id: z.string().uuid().optional(),
+        idempotencyKey: idempotencyKeySchema.optional(),
         eventId: z.string().uuid().optional(),
         contactId: z.string().uuid().nullable().optional(),
         subject: z.string().min(1).max(220).optional(),
@@ -938,12 +939,33 @@ export const createRemoteMcpServer = (
       annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["agenda:write"] }] },
     },
-    async ({ action, id, ...input }, extra) => {
+    async ({ action, id, idempotencyKey, ...input }, extra) => {
       const actor = authFromExtra(extra, "agenda:write", ["admin", "press"]);
       const patch = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
       if (action === "crear") {
-        const accreditation = await press.createAccreditation(accreditationSchema.parse(patch));
-        return textResult({ ...accreditation, managedBy: actor.userId });
+        if (!idempotencyKey) throw new Error("Para crear una acreditación se necesita idempotencyKey");
+        const accreditationInput = accreditationSchema.parse(patch);
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new Error("No se puede asegurar el reintento de esta operación ahora");
+        const requestHash = createHmac("sha256", secret)
+          .update(JSON.stringify({ action, data: accreditationInput }))
+          .digest("hex");
+        const operationKey = createHash("sha256")
+          .update(`mcp-accreditation:${actor.userId}:${idempotencyKey}`)
+          .digest("hex");
+        const operation = await press.beginIdempotentOperation(operationKey, requestHash);
+        if (operation.status === "conflict" || operation.status === "pending")
+          throw new IdempotentOperationError(operation.status);
+        if (operation.status === "completed")
+          return textResult({
+            ...(operation.result as { id: string; status: string }),
+            managedBy: actor.userId,
+            replayed: true,
+          });
+        const accreditation = await press.createAccreditation(accreditationInput);
+        const result = { id: accreditation.id, status: accreditation.status };
+        await press.completeIdempotentOperation(operationKey, result);
+        return textResult({ ...result, managedBy: actor.userId, replayed: false });
       }
       if (!id) throw new Error("Falta el ID de la solicitud de acreditación");
       const accreditation = await press.updateAccreditation(id, patch);
