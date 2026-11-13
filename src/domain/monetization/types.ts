@@ -158,6 +158,7 @@ export type MonetizationPromotion = PromotionInput & {
   fulfilledAt: string | null;
   rejectionReason: string | null;
   featuredUntil: string | null;
+  idempotencyKey?: string;
 };
 
 export const promotionPatchSchema = z.object({

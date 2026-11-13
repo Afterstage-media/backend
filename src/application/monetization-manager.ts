@@ -1,4 +1,5 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { idempotencyKeySchema } from "../domain/idempotency.js";
 import {
   defaultMonetizationProducts,
   promotionInputSchema,
@@ -13,6 +14,8 @@ export interface MonetizationRepository {
   init?(): Promise<void>;
   list(status?: MonetizationStatus): Promise<MonetizationPromotion[]>;
   get(id: string): Promise<MonetizationPromotion | undefined>;
+  findByIdempotencyKey?(key: string): Promise<MonetizationPromotion | undefined>;
+  withIdempotencyLock?<T>(key: string, operation: () => Promise<T>): Promise<T>;
   create(item: MonetizationPromotion): Promise<MonetizationPromotion>;
   update(id: string, patch: Partial<MonetizationPromotion>): Promise<MonetizationPromotion | undefined>;
 }
@@ -26,6 +29,24 @@ export class MemoryMonetizationRepository implements MonetizationRepository {
   }
   async get(id: string) {
     return this.items.find((item) => item.id === id);
+  }
+  async findByIdempotencyKey(key: string) {
+    return this.items.find((item) => item.idempotencyKey === key);
+  }
+  private locks = new Map<string, Promise<unknown>>();
+  async withIdempotencyLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const queued = previous.then(() => gate);
+    this.locks.set(key, queued);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.locks.get(key) === queued) this.locks.delete(key);
+    }
   }
   async create(item: MonetizationPromotion) {
     this.items.push(item);
@@ -43,13 +64,18 @@ export class MercadoPagoCheckout {
   async createPreference(
     item: MonetizationPromotion,
     product: MonetizationProduct,
+    idempotencyKey: string,
   ): Promise<{ id: string; url: string }> {
     const token = process.env.MERCADOPAGO_ACCESS_TOKEN;
     if (!token) throw new Error("Mercado Pago no está configurado");
     const base = (process.env.PUBLIC_BASE_URL ?? "").replace(/\/$/, "");
     const response = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "X-Idempotency-Key": idempotencyKey,
+      },
       body: JSON.stringify({
         items: [
           {
@@ -101,8 +127,22 @@ export class MonetizationManager {
   product(id: string) {
     return this.products.find((product) => product.id === id && product.active);
   }
-  async create(input: unknown) {
+  async create(input: unknown, idempotencyInput?: string) {
     const parsed = promotionInputSchema.parse(input);
+    const parsedKey = idempotencyKeySchema.safeParse(idempotencyInput);
+    if (!parsedKey.success) throw new Error("Para enviar la solicitud incluí una clave de idempotencia válida");
+    const idempotencyKey = createHash("sha256").update(`public-promotion:${parsedKey.data}`).digest("hex");
+    const createOnce = async () => {
+      const existing = await this.repository.findByIdempotencyKey?.(idempotencyKey);
+      if (existing) return existing;
+      return this.createNewPromotion(parsed, idempotencyKey);
+    };
+    return this.repository.withIdempotencyLock
+      ? this.repository.withIdempotencyLock(idempotencyKey, createOnce)
+      : createOnce();
+  }
+
+  private async createNewPromotion(parsed: ReturnType<typeof promotionInputSchema.parse>, idempotencyKey: string) {
     const product = this.product(parsed.productId);
     if (!product) throw new Error("Producto no disponible");
     const now = new Date().toISOString();
@@ -119,10 +159,12 @@ export class MonetizationManager {
       fulfilledAt: null,
       rejectionReason: null,
       featuredUntil: null,
+      idempotencyKey,
     };
-    await this.repository.create(item);
+    const saved = await this.repository.create(item);
+    if (saved.id !== item.id) return saved;
     if (product.priceArs != null && process.env.MERCADOPAGO_ACCESS_TOKEN) {
-      const payment = await this.checkout.createPreference(item, product);
+      const payment = await this.checkout.createPreference(item, product, idempotencyKey);
       return (await this.repository.update(item.id, { paymentId: payment.id, paymentUrl: payment.url }))!;
     }
     return item;

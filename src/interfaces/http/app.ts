@@ -933,7 +933,12 @@ export const createApp = async (
     });
   });
   app.post("/api/public/promotions", new RateLimiter(5, 60_000).middleware, async (request, response) => {
-    const item = await monetization.create(request.body);
+    const parsedIdempotencyKey = idempotencyKeySchema.safeParse(request.get("Idempotency-Key"));
+    if (!parsedIdempotencyKey.success) {
+      response.status(400).json({ error: "Para enviar la solicitud, incluí una clave de idempotencia válida." });
+      return;
+    }
+    const item = await monetization.create(request.body, parsedIdempotencyKey.data);
     response.status(201).json({
       id: item.id,
       status: item.status,
