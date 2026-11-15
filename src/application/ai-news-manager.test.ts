@@ -91,30 +91,33 @@ test("asigna las referencias desde los ítems enviados y no desde IDs generados 
     if (oldKey === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = oldKey;
   });
-  context.mock.method(globalThis, "fetch", async () =>
-    new Response(
-      JSON.stringify({
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  text: JSON.stringify({
-                    title: "Anuncio de música",
-                    summary: "Resumen confirmado",
-                    facts: ["Resumen confirmado"],
-                    missingFacts: [],
-                    suggestedAngle: "Anuncio",
-                    sourceIds: ["00000000-0000-0000-0000-000000000000"],
-                  }),
-                },
-              ],
+  context.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      title: "Anuncio de música",
+                      summary: "Resumen confirmado",
+                      facts: ["Resumen confirmado"],
+                      missingFacts: [],
+                      suggestedAngle: "Anuncio",
+                      sourceIds: ["00000000-0000-0000-0000-000000000000"],
+                    }),
+                  },
+                ],
+              },
             },
-          },
-        ],
-      }),
-      { status: 200 },
-    ),
+          ],
+        }),
+        { status: 200 },
+      ),
   );
 
   const analysis = await new AiNewsManager(store).analyze(item.topic, [item.id]);
