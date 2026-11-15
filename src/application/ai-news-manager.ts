@@ -164,11 +164,13 @@ export class AiNewsManager {
       (item) => !itemIds?.length || itemIds.includes(item.id),
     );
     if (!items.length) throw new Error("No hay novedades scrapeadas para esa temática");
-    return this.gemini.generate({
+    const analysis = await this.gemini.generate({
       task: "Agrupá y limpiá estas novedades para una posible noticia. No agregues hechos. Devolvé título, resumen, hechos confirmados, datos faltantes, enfoque y IDs fuente.",
       data: items,
       schema: aiAnalysisSchema,
     });
+    // Source identity belongs to the submitted items, not to model-generated identifiers.
+    return { ...analysis, sourceIds: items.map((item) => item.id) };
   }
   async createCopy(
     analysis: AiAnalysis,
