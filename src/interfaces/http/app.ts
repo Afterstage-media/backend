@@ -72,6 +72,7 @@ import { MemorySocialTemplateStore } from "../../infrastructure/persistence/soci
 import { MemorySocialSeriesStore } from "../../infrastructure/persistence/social-series.js";
 import { SocialTemplateRenderer } from "../../infrastructure/integrations/social-template-renderer.js";
 import type { InstagramConnectionStore } from "../../infrastructure/persistence/instagram-connections.js";
+import type { AiNewsManager } from "../../application/ai-news-manager.js";
 import type { EditorialVoiceRepository } from "../../infrastructure/persistence/editorial-voice-store.js";
 import { MailboxManager, MailSendingNotConfiguredError } from "../../application/mailbox-manager.js";
 import { inboundMailSchema, mailReplyIdempotencyKeySchema, mailReplySchema } from "../../domain/mail/types.js";
@@ -457,6 +458,7 @@ export const createApp = async (
   socialTemplates?: SocialTemplateRepository,
   instagramTrustedCollaborators?: InstagramTrustedCollaboratorStore,
   socialSeries?: SocialSeriesRepository,
+  aiNews?: AiNewsManager,
 ) => {
   const app = express();
   const outboundMailer = mailer ?? new PressMailer();
@@ -597,6 +599,7 @@ export const createApp = async (
         instagramConnections,
         seriesStore,
         platform,
+        aiNews,
       );
   }
   app.use(
@@ -623,7 +626,7 @@ export const createApp = async (
     response.json({
       status: "ready",
       mongo: Boolean(process.env.MONGODB_URI),
-      ai: Boolean(process.env.AI_API_KEY),
+      ai: Boolean(process.env.AI_API_KEY || process.env.GEMINI_API_KEY),
       smtp: Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS),
       passwordRecovery: Boolean(
         process.env.JWT_SECRET &&
@@ -658,7 +661,9 @@ export const createApp = async (
         contentTypes: MEDIA_CONTENT_TYPES,
       },
       ai: {
-        configured: Boolean(process.env.AI_API_KEY),
+        configured: Boolean(process.env.AI_API_KEY || process.env.GEMINI_API_KEY),
+        geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+        geminiModel: process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
         baseUrl: process.env.AI_BASE_URL ?? "https://api.openai.com/v1",
         model: process.env.AI_MODEL ?? "gpt-5-mini",
       },
@@ -1642,6 +1647,48 @@ export const createApp = async (
   });
 
   app.use("/api", requireRole("admin", "editor", "press", "directory", "community", "auditor", "social"));
+  const aiNewsUnavailable = { error: "El módulo de novedades no está configurado" };
+  app.get("/api/ai-news/sources", requireRole("admin", "editor"), async (_request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    response.json({ sources: await aiNews.listSources(), geminiConfigured: Boolean(process.env.GEMINI_API_KEY) });
+  });
+  app.post("/api/ai-news/sources", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    response.status(201).json({ source: await aiNews.saveSource(request.body) });
+  });
+  app.delete("/api/ai-news/sources/:id", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    response.status((await aiNews.removeSource(String(request.params.id))) ? 204 : 404).end();
+  });
+  app.get("/api/ai-news/items", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    response.json({
+      items: await aiNews.listItems(typeof request.query.topic === "string" ? request.query.topic : undefined),
+    });
+  });
+  app.post("/api/ai-news/scrape", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    const input = z.object({ sourceId: z.string().uuid().optional() }).parse(request.body);
+    response.json({ items: await aiNews.scrape(input.sourceId) });
+  });
+  app.post("/api/ai-news/analyze", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    const input = z
+      .object({ topic: z.string().trim().min(1).max(80), itemIds: z.array(z.string().uuid()).max(100).optional() })
+      .parse(request.body);
+    response.json({ analysis: await aiNews.analyze(input.topic, input.itemIds) });
+  });
+  app.post("/api/ai-news/copy", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    const input = z
+      .object({
+        analysis: z.unknown(),
+        format: z.enum(["post", "stories", "both"]).default("both"),
+        instructions: z.string().max(3000).default(""),
+      })
+      .parse(request.body);
+    response.json({ copy: await aiNews.createCopy(input.analysis as never, input.format, input.instructions) });
+  });
   app.get("/api/mail/threads", requireRole("admin", "editor", "press", "community"), async (_request, response) => {
     if (!mailboxManager) {
       response.status(503).json({ error: "mailbox_not_configured" });
