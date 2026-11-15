@@ -90,7 +90,7 @@ class MongoAiNewsStore implements AiNewsStore {
   }
   async listSources(): Promise<NewsSource[]> {
     return (await this.sources.find().sort({ name: 1 }).toArray()).map(
-      ({ _id, ...item }) => item as unknown as NewsSource,
+      ({ _id, ...item }) => ({ ...item, id: _id }) as unknown as NewsSource,
     );
   }
   async saveSource(source: NewsSource) {
