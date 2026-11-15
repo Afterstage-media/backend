@@ -27,7 +27,7 @@ test("llama Gemini con JSON y valida la salida tipada", async (context) => {
     data: { item: 1 },
     schema: z.object({ answer: z.string() }),
   });
-  assert.match(requestedUrl, /models\/gemini-3\.8-flash:generateContent/);
+  assert.match(requestedUrl, /models\/gemini-3\.1-flash-lite:generateContent/);
   assert.deepEqual(result, { answer: "dato confirmado" });
 });
 
