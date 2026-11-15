@@ -5,7 +5,7 @@ export class GeminiClient {
   async generate<T>(input: { task: string; data: unknown; schema: z.ZodType<T>; instructions?: string }): Promise<T> {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada");
-    const model = process.env.GEMINI_MODEL ?? "gemini-3.8-flash";
+    const model = process.env.GEMINI_MODEL ?? "gemini-3.1-flash-lite";
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const response = await fetch(endpoint, {
       method: "POST",
