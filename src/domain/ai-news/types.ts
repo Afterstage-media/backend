@@ -1,0 +1,53 @@
+import { z } from "zod";
+
+export const newsSourceSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().trim().min(1).max(120),
+  url: z.string().url().max(2000),
+  topic: z.string().trim().min(1).max(80),
+  enabled: z.boolean().default(true),
+  itemPattern: z
+    .string()
+    .min(1)
+    .max(500)
+    .refine(
+      (value) => !/\\[1-9]|\([^)]*[+*][^)]*\)[+*{]|\([^)]*\|[^)]*\)[+*{]/.test(value),
+      "La regex contiene una estructura de alto riesgo",
+    ),
+  titlePattern: z.string().max(500).default("<title[^>]*>([^<]{1,300})</title>"),
+  linkPattern: z.string().max(500).default("href=[\"']([^\"']{1,1000})[\"']"),
+  summaryPattern: z
+    .string()
+    .max(500)
+    .default("<meta[^>]+name=[\"']description[\"'][^>]+content=[\"']([^\"']{1,1200})[\"']"),
+  maxItems: z.number().int().min(1).max(30).default(10),
+});
+
+export const sourceInputSchema = newsSourceSchema.omit({ id: true });
+export const aiAnalysisSchema = z.object({
+  title: z.string().min(1).max(220),
+  summary: z.string().min(1).max(1200),
+  facts: z.array(z.string().max(500)).max(20),
+  missingFacts: z.array(z.string().max(300)).max(20),
+  suggestedAngle: z.string().max(500),
+  sourceIds: z.array(z.string().uuid()).max(30),
+});
+export const aiCopySchema = z.object({
+  instagramPost: z.string().max(2200),
+  stories: z.array(z.string().max(500)).max(10),
+  hashtags: z.array(z.string().max(80)).max(20),
+});
+
+export type NewsSource = z.infer<typeof newsSourceSchema> & { id: string; createdAt: string; updatedAt: string };
+export type ScrapedItem = {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  topic: string;
+  title: string;
+  url: string;
+  summary: string;
+  scrapedAt: string;
+};
+export type AiAnalysis = z.infer<typeof aiAnalysisSchema>;
+export type AiCopy = z.infer<typeof aiCopySchema>;

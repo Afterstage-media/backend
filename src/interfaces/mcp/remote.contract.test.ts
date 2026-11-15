@@ -128,6 +128,13 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
     assert.deepEqual(
       tools.tools.map((tool) => tool.name).sort(),
       [
+        "analizar_novedades_gemini",
+        "crear_copy_gemini",
+        "eliminar_fuente_novedades",
+        "guardar_fuente_novedades",
+        "listar_fuentes_novedades",
+        "listar_novedades_scrapeadas",
+        "scrapear_novedades",
         "actualizar_blacklist_correo",
         "actualizar_ruta_correo",
         "actualizar_nota",
@@ -658,6 +665,13 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
     assert.deepEqual(
       tools.tools.map((tool) => tool.name).sort(),
       [
+        "analizar_novedades_gemini",
+        "crear_copy_gemini",
+        "eliminar_fuente_novedades",
+        "guardar_fuente_novedades",
+        "listar_fuentes_novedades",
+        "listar_novedades_scrapeadas",
+        "scrapear_novedades",
         "actualizar_blacklist_correo",
         "actualizar_contacto",
         "actualizar_nota",

@@ -22,6 +22,7 @@ const {
   socialTemplates,
   socialSeries,
   instagramTrustedCollaborators,
+  aiNews,
 } = await createManagers();
 const app = await createApp(
   manager,
@@ -40,6 +41,7 @@ const app = await createApp(
   socialTemplates,
   instagramTrustedCollaborators,
   socialSeries,
+  aiNews,
 );
 
 app.listen(port, () => log("info", "server_started", { port }));

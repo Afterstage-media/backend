@@ -71,8 +71,55 @@ import {
 import type { PlatformRepository } from "./platform-store.js";
 import { MongoSocialTemplateStore } from "./social-templates.js";
 import { MongoSocialSeriesStore } from "./social-series.js";
+import { AiNewsManager, type AiNewsStore } from "../../application/ai-news-manager.js";
+import type { NewsSource, ScrapedItem } from "../../domain/ai-news/types.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
+
+class MongoAiNewsStore implements AiNewsStore {
+  constructor(
+    private readonly sources: Collection<MongoRecord>,
+    private readonly items: Collection<MongoRecord>,
+  ) {}
+  async init() {
+    await Promise.all([
+      this.sources.createIndex({ url: 1, name: 1 }, { unique: true }),
+      this.items.createIndex({ topic: 1, scrapedAt: -1 }),
+      this.items.createIndex({ url: 1 }, { unique: true }),
+    ]);
+  }
+  async listSources(): Promise<NewsSource[]> {
+    return (await this.sources.find().sort({ name: 1 }).toArray()).map(
+      ({ _id, ...item }) => item as unknown as NewsSource,
+    );
+  }
+  async saveSource(source: NewsSource) {
+    const { id, ...fields } = source;
+    await this.sources.updateOne({ _id: id }, { $set: fields, $setOnInsert: { _id: id } }, { upsert: true });
+  }
+  async removeSource(id: string) {
+    const result = await this.sources.deleteOne({ _id: id });
+    return result.deletedCount > 0;
+  }
+  async listItems(topic?: string, limit = 100): Promise<ScrapedItem[]> {
+    return (
+      await this.items
+        .find(topic ? { topic } : {})
+        .sort({ scrapedAt: -1 })
+        .limit(limit)
+        .toArray()
+    ).map(({ _id, ...item }) => item as unknown as ScrapedItem);
+  }
+  async saveItems(items: ScrapedItem[]) {
+    if (!items.length) return;
+    await this.items.bulkWrite(
+      items.map((item) => ({
+        updateOne: { filter: { url: item.url }, update: { $set: item, $setOnInsert: { _id: item.id } }, upsert: true },
+      })),
+      { ordered: false },
+    );
+  }
+}
 const timestamps = () => new Date().toISOString();
 const cleanPatch = (patch: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
@@ -817,6 +864,7 @@ export type MongoPersistence = {
   socialTemplates: MongoSocialTemplateStore;
   socialSeries: MongoSocialSeriesStore;
   instagramTrustedCollaborators: MongoInstagramTrustedCollaboratorStore;
+  aiNews: MongoAiNewsStore;
 };
 
 export const createMongoPersistence = async (): Promise<MongoPersistence | undefined> => {
@@ -854,6 +902,10 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const socialTemplates = new MongoSocialTemplateStore(db.collection<MongoRecord>("social_templates"));
   const socialSeries = new MongoSocialSeriesStore(db.collection<MongoRecord>("social_publication_series"));
   const instagramTrustedCollaborators = createInstagramTrustedCollaboratorStore(db);
+  const aiNews = new MongoAiNewsStore(
+    db.collection<MongoRecord>("ai_news_sources"),
+    db.collection<MongoRecord>("ai_news_items"),
+  );
   await Promise.all([
     content.init(),
     press.init(),
@@ -869,6 +921,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     socialTemplates.init(),
     socialSeries.init(),
     instagramTrustedCollaborators.init(),
+    aiNews.init(),
   ]);
   await instagramTrustedCollaborators.seedDefaultsOnce(["carlamagnolph", "fede.markoo.ph", "carrjmok"]);
   return {
@@ -885,6 +938,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
     socialTemplates,
     socialSeries,
     instagramTrustedCollaborators,
+    aiNews,
     mediaAssets,
     platform,
   };
@@ -916,5 +970,6 @@ export const createManagers = async () => {
     instagramConnections: persistence?.instagramConnections,
     editorialVoice: persistence?.editorialVoice,
     mail: persistence?.mail,
+    aiNews: persistence ? new AiNewsManager(persistence.aiNews) : undefined,
   };
 };

@@ -19,7 +19,7 @@ El dominio de prensa ya incorpora:
 - **Frontend:** React 19 + Vite, servido como SPA por Nginx y conectado a esta API.
 - **API:** Node.js 22, Express y TypeScript estricto.
 - **Persistencia:** MongoDB obligatorio; los stores JSON sólo existen para tests unitarios aislados.
-- **IA:** endpoint compatible con OpenAI para nota completa, copys o edición.
+- **IA:** cliente Gemini reutilizable para novedades temáticas y copy social; proveedor OpenAI-compatible disponible para regeneración editorial existente.
 - **Meta:** Instagram Content Publishing API y Facebook Pages API.
 - **MCP:** servidor remoto Streamable HTTP con OAuth 2.1, PKCE, scopes y perfiles por cuenta; nunca guarda tokens de usuarios en variables de entorno.
 - **Operación:** logs JSON, health/readiness, estado del scheduler, rate limit, auditoría `data/audit.jsonl` y script de backup.
@@ -87,6 +87,8 @@ npm run dev
 | `VITE_R2_MEDIA_UPLOADS` | Variable del frontend; cuando vale `true`, el navegador sube fotos directamente al gateway R2. |
 | `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
 | `AI_API_KEY` | Opcional para las herramientas internas de regeneración editorial (`/api/content/:id/generate`); no es necesaria para el MCP, porque el agente genera la nota. Nunca debe configurarse en el cliente, Git o la conexión MCP. |
+| `GEMINI_API_KEY` | Opcional para el módulo de novedades y generación estructurada de copy; se conserva solo en el backend. |
+| `GEMINI_MODEL` | Modelo Gemini habilitado para la cuenta; por defecto `gemini-3.8-flash`. |
 | `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
 | `AI_MODEL` | Modelo de redacción. |
 | `META_INSTAGRAM_APP_ID` | ID de la app Meta usada para OAuth de Instagram. Debe corresponder al secreto de la misma app. |

@@ -87,6 +87,8 @@ import {
   type UserDirectory,
 } from "../http/security.js";
 import { log } from "../http/logger.js";
+import type { AiNewsManager } from "../../application/ai-news-manager.js";
+import { aiAnalysisSchema, sourceInputSchema } from "../../domain/ai-news/types.js";
 
 type McpExtra = { authInfo?: { scopes: string[]; extra?: Record<string, unknown> } };
 
@@ -436,6 +438,13 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   quitar_colaborador_confiable_instagram: ["notes:write"],
   obtener_estado_plataforma: ["platform:read"],
   gestionar_operacion_plataforma: ["platform:write"],
+  listar_fuentes_novedades: ["notes:read"],
+  guardar_fuente_novedades: ["notes:write"],
+  eliminar_fuente_novedades: ["notes:write"],
+  scrapear_novedades: ["notes:write"],
+  listar_novedades_scrapeadas: ["notes:read"],
+  analizar_novedades_gemini: ["notes:write"],
+  crear_copy_gemini: ["notes:write"],
 };
 
 const toolsAllowedForRoles = (roles: readonly string[]): Set<string> =>
@@ -481,6 +490,7 @@ export const createRemoteMcpServer = (
   socialSeries?: SocialSeriesRepository,
   platform: PlatformManager = new PlatformManager(),
   correlationId?: string,
+  aiNews?: AiNewsManager,
 ) => {
   const server = new McpServer({
     name: "afterstage-notes",
@@ -544,6 +554,108 @@ export const createRemoteMcpServer = (
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
     },
     async (_input, extra) => textResult(authFromExtra(extra, "notes:read")),
+  );
+
+  const aiNewsUnavailable = (): never => {
+    throw new Error("El módulo de novedades no está configurado");
+  };
+  registerTool(
+    "listar_fuentes_novedades",
+    {
+      title: "Listar fuentes de novedades",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ sources: await aiNews!.listSources() });
+    },
+  );
+  registerTool(
+    "guardar_fuente_novedades",
+    {
+      title: "Guardar fuente de novedades",
+      description: "Configura una página HTTPS pública y sus regex de extracción.",
+      inputSchema: sourceInputSchema,
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async (input, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ source: await aiNews!.saveSource(input) });
+    },
+  );
+  registerTool(
+    "eliminar_fuente_novedades",
+    {
+      title: "Eliminar fuente de novedades",
+      inputSchema: { id: z.string().uuid() },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ id }, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ id, removed: await aiNews!.removeSource(id) });
+    },
+  );
+  registerTool(
+    "scrapear_novedades",
+    {
+      title: "Scrapear novedades musicales",
+      inputSchema: { sourceId: z.string().uuid().optional() },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ sourceId }, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ items: await aiNews!.scrape(sourceId) });
+    },
+  );
+  registerTool(
+    "listar_novedades_scrapeadas",
+    {
+      title: "Listar novedades scrapeadas",
+      inputSchema: { topic: z.string().max(80).optional(), limit: z.number().int().min(1).max(200).optional() },
+      annotations: { readOnlyHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async ({ topic, limit }, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ items: await aiNews!.listItems(topic, limit) });
+    },
+  );
+  registerTool(
+    "analizar_novedades_gemini",
+    {
+      title: "Analizar novedades con Gemini",
+      inputSchema: { topic: z.string().min(1).max(80), itemIds: z.array(z.string().uuid()).max(100).optional() },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ topic, itemIds }, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ analysis: await aiNews!.analyze(topic, itemIds) });
+    },
+  );
+  registerTool(
+    "crear_copy_gemini",
+    {
+      title: "Crear copy con Gemini",
+      inputSchema: {
+        analysis: aiAnalysisSchema,
+        format: z.enum(["post", "stories", "both"]).optional(),
+        instructions: z.string().max(3000).optional(),
+      },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ analysis, format, instructions }, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ copy: await aiNews!.createCopy(analysis, format, instructions) });
+    },
   );
 
   const requireInstagramAdmin = (extra: McpExtra, scope: "notes:read" | "notes:write") =>
@@ -2532,6 +2644,7 @@ export const mountRemoteMcp = (
   instagramConnections?: InstagramConnectionStore,
   socialSeries?: SocialSeriesRepository,
   platform: PlatformManager = new PlatformManager(),
+  aiNews?: AiNewsManager,
 ) => {
   const resourceUrl = new URL("/mcp", publicUrl);
   const provider = new McpOAuthProvider({ store, users, resourceUrl, issuerUrl: publicUrl });
@@ -2696,6 +2809,7 @@ export const mountRemoteMcp = (
         socialSeries,
         platform,
         (request as typeof request & { correlationId?: string }).correlationId,
+        aiNews,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);
