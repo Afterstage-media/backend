@@ -15,8 +15,11 @@ test("llama Gemini con JSON y valida la salida tipada", async (context) => {
     requestedUrl = String(input);
     assert.equal(init?.method, "POST");
     assert.equal(new Headers(init?.headers).get("x-goog-api-key"), "test-key");
-    const request = JSON.parse(String(init?.body)) as { generationConfig: { responseMimeType: string } };
+    const request = JSON.parse(String(init?.body)) as {
+      generationConfig: { responseMimeType: string; responseJsonSchema: { required?: string[] } };
+    };
     assert.equal(request.generationConfig.responseMimeType, "application/json");
+    assert.deepEqual(request.generationConfig.responseJsonSchema.required, ["answer"]);
     return new Response(
       JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"answer":"dato confirmado"}' }] } }] }),
       { status: 200 },

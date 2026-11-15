@@ -16,14 +16,18 @@ export class GeminiClient {
             {
               text: [
                 "Sos parte de la redacción de Afterstage, medio argentino de música y cultura independiente.",
-                "Escribí en español rioplatense claro. No inventes hechos, nombres, fechas, citas ni cifras. Separá los datos confirmados de lo que falta verificar.",
+                "Escribí en español rioplatense claro. No inventes ni infieras hechos, nombres, fechas, citas, cifras, contexto, promesas o conclusiones. No agregues llamados a la acción ni preguntas retóricas si los datos no los piden. Separá los datos confirmados de lo que falta verificar y devolvé todos los campos requeridos por el esquema.",
                 input.instructions ?? "",
               ].join(" "),
             },
           ],
         },
         contents: [{ role: "user", parts: [{ text: JSON.stringify({ task: input.task, data: input.data }) }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.3 },
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseJsonSchema: z.toJSONSchema(input.schema),
+          temperature: 0.3,
+        },
       }),
       signal: AbortSignal.timeout(60_000),
     });
