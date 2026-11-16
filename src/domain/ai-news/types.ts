@@ -33,6 +33,9 @@ export const aiAnalysisSchema = z.object({
   sourceIds: z.array(z.string().uuid()).max(30),
 });
 export const aiCopySchema = z.object({
+  articleTitle: z.string().trim().min(1).max(180),
+  articleSummary: z.string().trim().min(1).max(600),
+  articleBody: z.string().trim().min(1).max(50_000),
   instagramPost: z.string().max(2200),
   stories: z.array(z.string().max(500)).max(10),
   hashtags: z.array(z.string().max(80)).max(20),
