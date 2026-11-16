@@ -21,7 +21,11 @@ class MemoryNewsStore implements AiNewsStore {
     return this.items.filter((item) => !topic || item.topic === topic);
   }
   async saveItems(items: ScrapedItem[]) {
-    this.items.push(...items);
+    for (const item of items) {
+      const existing = this.items.findIndex((candidate) => candidate.url === item.url);
+      if (existing >= 0) this.items[existing] = item;
+      else this.items.push(item);
+    }
   }
 }
 
@@ -70,6 +74,9 @@ test("extrae título y enlace de fragmentos HTML acotados por tema", async (cont
   assert.equal(results[0]?.title, "Nuevo disco");
   assert.equal(results[0]?.url, "https://example.com/news/disco");
   assert.equal(results[0]?.topic, "lanzamientos");
+  const repeated = await manager.scrape(source.id);
+  assert.equal(repeated.length, 1);
+  assert.equal((await store.listItems("lanzamientos")).length, 1);
 });
 
 test("asigna las referencias desde los ítems enviados y no desde IDs generados por Gemini", async (context) => {
@@ -145,12 +152,14 @@ test("crea un paquete de nota y copy con tono editorial y contexto de las fuente
   });
   let requestData: { data: { sourceItems: Array<{ url: string }> } } | undefined;
   let systemPrompt = "";
+  let userPrompt = "";
   context.mock.method(globalThis, "fetch", async (_input: string | URL | Request, init?: RequestInit) => {
     const request = JSON.parse(String(init?.body)) as {
       systemInstruction: { parts: Array<{ text: string }> };
       contents: Array<{ parts: Array<{ text: string }> }>;
     };
     systemPrompt = request.systemInstruction.parts[0]!.text;
+    userPrompt = request.contents[0]!.parts[0]!.text;
     requestData = JSON.parse(request.contents[0]!.parts[0]!.text) as typeof requestData;
     return new Response(
       JSON.stringify({
@@ -166,6 +175,13 @@ test("crea un paquete de nota y copy con tono editorial y contexto de las fuente
                     instagramPost: "La previa de los Grammy 2027 tiene nueva pantalla.",
                     stories: ["La Premiere Ceremony llega a Disney+ por primera vez."],
                     hashtags: ["Grammys2027", "DisneyPlus", "Musica"],
+                    imageRecommendation: {
+                      kind: "editorial_illustration",
+                      rationale: "La fuente no ofrece una imagen verificable.",
+                      searchQuery: "Ilustración editorial de transmisión musical en streaming",
+                      altText: "Ilustración editorial sobre música en streaming.",
+                      sourceUrl: null,
+                    },
                   }),
                 },
               ],
@@ -194,4 +210,7 @@ test("crea un paquete de nota y copy con tono editorial y contexto de las fuente
   assert.equal(requestData?.data.sourceItems[0]?.url, item.url);
   assert.match(systemPrompt, /español rioplatense natural/);
   assert.match(systemPrompt, /No agregues preguntas genéricas/);
+  assert.match(userPrompt, /No inventes una URL de imagen/);
+  assert.equal(result.imageRecommendation.kind, "editorial_illustration");
+  assert.equal(result.imageRecommendation.sourceUrl, null);
 });

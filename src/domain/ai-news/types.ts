@@ -39,6 +39,13 @@ export const aiCopySchema = z.object({
   instagramPost: z.string().max(2200),
   stories: z.array(z.string().max(500)).max(10),
   hashtags: z.array(z.string().max(80)).max(20),
+  imageRecommendation: z.object({
+    kind: z.enum(["source_image", "editorial_illustration", "no_image"]),
+    rationale: z.string().max(500),
+    searchQuery: z.string().max(240),
+    altText: z.string().max(300),
+    sourceUrl: z.string().url().nullable(),
+  }),
 });
 
 export type NewsSource = z.infer<typeof newsSourceSchema> & { id: string; createdAt: string; updatedAt: string };
