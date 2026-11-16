@@ -114,7 +114,21 @@ class MongoAiNewsStore implements AiNewsStore {
     if (!items.length) return;
     await this.items.bulkWrite(
       items.map((item) => ({
-        updateOne: { filter: { url: item.url }, update: { $set: item, $setOnInsert: { _id: item.id } }, upsert: true },
+        updateOne: {
+          filter: { url: item.url },
+          update: {
+            $set: {
+              sourceId: item.sourceId,
+              sourceName: item.sourceName,
+              topic: item.topic,
+              title: item.title,
+              summary: item.summary,
+              scrapedAt: item.scrapedAt,
+            },
+            $setOnInsert: { _id: item.id, url: item.url },
+          },
+          upsert: true,
+        },
       })),
       { ordered: false },
     );

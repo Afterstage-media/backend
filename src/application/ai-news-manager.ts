@@ -165,8 +165,14 @@ export class AiNewsManager {
         });
       }
     }
-    await this.store.saveItems(items);
-    return items;
+    const uniqueItems = [...new Map(items.map((item) => [item.url, item])).values()];
+    await this.store.saveItems(uniqueItems);
+    // Return the canonical stored records so repeating a scrape never creates a
+    // second Gemini input for a URL already seen by another source or run.
+    const urls = new Set(uniqueItems.map((item) => item.url));
+    const stored = await this.store.listItems(undefined, 200);
+    const byUrl = new Map(stored.filter((item) => urls.has(item.url)).map((item) => [item.url, item]));
+    return [...urls].flatMap((url) => (byUrl.has(url) ? [byUrl.get(url)!] : []));
   }
   async analyze(topic: string, itemIds?: string[]): Promise<AiAnalysis> {
     const items = (await this.store.listItems(topic, 100)).filter(
@@ -200,7 +206,7 @@ export class AiNewsManager {
       }));
     if (!sourceItems.length) throw new Error("No se encontraron las fuentes de esta noticia");
     return this.gemini.generate({
-      task: `Creá un borrador de nota web y copy listo para Instagram en formato ${format}. La nota debe explicar la noticia con contexto, atribuirla y tener entre 2 y 5 párrafos breves si el material alcanza. El caption debe ser breve (2 o 3 párrafos), aportar un dato concreto y práctico cuando esté verificado, y no repetir literalmente el arte. Para stories, armá una secuencia breve y progresiva. Incluí artículo, instagramPost, stories y hashtags en el JSON.`,
+      task: `Creá un borrador de nota web y copy listo para Instagram en formato ${format}. La nota debe explicar la noticia con contexto, atribuirla y tener entre 2 y 5 párrafos breves si el material alcanza. El caption debe ser breve (2 o 3 párrafos), aportar un dato concreto y práctico cuando esté verificado, y no repetir literalmente el arte. Para stories, armá una secuencia breve y progresiva. Recomendá un tratamiento visual: preferí source_image solo si las fuentes incluyen una imagen editorial verificable; si no, sugerí editorial_illustration y describí una búsqueda/ilustración que no aparente ser una foto documental; si la noticia no admite un visual responsable, elegí no_image. No inventes una URL de imagen: sourceUrl solo puede ser una URL de imagen literal provista por la fuente; en otro caso null. Incluí artículo, instagramPost, stories, hashtags e imageRecommendation en el JSON.`,
       data: { analysis: validatedAnalysis, sourceItems },
       schema: aiCopySchema,
       instructions: [aiNewsEditorialGuidance, instructions].filter(Boolean).join(" "),
