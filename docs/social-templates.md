@@ -19,6 +19,8 @@ Los estándares definen una barra de redacción de medio digital:
 
 Cada tipo de plantilla añade sus propios criterios y secuencia narrativa. Por ejemplo: una crónica se basa en notas de cobertura y hechos observados; una agenda exige verificar vigencia, orden cronológico, venue, ciudad y venta; una noticia separa qué se sabe de lo que falta confirmar; un perfil de banda necesita referencias concretas sobre sonido y trayectoria.
 
+Para el tono específico de notas web y copies generados por el módulo Novedades + IA, consultar [Guía editorial para Novedades + IA](./ai-news-editorial.md). La guía busca una voz cercana y propia sin convertir el copy en clickbait o engagement bait.
+
 ## Flujo equivalente
 
 1. Front: `GET /api/social-templates?type=carousel&channel=instagram`. MCP: `listar_plantillas_sociales`. Ambos devuelven estándares y guía completa para las plantillas disponibles.

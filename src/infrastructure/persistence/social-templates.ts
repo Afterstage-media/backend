@@ -218,7 +218,7 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
     slug: "noticia-musical",
     name: "Noticia musical",
     description: "Novedad breve con contexto y fuente verificable.",
-    guidanceVersion: 1,
+    guidanceVersion: 2,
     editorialGuidance: {
       purpose: "Explicar una novedad musical con contexto suficiente para que se entienda su relevancia.",
       angle:
@@ -237,12 +237,15 @@ export const starterSocialTemplates: SocialTemplateInput[] = [
         "Fuente original o siguiente paso confirmado",
       ],
       caption:
-        "Diferenciá hechos, declaraciones atribuidas y contexto. Incluí fuente directa. Si la noticia evoluciona, señalá cuándo se actualizó.",
-      voice: "Sobria, clara y proporcional a la evidencia disponible.",
+        "Abrí con el dato que le importa a alguien que sigue música. Usá español rioplatense natural y párrafos breves; sumá un detalle práctico local solo si está verificado. El caption aporta contexto y fuente sin repetir la portada. Evitá pedidos de interacción genéricos.",
+      voice:
+        "Cercana, cálida y periodística. Clara y proporcional a la evidencia, sin voz de comunicado, hype ni lunfardo forzado.",
       avoid: [
         "No amplificar rumores ni trascendidos como noticia",
         "No convertir coincidencia temporal en causalidad",
         "En muertes, separaciones o acusaciones, usar confirmación directa y lenguaje preciso",
+        "No usar clickbait, preguntas genéricas, pedidos de compartir ni afirmaciones de alcance garantizado",
+        "No presentar como no confirmado un dato que la fuente simplemente no menciona",
       ],
     },
     editorialSection: "news",

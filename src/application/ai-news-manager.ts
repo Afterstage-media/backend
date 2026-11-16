@@ -11,6 +11,15 @@ import {
 import { aiAnalysisSchema, aiCopySchema } from "../domain/ai-news/types.js";
 import { GeminiClient } from "../infrastructure/integrations/gemini.js";
 
+export const aiNewsEditorialGuidance = [
+  "Escribí para un medio argentino de música, en español rioplatense natural: cercano, claro y periodístico, sin voz de comunicado ni lunfardo forzado.",
+  "Para la nota web: título específico, primer párrafo con el hecho y su atribución, y después contexto útil en párrafos cortos. No rellenes si la fuente ofrece pocos datos.",
+  "Para Instagram: abrí con el dato concreto que le importa a una persona que sigue música; sumá contexto breve y, si está verificado, un dato práctico local que alguien quiera guardar o compartir. El copy debe complementar la imagen, no repetirla palabra por palabra.",
+  "Usá un tono cálido sin hype ni clickbait. No agregues preguntas genéricas, pedidos de compartir, promesas, adjetivos grandilocuentes ni emojis de compromiso. Una pregunta solo si abre una conversación genuina sobre la noticia; como máximo un emoji y solo si suma.",
+  "Las historias forman una secuencia breve: una idea por placa, con avance claro desde la noticia hacia el dato útil. Hashtags: entre 3 y 5, específicos y pertinentes.",
+  "No inventes ni infieras información. Que la fuente no mencione un dato no significa que ese dato no esté confirmado. Conservá atribución, fecha, lugares y husos horarios; solo incluí conversiones locales cuando se provean como verificadas.",
+].join(" ");
+
 export interface AiNewsStore {
   listSources(): Promise<NewsSource[]>;
   saveSource(source: NewsSource): Promise<void>;
@@ -165,7 +174,7 @@ export class AiNewsManager {
     );
     if (!items.length) throw new Error("No hay novedades scrapeadas para esa temática");
     const analysis = await this.gemini.generate({
-      task: "Agrupá y limpiá estas novedades para una posible noticia. No agregues hechos. Devolvé título, resumen, hechos confirmados, datos faltantes, enfoque y IDs fuente.",
+      task: "Agrupá y limpiá estas novedades para una nota útil para la audiencia argentina de música. Encontrá el hecho, por qué le importa al público y cualquier dato práctico presente en la fuente. Devolvé título, resumen, hechos confirmados, datos que la fuente no cubre, enfoque y referencias de origen.",
       data: items,
       schema: aiAnalysisSchema,
     });
@@ -178,11 +187,23 @@ export class AiNewsManager {
     instructions = "",
   ): Promise<AiCopy> {
     const validatedAnalysis = aiAnalysisSchema.parse(analysis);
+    const sourceItems = (await this.store.listItems(undefined, 200))
+      .filter((item) => validatedAnalysis.sourceIds.includes(item.id))
+      .map(({ id, sourceName, topic, title, url, summary, scrapedAt }) => ({
+        id,
+        sourceName,
+        topic,
+        title,
+        url,
+        summary,
+        scrapedAt,
+      }));
+    if (!sourceItems.length) throw new Error("No se encontraron las fuentes de esta noticia");
     return this.gemini.generate({
-      task: `Redactá copy listo para redes en formato ${format}. Para stories, secuencia breve y progresiva. Conservá advertencias y datos faltantes.`,
-      data: validatedAnalysis,
+      task: `Creá un borrador de nota web y copy listo para Instagram en formato ${format}. La nota debe explicar la noticia con contexto, atribuirla y tener entre 2 y 5 párrafos breves si el material alcanza. El caption debe ser breve (2 o 3 párrafos), aportar un dato concreto y práctico cuando esté verificado, y no repetir literalmente el arte. Para stories, armá una secuencia breve y progresiva. Incluí artículo, instagramPost, stories y hashtags en el JSON.`,
+      data: { analysis: validatedAnalysis, sourceItems },
       schema: aiCopySchema,
-      instructions,
+      instructions: [aiNewsEditorialGuidance, instructions].filter(Boolean).join(" "),
     });
   }
 }
