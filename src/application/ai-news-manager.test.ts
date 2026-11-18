@@ -69,6 +69,7 @@ test("mapea el ranking de Gemini por índices a IDs de fuente verificados", asyn
 
   assert.equal(result.candidatesScanned, 1);
   assert.equal(result.stories.length, 1);
+  assert.equal(result.rankingMethod, "gemini");
   assert.equal(result.stories[0]?.itemIds[0], store.items[0]?.id);
   assert.equal(result.stories[0]?.items[0]?.sourceName, "Medio musical");
 });
@@ -81,12 +82,20 @@ test("rechaza destinos locales antes de aceptar fuentes", async () => {
         name: "local",
         url: "https://127.0.0.1/a",
         topic: "música",
+        format: "html",
         itemPattern: "<article>(.*?)</article>",
       }),
     /dirección no pública/,
   );
   await assert.rejects(
-    () => manager.saveSource({ name: "mal regex", url: "https://example.com", topic: "música", itemPattern: "(a+)+$" }),
+    () =>
+      manager.saveSource({
+        name: "mal regex",
+        url: "https://example.com",
+        topic: "música",
+        format: "html",
+        itemPattern: "(a+)+$",
+      }),
     /alto riesgo/,
   );
 });
@@ -98,6 +107,7 @@ test("extrae título y enlace de fragmentos HTML acotados por tema", async (cont
     name: "Fuente test",
     url: "https://example.com/news",
     topic: "lanzamientos",
+    format: "html",
     itemPattern: "<article\\b[^>]*>[\\s\\S]*?</article>",
     titlePattern: "<h2[^>]*>([^<]+)</h2>",
     linkPattern: "href=[\"']([^\"']+)[\"']",
@@ -121,6 +131,60 @@ test("extrae título y enlace de fragmentos HTML acotados por tema", async (cont
   const repeated = await manager.scrape(source.id);
   assert.equal(repeated.length, 1);
   assert.equal((await store.listItems("lanzamientos")).length, 1);
+});
+
+test("lee fuentes RSS automáticamente, limpia resúmenes HTML y permite agregar feeds sin regex", async (context) => {
+  const store = new MemoryNewsStore();
+  const manager = new AiNewsManager(store);
+  const source = await manager.saveSource({
+    name: "Feed musical",
+    url: "https://example.com/feed.xml",
+    topic: "lanzamientos",
+  });
+  assert.equal(source.format, "rss");
+  context.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response(
+        `<rss><channel><item><title>Nuevo álbum de prueba</title><link>https://example.com/notas/album</link><pubDate>${new Date().toUTCString()}</pubDate><description>&lt;p&gt;Anuncio &lt;strong&gt;oficial&lt;/strong&gt; del disco.&lt;/p&gt;</description></item></channel></rss>`,
+        { status: 200, headers: { "content-type": "application/rss+xml" } },
+      ),
+  );
+  const items = await manager.scrape(source.id);
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.title, "Nuevo álbum de prueba");
+  assert.equal(items[0]?.summary, "Anuncio oficial del disco.");
+});
+
+test("no oculta novedades cuando Gemini devuelve un ranking vacío", async (context) => {
+  const store = new MemoryNewsStore();
+  const oldKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = "test-key";
+  context.after(() => {
+    if (oldKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = oldKey;
+  });
+  const publishedAt = new Date().toUTCString();
+  context.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    if (String(input).startsWith("https://news.google.com/"))
+      return new Response(
+        `<rss><channel><item><title>La banda anuncia nuevo álbum para Argentina</title><link>https://news.google.com/rss/articles/test</link><pubDate>${publishedAt}</pubDate><source>Medio musical</source></item></channel></rss>`,
+        { status: 200 },
+      );
+    return new Response(
+      JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ stories: [] }) }] } }] }),
+      {
+        status: 200,
+      },
+    );
+  });
+
+  const result = await new AiNewsManager(store).discoverWeekly("música Argentina", 7, 10);
+
+  assert.equal(result.rankingMethod, "recency-fallback");
+  assert.equal(result.stories.length, 1);
+  assert.equal(result.stories[0]?.items[0]?.title, "La banda anuncia nuevo álbum para Argentina");
 });
 
 test("asigna las referencias desde los ítems enviados y no desde IDs generados por Gemini", async (context) => {

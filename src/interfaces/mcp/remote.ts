@@ -566,14 +566,9 @@ export const createRemoteMcpServer = (
     {
       title: "Buscar y ordenar novedades musicales recientes",
       description:
-        "Busca noticias musicales de Argentina en Google News RSS dentro de los últimos 1–14 días y usa Gemini para agrupar duplicados y ordenar hasta diez hechos por relevancia. Devuelve enlaces y medios; no crea ni publica notas.",
+        "Busca novedades musicales generales para Argentina en varias consultas de Google News RSS, agrupa noticias repetidas por titular y usa Gemini para ordenar hasta diez hechos recientes. Conserva enlaces y medios; devuelve una selección de respaldo si el ranking de Gemini no responde. No crea ni publica notas.",
       inputSchema: {
-        query: z
-          .string()
-          .trim()
-          .min(1)
-          .max(180)
-          .default("música Argentina (artistas OR festivales OR discos OR recitales)"),
+        query: z.string().trim().min(1).max(180).default("música Argentina"),
         days: z.number().int().min(1).max(14).default(7),
         limit: z.number().int().min(1).max(10).default(10),
       },
@@ -622,7 +617,8 @@ export const createRemoteMcpServer = (
     "guardar_fuente_novedades",
     {
       title: "Guardar fuente de novedades",
-      description: "Configura una página HTTPS pública y sus regex de extracción.",
+      description:
+        "Configura una fuente HTTPS pública RSS/Atom o HTML. Los feeds se extraen automáticamente; HTML permite patrones opcionales.",
       inputSchema: sourceInputSchema,
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },

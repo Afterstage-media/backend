@@ -1,10 +1,11 @@
 import { z } from "zod";
 
-export const newsSourceSchema = z.object({
+const sourceSchema = z.object({
   id: z.string().uuid().optional(),
   name: z.string().trim().min(1).max(120),
   url: z.string().url().max(2000),
   topic: z.string().trim().min(1).max(80),
+  format: z.enum(["rss", "html"]).optional(),
   enabled: z.boolean().default(true),
   itemPattern: z
     .string()
@@ -13,17 +14,24 @@ export const newsSourceSchema = z.object({
     .refine(
       (value) => !/\\[1-9]|\([^)]*[+*][^)]*\)[+*{]|\([^)]*\|[^)]*\)[+*{]/.test(value),
       "La regex contiene una estructura de alto riesgo",
-    ),
-  titlePattern: z.string().max(500).default("<title[^>]*>([^<]{1,300})</title>"),
-  linkPattern: z.string().max(500).default("href=[\"']([^\"']{1,1000})[\"']"),
-  summaryPattern: z
-    .string()
-    .max(500)
-    .default("<meta[^>]+name=[\"']description[\"'][^>]+content=[\"']([^\"']{1,1200})[\"']"),
+    )
+    .optional(),
+  titlePattern: z.string().max(500).optional(),
+  linkPattern: z.string().max(500).optional(),
+  summaryPattern: z.string().max(500).optional(),
   maxItems: z.number().int().min(1).max(30).default(10),
 });
+const validateSourceFormat = (source: z.infer<typeof sourceSchema>, context: z.RefinementCtx) => {
+  if ((source.format ?? (source.itemPattern ? "html" : "rss")) === "html" && !source.itemPattern)
+    context.addIssue({
+      code: "custom",
+      path: ["itemPattern"],
+      message: "Las páginas HTML requieren una regex de elementos",
+    });
+};
+export const newsSourceSchema = sourceSchema.superRefine(validateSourceFormat);
 
-export const sourceInputSchema = newsSourceSchema.omit({ id: true });
+export const sourceInputSchema = sourceSchema.omit({ id: true }).superRefine(validateSourceFormat);
 export const aiAnalysisSchema = z.object({
   title: z.string().min(1).max(220),
   summary: z.string().min(1).max(1200),
