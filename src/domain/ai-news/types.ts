@@ -32,6 +32,17 @@ export const aiAnalysisSchema = z.object({
   suggestedAngle: z.string().max(500),
   sourceIds: z.array(z.string().uuid()).max(30),
 });
+export const aiWeeklyDigestSchema = z.object({
+  stories: z
+    .array(
+      z.object({
+        itemIds: z.array(z.string().uuid()).min(1).max(10),
+        relevanceScore: z.number().int().min(1).max(100),
+        reason: z.string().trim().min(1).max(500),
+      }),
+    )
+    .max(10),
+});
 export const aiCopySchema = z.object({
   articleTitle: z.string().trim().min(1).max(180),
   articleSummary: z.string().trim().min(1).max(600),
@@ -60,4 +71,5 @@ export type ScrapedItem = {
   scrapedAt: string;
 };
 export type AiAnalysis = z.infer<typeof aiAnalysisSchema>;
+export type AiWeeklyDigest = z.infer<typeof aiWeeklyDigestSchema>;
 export type AiCopy = z.infer<typeof aiCopySchema>;

@@ -439,6 +439,8 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   obtener_estado_plataforma: ["platform:read"],
   gestionar_operacion_plataforma: ["platform:write"],
   listar_fuentes_novedades: ["notes:read"],
+  buscar_novedades_semana: ["notes:write"],
+  crear_paquete_novedad_gemini: ["notes:write"],
   guardar_fuente_novedades: ["notes:write"],
   eliminar_fuente_novedades: ["notes:write"],
   scrapear_novedades: ["notes:write"],
@@ -559,6 +561,49 @@ export const createRemoteMcpServer = (
   const aiNewsUnavailable = (): never => {
     throw new Error("El módulo de novedades no está configurado");
   };
+  registerTool(
+    "buscar_novedades_semana",
+    {
+      title: "Buscar y ordenar novedades musicales recientes",
+      description:
+        "Busca noticias musicales de Argentina en Google News RSS dentro de los últimos 1–14 días y usa Gemini para agrupar duplicados y ordenar hasta diez hechos por relevancia. Devuelve enlaces y medios; no crea ni publica notas.",
+      inputSchema: {
+        query: z
+          .string()
+          .trim()
+          .min(1)
+          .max(180)
+          .default("música Argentina (artistas OR festivales OR discos OR recitales)"),
+        days: z.number().int().min(1).max(14).default(7),
+        limit: z.number().int().min(1).max(10).default(10),
+      },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ query, days, limit }, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult(await aiNews!.discoverWeekly(query, days, limit));
+    },
+  );
+  registerTool(
+    "crear_paquete_novedad_gemini",
+    {
+      title: "Crear nota y copys desde una noticia seleccionada",
+      description:
+        "Usa Gemini para crear en una sola llamada un paquete editorial (nota, bajada, Instagram, historias y recomendación visual) basado solo en las fuentes seleccionadas. Devuelve contenido para revisión; no guarda ni publica automáticamente.",
+      inputSchema: {
+        query: z.string().trim().min(1).max(180),
+        itemIds: z.array(z.string().uuid()).min(1).max(10),
+        instructions: z.string().max(3000).optional(),
+      },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ query, itemIds, instructions }, extra) => {
+      authFromExtra(extra, "notes:write", writeNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({ copy: await aiNews!.createPackageFromItems(query, itemIds, instructions) });
+    },
+  );
   registerTool(
     "listar_fuentes_novedades",
     {
