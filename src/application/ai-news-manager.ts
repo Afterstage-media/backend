@@ -5,10 +5,11 @@ import {
   sourceInputSchema,
   type AiAnalysis,
   type AiCopy,
+  type AiWeeklyDigest,
   type NewsSource,
   type ScrapedItem,
 } from "../domain/ai-news/types.js";
-import { aiAnalysisSchema, aiCopySchema } from "../domain/ai-news/types.js";
+import { aiAnalysisSchema, aiCopySchema, aiWeeklyDigestSchema } from "../domain/ai-news/types.js";
 import { GeminiClient } from "../infrastructure/integrations/gemini.js";
 
 export const aiNewsEditorialGuidance = [
@@ -72,6 +73,23 @@ const capture = (html: string, pattern: string) => {
     throw new Error("Una expresión regular de la fuente no es válida");
   }
 };
+const decodeXml = (value: string) =>
+  value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&#x([\da-f]+);/gi, (_match, code: string) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;|&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+const xmlValue = (xml: string, tag: string) => {
+  const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, "i").exec(xml);
+  return match?.[1] ? decodeXml(match[1]) : "";
+};
 async function readHtml(response: Response, maxBytes: number): Promise<string> {
   if (!response.body) throw new Error("La fuente no devolvió contenido");
   const reader = response.body.getReader();
@@ -125,6 +143,112 @@ export class AiNewsManager {
   }
   listItems(topic?: string, limit = 100) {
     return this.store.listItems(topic, Math.min(Math.max(limit, 1), 200));
+  }
+  async discoverWeekly(
+    query = "música Argentina (artistas OR festivales OR discos OR recitales)",
+    days = 7,
+    limit = 10,
+  ): Promise<{
+    query: string;
+    windowStart: string;
+    windowEnd: string;
+    stories: Array<AiWeeklyDigest["stories"][number] & { items: ScrapedItem[] }>;
+    candidatesScanned: number;
+  }> {
+    const cleanQuery = query.trim().slice(0, 180);
+    if (!cleanQuery) throw new Error("Indicá qué tema musical querés buscar");
+    const windowDays = Math.min(Math.max(Math.trunc(days), 1), 14);
+    const storyLimit = Math.min(Math.max(Math.trunc(limit), 1), 10);
+    const windowEnd = new Date();
+    const windowStart = new Date(windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000);
+    const search = new URL("https://news.google.com/rss/search");
+    search.searchParams.set("q", `${cleanQuery} when:${windowDays}d`);
+    search.searchParams.set("hl", "es-419");
+    search.searchParams.set("gl", "AR");
+    search.searchParams.set("ceid", "AR:es-419");
+    const response = await fetch(search, {
+      headers: {
+        "User-Agent": "AfterstageNewsBot/1.0 (+https://afterstage.ar)",
+        Accept: "application/rss+xml, application/xml, text/xml",
+      },
+      redirect: "error",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`La búsqueda de noticias respondió HTTP ${response.status}`);
+    const xml = await readHtml(response, 1_500_000);
+    const now = Date.now();
+    const candidateMap = new Map<string, ScrapedItem>();
+    for (const entry of xml.match(/<item\b[\s\S]*?<\/item>/gi) ?? []) {
+      const title = xmlValue(entry, "title");
+      const rawUrl = xmlValue(entry, "link");
+      const publishedAt = Date.parse(xmlValue(entry, "pubDate"));
+      if (
+        !title ||
+        !rawUrl ||
+        !Number.isFinite(publishedAt) ||
+        publishedAt < windowStart.getTime() ||
+        publishedAt > now + 2 * 60 * 60 * 1000
+      )
+        continue;
+      let url: URL;
+      try {
+        url = new URL(rawUrl);
+      } catch {
+        continue;
+      }
+      if (url.protocol !== "https:" || !["news.google.com"].includes(url.hostname)) continue;
+      const sourceMatch = /<source\b[^>]*>([\s\S]*?)<\/source>/i.exec(entry);
+      const sourceName = sourceMatch?.[1] ? decodeXml(sourceMatch[1]) : "Google News";
+      const description = xmlValue(entry, "description");
+      candidateMap.set(url.toString(), {
+        id: randomUUID(),
+        sourceId: "google-news-rss",
+        sourceName,
+        topic: cleanQuery.slice(0, 80),
+        title: title.slice(0, 220),
+        url: url.toString(),
+        summary: description.slice(0, 1200),
+        scrapedAt: new Date(publishedAt).toISOString(),
+      });
+    }
+    const candidates = [...candidateMap.values()].slice(0, 60);
+    if (!candidates.length)
+      throw new Error("No encontré noticias recientes con esos términos. Probá una búsqueda más amplia.");
+    await this.store.saveItems(candidates);
+    const candidateUrls = new Set(candidates.map((item) => item.url));
+    const stored = await this.store.listItems(cleanQuery.slice(0, 80), 200);
+    const canonicalByUrl = new Map(
+      stored.filter((item) => candidateUrls.has(item.url)).map((item) => [item.url, item]),
+    );
+    const items = candidates.flatMap((item) => (canonicalByUrl.has(item.url) ? [canonicalByUrl.get(item.url)!] : []));
+    const ranked = await this.gemini.generate({
+      task: `Ordená estas noticias musicales de Argentina publicadas entre ${windowStart.toISOString()} y ${windowEnd.toISOString()}. Agrupá notas que hablen del mismo hecho en una sola historia, listando todos sus itemIds. Elegí hasta ${storyLimit} hechos distintos. Evaluá actualidad, impacto, relevancia para público argentino, interés musical y solidez/independencia de las fuentes. No inventes hechos ni enlaces. Para cada historia devolvé itemIds, relevanceScore de 1 a 100 y una justificación breve.`,
+      data: items.map(({ id, sourceName, title, url, summary, scrapedAt }) => ({
+        id,
+        sourceName,
+        title,
+        url,
+        summary,
+        publishedAt: scrapedAt,
+      })),
+      schema: aiWeeklyDigestSchema,
+    });
+    const itemById = new Map(items.map((item) => [item.id, item]));
+    const assigned = new Set<string>();
+    const stories = ranked.stories
+      .flatMap((story) => {
+        const grouped = story.itemIds.filter((id) => itemById.has(id) && !assigned.has(id));
+        grouped.forEach((id) => assigned.add(id));
+        return grouped.length ? [{ ...story, itemIds: grouped, items: grouped.map((id) => itemById.get(id)!) }] : [];
+      })
+      .slice(0, storyLimit);
+    return {
+      query: cleanQuery,
+      windowStart: windowStart.toISOString(),
+      windowEnd: windowEnd.toISOString(),
+      stories,
+      candidatesScanned: items.length,
+    };
   }
   async scrape(sourceId?: string) {
     const sources = (await this.store.listSources()).filter(
@@ -208,6 +332,29 @@ export class AiNewsManager {
     return this.gemini.generate({
       task: `Creá un borrador de nota web y copy listo para Instagram en formato ${format}. La nota debe explicar la noticia con contexto, atribuirla y tener entre 2 y 5 párrafos breves si el material alcanza. El caption debe ser breve (2 o 3 párrafos), aportar un dato concreto y práctico cuando esté verificado, y no repetir literalmente el arte. Para stories, armá una secuencia breve y progresiva. Recomendá un tratamiento visual: preferí source_image solo si las fuentes incluyen una imagen editorial verificable; si no, sugerí editorial_illustration y describí una búsqueda/ilustración que no aparente ser una foto documental; si la noticia no admite un visual responsable, elegí no_image. No inventes una URL de imagen: sourceUrl solo puede ser una URL de imagen literal provista por la fuente; en otro caso null. Incluí artículo, instagramPost, stories, hashtags e imageRecommendation en el JSON.`,
       data: { analysis: validatedAnalysis, sourceItems },
+      schema: aiCopySchema,
+      instructions: [aiNewsEditorialGuidance, instructions].filter(Boolean).join(" "),
+    });
+  }
+  async createPackageFromItems(query: string, itemIds: string[], instructions = ""): Promise<AiCopy> {
+    const ids = [...new Set(itemIds)].slice(0, 10);
+    if (!ids.length) throw new Error("Seleccioná una noticia con fuentes asociadas");
+    const available = await this.store.listItems(query.trim().slice(0, 80), 200);
+    const sourceItems = available
+      .filter((item) => ids.includes(item.id))
+      .map(({ id, sourceName, topic, title, url, summary, scrapedAt }) => ({
+        id,
+        sourceName,
+        topic,
+        title,
+        url,
+        summary,
+        publishedAt: scrapedAt,
+      }));
+    if (!sourceItems.length) throw new Error("Las fuentes de esta noticia ya no están disponibles");
+    return this.gemini.generate({
+      task: "Creá un paquete editorial completo basado únicamente en las fuentes enviadas: título, bajada y nota web de 2–5 párrafos breves con atribución; copy de Instagram de 2–3 párrafos que complemente la nota; secuencia de hasta 3 historias; y entre 3 y 5 hashtags específicos. Fusioná fuentes que informan el mismo hecho sin repetir texto. Separá lo no confirmado dentro del artículo con atribución prudente o excluilo; nunca completes huecos con conocimiento propio. Las fuentes no contienen archivos de imagen: imageRecommendation debe ser editorial_illustration o no_image, sourceUrl null y debe incluir un brief visual que no simule una foto documental.",
+      data: { query, sourceItems },
       schema: aiCopySchema,
       instructions: [aiNewsEditorialGuidance, instructions].filter(Boolean).join(" "),
     });

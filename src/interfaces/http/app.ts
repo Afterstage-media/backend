@@ -1652,6 +1652,33 @@ export const createApp = async (
     if (!aiNews) return response.status(503).json(aiNewsUnavailable);
     response.json({ sources: await aiNews.listSources(), geminiConfigured: Boolean(process.env.GEMINI_API_KEY) });
   });
+  app.post("/api/ai-news/discover-weekly", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    const input = z
+      .object({
+        query: z
+          .string()
+          .trim()
+          .min(1)
+          .max(180)
+          .default("música Argentina (artistas OR festivales OR discos OR recitales)"),
+        days: z.number().int().min(1).max(14).default(7),
+        limit: z.number().int().min(1).max(10).default(10),
+      })
+      .parse(request.body);
+    response.json(await aiNews.discoverWeekly(input.query, input.days, input.limit));
+  });
+  app.post("/api/ai-news/package", requireRole("admin", "editor"), async (request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    const input = z
+      .object({
+        query: z.string().trim().min(1).max(180),
+        itemIds: z.array(z.string().uuid()).min(1).max(10),
+        instructions: z.string().max(3000).default(""),
+      })
+      .parse(request.body);
+    response.json({ copy: await aiNews.createPackageFromItems(input.query, input.itemIds, input.instructions) });
+  });
   app.post("/api/ai-news/sources", requireRole("admin", "editor"), async (request, response) => {
     if (!aiNews) return response.status(503).json(aiNewsUnavailable);
     response.status(201).json({ source: await aiNews.saveSource(request.body) });

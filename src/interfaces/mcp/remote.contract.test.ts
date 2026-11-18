@@ -130,6 +130,8 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
       [
         "analizar_novedades_gemini",
         "crear_copy_gemini",
+        "crear_paquete_novedad_gemini",
+        "buscar_novedades_semana",
         "eliminar_fuente_novedades",
         "guardar_fuente_novedades",
         "listar_fuentes_novedades",
@@ -667,6 +669,8 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
       [
         "analizar_novedades_gemini",
         "crear_copy_gemini",
+        "crear_paquete_novedad_gemini",
+        "buscar_novedades_semana",
         "eliminar_fuente_novedades",
         "guardar_fuente_novedades",
         "listar_fuentes_novedades",
