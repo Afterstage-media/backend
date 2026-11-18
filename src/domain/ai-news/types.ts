@@ -36,7 +36,7 @@ export const aiWeeklyDigestSchema = z.object({
   stories: z
     .array(
       z.object({
-        itemIds: z.array(z.string().uuid()).min(1).max(10),
+        itemIndexes: z.array(z.number().int().min(0).max(59)).min(1).max(10),
         relevanceScore: z.number().int().min(1).max(100),
         reason: z.string().trim().min(1).max(500),
       }),
