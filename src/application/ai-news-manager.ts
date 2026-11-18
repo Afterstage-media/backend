@@ -5,7 +5,6 @@ import {
   sourceInputSchema,
   type AiAnalysis,
   type AiCopy,
-  type AiWeeklyDigest,
   type NewsSource,
   type ScrapedItem,
 } from "../domain/ai-news/types.js";
@@ -152,7 +151,7 @@ export class AiNewsManager {
     query: string;
     windowStart: string;
     windowEnd: string;
-    stories: Array<AiWeeklyDigest["stories"][number] & { items: ScrapedItem[] }>;
+    stories: Array<{ itemIds: string[]; relevanceScore: number; reason: string; items: ScrapedItem[] }>;
     candidatesScanned: number;
   }> {
     const cleanQuery = query.trim().slice(0, 180);
@@ -222,8 +221,9 @@ export class AiNewsManager {
     );
     const items = candidates.flatMap((item) => (canonicalByUrl.has(item.url) ? [canonicalByUrl.get(item.url)!] : []));
     const ranked = await this.gemini.generate({
-      task: `Ordená estas noticias musicales de Argentina publicadas entre ${windowStart.toISOString()} y ${windowEnd.toISOString()}. Agrupá notas que hablen del mismo hecho en una sola historia, listando todos sus itemIds. Elegí hasta ${storyLimit} hechos distintos. Evaluá actualidad, impacto, relevancia para público argentino, interés musical y solidez/independencia de las fuentes. No inventes hechos ni enlaces. Para cada historia devolvé itemIds, relevanceScore de 1 a 100 y una justificación breve.`,
-      data: items.map(({ id, sourceName, title, url, summary, scrapedAt }) => ({
+      task: `Ordená estas noticias musicales de Argentina publicadas entre ${windowStart.toISOString()} y ${windowEnd.toISOString()}. Agrupá notas que hablen del mismo hecho en una sola historia. Elegí hasta ${storyLimit} hechos distintos. Evaluá actualidad, impacto, relevancia para público argentino, interés musical y solidez/independencia de las fuentes. No inventes hechos ni enlaces. Devolvé un objeto JSON con stories: lista de objetos {itemIndexes, relevanceScore, reason}. itemIndexes debe contener índices enteros de los registros de entrada (empezando en 0), no IDs ni títulos; incluí todos los índices que cubran el mismo hecho. relevanceScore es un entero del 1 al 100 y reason una justificación breve.`,
+      data: items.map(({ id, sourceName, title, url, summary, scrapedAt }, index) => ({
+        index,
         id,
         sourceName,
         title,
@@ -233,13 +233,23 @@ export class AiNewsManager {
       })),
       schema: aiWeeklyDigestSchema,
     });
-    const itemById = new Map(items.map((item) => [item.id, item]));
     const assigned = new Set<string>();
     const stories = ranked.stories
       .flatMap((story) => {
-        const grouped = story.itemIds.filter((id) => itemById.has(id) && !assigned.has(id));
+        const grouped = story.itemIndexes
+          .map((index) => items[index]?.id)
+          .filter((id): id is string => typeof id === "string" && !assigned.has(id));
         grouped.forEach((id) => assigned.add(id));
-        return grouped.length ? [{ ...story, itemIds: grouped, items: grouped.map((id) => itemById.get(id)!) }] : [];
+        return grouped.length
+          ? [
+              {
+                itemIds: grouped,
+                relevanceScore: story.relevanceScore,
+                reason: story.reason,
+                items: grouped.map((id) => items.find((item) => item.id === id)!),
+              },
+            ]
+          : [];
       })
       .slice(0, storyLimit);
     return {

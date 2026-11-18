@@ -29,6 +29,50 @@ class MemoryNewsStore implements AiNewsStore {
   }
 }
 
+test("mapea el ranking de Gemini por índices a IDs de fuente verificados", async (context) => {
+  const store = new MemoryNewsStore();
+  const oldKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = "test-key";
+  context.after(() => {
+    if (oldKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = oldKey;
+  });
+  const publishedAt = new Date().toUTCString();
+  context.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    if (String(input).startsWith("https://news.google.com/")) {
+      return new Response(
+        `<rss><channel><item><title>Festival musical anuncia su regreso</title><link>https://news.google.com/rss/articles/example</link><pubDate>${publishedAt}</pubDate><source>Medio musical</source><description>La próxima edición será en Argentina.</description></item></channel></rss>`,
+        { status: 200 },
+      );
+    }
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    stories: [{ itemIndexes: [0], relevanceScore: 92, reason: "Novedad reciente con impacto local." }],
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      { status: 200 },
+    );
+  });
+
+  const result = await new AiNewsManager(store).discoverWeekly("música Argentina", 7, 10);
+
+  assert.equal(result.candidatesScanned, 1);
+  assert.equal(result.stories.length, 1);
+  assert.equal(result.stories[0]?.itemIds[0], store.items[0]?.id);
+  assert.equal(result.stories[0]?.items[0]?.sourceName, "Medio musical");
+});
+
 test("rechaza destinos locales antes de aceptar fuentes", async () => {
   const manager = new AiNewsManager(new MemoryNewsStore());
   await assert.rejects(
