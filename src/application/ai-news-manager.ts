@@ -75,7 +75,6 @@ const capture = (html: string, pattern: string) => {
 const decodeXml = (value: string) =>
   value
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/<[^>]*>/g, " ")
     .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
     .replace(/&#x([\da-f]+);/gi, (_match, code: string) => String.fromCodePoint(parseInt(code, 16)))
     .replace(/&amp;/g, "&")
@@ -83,11 +82,62 @@ const decodeXml = (value: string) =>
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&apos;|&#39;/g, "'")
+    .replace(/<[^>]*>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 const xmlValue = (xml: string, tag: string) => {
   const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, "i").exec(xml);
   return match?.[1] ? decodeXml(match[1]) : "";
+};
+const htmlValue = (value: string) => decodeXml(decodeXml(value)).slice(0, 1200);
+const cleanNewsUrl = (value: string, base: string) => {
+  try {
+    const url = new URL(value, base);
+    if (url.protocol !== "https:" || url.username || url.password) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+};
+const newsEntry = (xml: string) => xml.match(/<(?:item|entry)\b[\s\S]*?<\/(?:item|entry)>/gi) ?? [];
+const feedLink = (entry: string, base: string) => {
+  const atomLinks = [...entry.matchAll(/<link\b([^>]*)\/?\s*>/gi)];
+  const alternate = atomLinks.find((match) => !/\brel=["'](?:self|enclosure)["']/i.test(match[1] ?? ""));
+  const href = alternate?.[1]?.match(/\bhref=["']([^"']+)["']/i)?.[1];
+  return cleanNewsUrl(href || xmlValue(entry, "link"), base);
+};
+const titleTokens = (title: string) =>
+  new Set(
+    title
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/\s+[|–—-]\s+[^|–—-]{2,60}$/g, "")
+      .replace(/[^a-z0-9]+/g, " ")
+      .split(/\s+/)
+      .filter(
+        (word) =>
+          word.length > 2 &&
+          !/^(con|para|por|una|uno|del|las|los|que|como|desde|sobre|tras|entre|ante|este|esta|sus|mas|hoy|sera|vuelve|llega|anuncia|anuncio|musica)$/.test(
+            word,
+          ),
+      ),
+  );
+const groupSameStories = (items: ScrapedItem[]) => {
+  const groups: ScrapedItem[][] = [];
+  for (const item of items) {
+    const words = titleTokens(item.title);
+    const match = groups.find((group) =>
+      group.some((other) => {
+        const otherWords = titleTokens(other.title);
+        const shared = [...words].filter((word) => otherWords.has(word)).length;
+        return shared >= 3 && shared / Math.min(words.size || 1, otherWords.size || 1) >= 0.68;
+      }),
+    );
+    if (match) match.push(item);
+    else groups.push([item]);
+  }
+  return groups;
 };
 async function readHtml(response: Response, maxBytes: number): Promise<string> {
   if (!response.body) throw new Error("La fuente no devolvió contenido");
@@ -130,6 +180,7 @@ export class AiNewsManager {
     const now = new Date().toISOString();
     const source: NewsSource = {
       ...parsed,
+      format: parsed.format ?? (parsed.itemPattern ? "html" : "rss"),
       id: existing?.id ?? randomUUID(),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -144,15 +195,18 @@ export class AiNewsManager {
     return this.store.listItems(topic, Math.min(Math.max(limit, 1), 200));
   }
   async discoverWeekly(
-    query = "música Argentina (artistas OR festivales OR discos OR recitales)",
+    query = "música Argentina",
     days = 7,
     limit = 10,
+    correlationId = "",
   ): Promise<{
     query: string;
     windowStart: string;
     windowEnd: string;
     stories: Array<{ itemIds: string[]; relevanceScore: number; reason: string; items: ScrapedItem[] }>;
     candidatesScanned: number;
+    duplicateItemsGrouped: number;
+    rankingMethod: "gemini" | "recency-fallback";
   }> {
     const cleanQuery = query.trim().slice(0, 180);
     if (!cleanQuery) throw new Error("Indicá qué tema musical querés buscar");
@@ -160,57 +214,78 @@ export class AiNewsManager {
     const storyLimit = Math.min(Math.max(Math.trunc(limit), 1), 10);
     const windowEnd = new Date();
     const windowStart = new Date(windowEnd.getTime() - windowDays * 24 * 60 * 60 * 1000);
-    const search = new URL("https://news.google.com/rss/search");
-    search.searchParams.set("q", `${cleanQuery} when:${windowDays}d`);
-    search.searchParams.set("hl", "es-419");
-    search.searchParams.set("gl", "AR");
-    search.searchParams.set("ceid", "AR:es-419");
-    const response = await fetch(search, {
-      headers: {
-        "User-Agent": "AfterstageNewsBot/1.0 (+https://afterstage.ar)",
-        Accept: "application/rss+xml, application/xml, text/xml",
-      },
-      redirect: "error",
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) throw new Error(`La búsqueda de noticias respondió HTTP ${response.status}`);
-    const xml = await readHtml(response, 1_500_000);
     const now = Date.now();
+    const broadMusicQuery =
+      /m[uú]sica/i.test(cleanQuery) && /(argentina|noticias|artistas|festivales|discos|recitales)/i.test(cleanQuery);
+    const searchQueries = broadMusicQuery
+      ? [
+          `${cleanQuery} (lanzamiento OR álbum OR disco OR single OR banda OR artista)`,
+          `${cleanQuery} (recital OR concierto OR gira OR festival OR show)`,
+          `${cleanQuery} (industria musical OR premios OR streaming OR sellos)`,
+        ]
+      : [cleanQuery];
+    const responses = await Promise.allSettled(
+      searchQueries.map(async (searchQuery) => {
+        const search = new URL("https://news.google.com/rss/search");
+        search.searchParams.set("q", `${searchQuery} when:${windowDays}d`);
+        search.searchParams.set("hl", "es-419");
+        search.searchParams.set("gl", "AR");
+        search.searchParams.set("ceid", "AR:es-419");
+        const response = await fetch(search, {
+          headers: {
+            "User-Agent": "AfterstageNewsBot/1.0 (+https://afterstage.ar)",
+            Accept: "application/rss+xml, application/xml, text/xml",
+          },
+          redirect: "error",
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return readHtml(response, 1_500_000);
+      }),
+    );
+    const successfulFeeds = responses.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    if (!successfulFeeds.length) throw new Error("No se pudo consultar ninguna fuente de noticias en este momento");
     const candidateMap = new Map<string, ScrapedItem>();
-    for (const entry of xml.match(/<item\b[\s\S]*?<\/item>/gi) ?? []) {
-      const title = xmlValue(entry, "title");
-      const rawUrl = xmlValue(entry, "link");
-      const publishedAt = Date.parse(xmlValue(entry, "pubDate"));
-      if (
-        !title ||
-        !rawUrl ||
-        !Number.isFinite(publishedAt) ||
-        publishedAt < windowStart.getTime() ||
-        publishedAt > now + 2 * 60 * 60 * 1000
-      )
-        continue;
-      let url: URL;
-      try {
-        url = new URL(rawUrl);
-      } catch {
-        continue;
+    for (const xml of successfulFeeds) {
+      for (const entry of newsEntry(xml)) {
+        const title = xmlValue(entry, "title");
+        const url = feedLink(entry, "https://news.google.com/");
+        const publishedAt = Date.parse(
+          xmlValue(entry, "pubDate") ||
+            xmlValue(entry, "published") ||
+            xmlValue(entry, "updated") ||
+            xmlValue(entry, "dc:date"),
+        );
+        if (
+          !title ||
+          !url ||
+          !Number.isFinite(publishedAt) ||
+          publishedAt < windowStart.getTime() ||
+          publishedAt > now + 2 * 60 * 60 * 1000
+        )
+          continue;
+        const sourceMatch = /<source\b[^>]*>([\s\S]*?)<\/source>/i.exec(entry);
+        const sourceName = sourceMatch?.[1] ? decodeXml(sourceMatch[1]) : "Google News";
+        const description = htmlValue(
+          xmlValue(entry, "content:encoded") || xmlValue(entry, "description") || xmlValue(entry, "summary"),
+        );
+        const item: ScrapedItem = {
+          id: randomUUID(),
+          sourceId: "google-news-rss",
+          sourceName,
+          topic: cleanQuery.slice(0, 80),
+          title: title.slice(0, 220),
+          url,
+          summary: description,
+          scrapedAt: new Date(publishedAt).toISOString(),
+        };
+        const previous = candidateMap.get(url);
+        if (!previous || item.summary.length > previous.summary.length) candidateMap.set(url, item);
       }
-      if (url.protocol !== "https:" || !["news.google.com"].includes(url.hostname)) continue;
-      const sourceMatch = /<source\b[^>]*>([\s\S]*?)<\/source>/i.exec(entry);
-      const sourceName = sourceMatch?.[1] ? decodeXml(sourceMatch[1]) : "Google News";
-      const description = xmlValue(entry, "description");
-      candidateMap.set(url.toString(), {
-        id: randomUUID(),
-        sourceId: "google-news-rss",
-        sourceName,
-        topic: cleanQuery.slice(0, 80),
-        title: title.slice(0, 220),
-        url: url.toString(),
-        summary: description.slice(0, 1200),
-        scrapedAt: new Date(publishedAt).toISOString(),
-      });
     }
-    const candidates = [...candidateMap.values()].slice(0, 60);
+    const candidates = [...candidateMap.values()]
+      .sort((left, right) => right.scrapedAt.localeCompare(left.scrapedAt))
+      .slice(0, 120);
     if (!candidates.length)
       throw new Error("No encontré noticias recientes con esos términos. Probá una búsqueda más amplia.");
     await this.store.saveItems(candidates);
@@ -220,44 +295,83 @@ export class AiNewsManager {
       stored.filter((item) => candidateUrls.has(item.url)).map((item) => [item.url, item]),
     );
     const items = candidates.flatMap((item) => (canonicalByUrl.has(item.url) ? [canonicalByUrl.get(item.url)!] : []));
-    const ranked = await this.gemini.generate({
-      task: `Ordená estas noticias musicales de Argentina publicadas entre ${windowStart.toISOString()} y ${windowEnd.toISOString()}. Agrupá notas que hablen del mismo hecho en una sola historia. Elegí hasta ${storyLimit} hechos distintos. Evaluá actualidad, impacto, relevancia para público argentino, interés musical y solidez/independencia de las fuentes. No inventes hechos ni enlaces. Devolvé un objeto JSON con stories: lista de objetos {itemIndexes, relevanceScore, reason}. itemIndexes debe contener índices enteros de los registros de entrada (empezando en 0), no IDs ni títulos; incluí todos los índices que cubran el mismo hecho. relevanceScore es un entero del 1 al 100 y reason una justificación breve.`,
-      data: items.map(({ id, sourceName, title, url, summary, scrapedAt }, index) => ({
-        index,
-        id,
-        sourceName,
-        title,
-        url,
-        summary,
-        publishedAt: scrapedAt,
-      })),
-      schema: aiWeeklyDigestSchema,
-    });
-    const assigned = new Set<string>();
-    const stories = ranked.stories
-      .flatMap((story) => {
-        const grouped = story.itemIndexes
-          .map((index) => items[index]?.id)
-          .filter((id): id is string => typeof id === "string" && !assigned.has(id));
-        grouped.forEach((id) => assigned.add(id));
-        return grouped.length
-          ? [
-              {
-                itemIds: grouped,
-                relevanceScore: story.relevanceScore,
-                reason: story.reason,
-                items: grouped.map((id) => items.find((item) => item.id === id)!),
-              },
-            ]
-          : [];
-      })
-      .slice(0, storyLimit);
+    const groups = groupSameStories(items);
+    const rankedGroups = groups.slice(0, 60);
+    const groupLeads = rankedGroups.map(
+      (group) => [...group].sort((a, b) => b.scrapedAt.localeCompare(a.scrapedAt))[0]!,
+    );
+    let stories: Array<{ itemIds: string[]; relevanceScore: number; reason: string; items: ScrapedItem[] }> = [];
+    let rankingMethod: "gemini" | "recency-fallback" = "gemini";
+    try {
+      const ranked = await this.gemini.generate({
+        task: `Elegí hasta ${storyLimit} noticias musicales publicadas en Argentina entre ${windowStart.toISOString()} y ${windowEnd.toISOString()}. La entrada ya está agrupada por hecho y contiene un índice por historia. Priorizá lanzamientos, anuncios, giras, festivales, cambios relevantes de la industria y noticias de artistas con interés periodístico. Excluí agendas institucionales rutinarias, resultados irrelevantes o contenido que solo mencione música de paso. Si hay al menos una noticia musical concreta, devolvé al menos una historia. Devolvé stories con itemIndexes (índices enteros existentes, desde 0), relevanceScore (1–100) y reason breve. No devuelvas títulos ni enlaces nuevos.`,
+        data: groupLeads.map(({ sourceName, title, url, summary, scrapedAt }, index) => ({
+          index,
+          sourceName,
+          title,
+          url,
+          summary: summary.slice(0, 500),
+          publishedAt: scrapedAt,
+        })),
+        schema: aiWeeklyDigestSchema,
+      });
+      stories = ranked.stories
+        .flatMap((story) => {
+          const indexes = [...new Set(story.itemIndexes)].filter((index) => index >= 0 && index < rankedGroups.length);
+          const grouped = [...new Set(indexes.flatMap((index) => rankedGroups[index]!.map((item) => item.id)))].slice(
+            0,
+            10,
+          );
+          return grouped.length
+            ? [
+                {
+                  itemIds: grouped,
+                  relevanceScore: story.relevanceScore,
+                  reason: story.reason,
+                  items: grouped.flatMap((id) => {
+                    const item = items.find((candidate) => candidate.id === id);
+                    return item ? [item] : [];
+                  }),
+                },
+              ]
+            : [];
+        })
+        .slice(0, storyLimit);
+    } catch (error) {
+      rankingMethod = "recency-fallback";
+      console.warn(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          level: "warn",
+          service: "afterstage-social-manager",
+          event: "ai_news_weekly_gemini_fallback",
+          correlationId,
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        }),
+      );
+    }
+    if (!stories.length) {
+      rankingMethod = "recency-fallback";
+      stories = groups
+        .map((group) => {
+          const sorted = [...group].sort((a, b) => b.scrapedAt.localeCompare(a.scrapedAt)).slice(0, 10);
+          return {
+            itemIds: sorted.map((item) => item.id),
+            relevanceScore: 50,
+            reason: "Resultado reciente agrupado por similitud de titulares; revisar relevancia y fuentes.",
+            items: sorted,
+          };
+        })
+        .slice(0, storyLimit);
+    }
     return {
       query: cleanQuery,
       windowStart: windowStart.toISOString(),
       windowEnd: windowEnd.toISOString(),
       stories,
-      candidatesScanned: items.length,
+      candidatesScanned: candidates.length,
+      duplicateItemsGrouped: candidates.length - groups.length,
+      rankingMethod,
     };
   }
   async scrape(sourceId?: string) {
@@ -266,37 +380,70 @@ export class AiNewsManager {
     );
     const items: ScrapedItem[] = [];
     for (const source of sources) {
+      const sourceFormat = source.format ?? (source.itemPattern ? "html" : "rss");
       await assertPublicUrl(source.url);
       const response = await fetch(source.url, {
         headers: {
           "User-Agent": "AfterstageNewsBot/1.0 (+https://afterstage.ar)",
-          Accept: "text/html,application/xhtml+xml",
+          Accept:
+            sourceFormat === "rss"
+              ? "application/rss+xml,application/atom+xml,application/xml,text/xml"
+              : "text/html,application/xhtml+xml",
         },
         redirect: "error",
         signal: AbortSignal.timeout(12_000),
       });
       if (!response.ok) throw new Error(`No se pudo leer ${source.name}: HTTP ${response.status}`);
       const type = response.headers.get("content-type") ?? "";
-      if (!type.includes("text/html") && !type.includes("application/xhtml+xml"))
-        throw new Error(`La fuente ${source.name} no respondió HTML`);
-      const html = await readHtml(response, 1_500_000);
-      const chunks = html.match(new RegExp(source.itemPattern, "gis")) ?? [];
-      for (const chunk of chunks.slice(0, source.maxItems)) {
-        const title = capture(chunk, source.titlePattern);
-        const rawLink = capture(chunk, source.linkPattern);
-        if (!title) continue;
-        const url = new URL(rawLink || source.url, source.url);
-        if (url.origin !== new URL(source.url).origin || url.protocol !== "https:") continue;
-        items.push({
-          id: randomUUID(),
-          sourceId: source.id,
-          sourceName: source.name,
-          topic: source.topic,
-          title: title.slice(0, 220),
-          url: url.toString(),
-          summary: capture(chunk, source.summaryPattern).slice(0, 1200),
-          scrapedAt: new Date().toISOString(),
-        });
+      const body = await readHtml(response, 1_500_000);
+      const isXml = type.includes("xml") || type.includes("rss") || type.includes("atom");
+      if (sourceFormat === "rss" || isXml) {
+        const entries = newsEntry(body);
+        for (const entry of entries.slice(0, source.maxItems)) {
+          const title = xmlValue(entry, "title");
+          const url = feedLink(entry, source.url);
+          if (!title || !url) continue;
+          const published = Date.parse(
+            xmlValue(entry, "pubDate") ||
+              xmlValue(entry, "published") ||
+              xmlValue(entry, "updated") ||
+              xmlValue(entry, "dc:date"),
+          );
+          const rawSummary =
+            xmlValue(entry, "content:encoded") || xmlValue(entry, "description") || xmlValue(entry, "summary");
+          items.push({
+            id: randomUUID(),
+            sourceId: source.id,
+            sourceName: source.name,
+            topic: source.topic,
+            title: title.slice(0, 220),
+            url,
+            summary: htmlValue(rawSummary),
+            scrapedAt: Number.isFinite(published) ? new Date(published).toISOString() : new Date().toISOString(),
+          });
+        }
+      } else {
+        if (!type.includes("text/html") && !type.includes("application/xhtml+xml"))
+          throw new Error(`La fuente ${source.name} no respondió HTML ni un feed RSS/Atom`);
+        if (!source.itemPattern) throw new Error(`La fuente HTML ${source.name} necesita una regex de elementos`);
+        const chunks = body.match(new RegExp(source.itemPattern, "gis")) ?? [];
+        for (const chunk of chunks.slice(0, source.maxItems)) {
+          const title = capture(chunk, source.titlePattern ?? "<h[1-3][^>]*>([\\s\\S]*?)<\\/h[1-3]>");
+          const rawLink = capture(chunk, source.linkPattern ?? "href=[\"']([^\"']{1,1000})[\"']");
+          if (!title) continue;
+          const url = cleanNewsUrl(rawLink || source.url, source.url);
+          if (!url || new URL(url).origin !== new URL(source.url).origin) continue;
+          items.push({
+            id: randomUUID(),
+            sourceId: source.id,
+            sourceName: source.name,
+            topic: source.topic,
+            title: title.slice(0, 220),
+            url,
+            summary: capture(chunk, source.summaryPattern ?? "<p[^>]*>([\\s\\S]*?)<\\/p>").slice(0, 1200),
+            scrapedAt: new Date().toISOString(),
+          });
+        }
       }
     }
     const uniqueItems = [...new Map(items.map((item) => [item.url, item])).values()];

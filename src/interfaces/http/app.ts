@@ -1656,17 +1656,19 @@ export const createApp = async (
     if (!aiNews) return response.status(503).json(aiNewsUnavailable);
     const input = z
       .object({
-        query: z
-          .string()
-          .trim()
-          .min(1)
-          .max(180)
-          .default("música Argentina (artistas OR festivales OR discos OR recitales)"),
+        query: z.string().trim().min(1).max(180).default("música Argentina"),
         days: z.number().int().min(1).max(14).default(7),
         limit: z.number().int().min(1).max(10).default(10),
       })
       .parse(request.body);
-    response.json(await aiNews.discoverWeekly(input.query, input.days, input.limit));
+    response.json(
+      await aiNews.discoverWeekly(
+        input.query,
+        input.days,
+        input.limit,
+        (request as typeof request & { correlationId?: string }).correlationId ?? "",
+      ),
+    );
   });
   app.post("/api/ai-news/package", requireRole("admin", "editor"), async (request, response) => {
     if (!aiNews) return response.status(503).json(aiNewsUnavailable);
