@@ -467,6 +467,7 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   gestionar_operacion_plataforma: ["platform:write"],
   listar_fuentes_novedades: ["notes:read"],
   buscar_novedades_semana: ["notes:write"],
+  estado_automatizacion_novedades: ["notes:read"],
   crear_paquete_novedad_gemini: ["notes:write"],
   guardar_fuente_novedades: ["notes:write"],
   eliminar_fuente_novedades: ["notes:write"],
@@ -606,6 +607,29 @@ export const createRemoteMcpServer = (
       authFromExtra(extra, "notes:write", writeNotesRoles);
       if (!aiNews) aiNewsUnavailable();
       return textResult(await aiNews!.discoverWeekly(query, days, limit));
+    },
+  );
+  registerTool(
+    "estado_automatizacion_novedades",
+    {
+      title: "Ver el estado de borradores semanales automáticos",
+      description:
+        "Muestra el horario semanal y la última corrida de borradores. La automatización nunca publica en Instagram.",
+      inputSchema: {},
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({
+        enabled: true,
+        cadence: "weekly",
+        day: "Monday",
+        time: "09:00",
+        timeZone: "America/Argentina/Buenos_Aires",
+        action: "create_drafts_only",
+        lastRun: await aiNews!.weeklyAutomationStatus(),
+      });
     },
   );
   registerTool(

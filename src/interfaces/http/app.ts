@@ -1652,6 +1652,18 @@ export const createApp = async (
     if (!aiNews) return response.status(503).json(aiNewsUnavailable);
     response.json({ sources: await aiNews.listSources(), geminiConfigured: Boolean(process.env.GEMINI_API_KEY) });
   });
+  app.get("/api/ai-news/automation", requireRole("admin", "editor"), async (_request, response) => {
+    if (!aiNews) return response.status(503).json(aiNewsUnavailable);
+    response.json({
+      enabled: true,
+      cadence: "weekly",
+      day: "Monday",
+      time: "09:00",
+      timeZone: "America/Argentina/Buenos_Aires",
+      action: "create_drafts_only",
+      lastRun: await aiNews.weeklyAutomationStatus(),
+    });
+  });
   app.post("/api/ai-news/discover-weekly", requireRole("admin", "editor"), async (request, response) => {
     if (!aiNews) return response.status(503).json(aiNewsUnavailable);
     const input = z
