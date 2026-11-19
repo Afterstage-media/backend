@@ -672,6 +672,7 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
         "crear_paquete_novedad_gemini",
         "buscar_novedades_semana",
         "estado_automatizacion_novedades",
+        "estado_automatizacion_novedades",
         "eliminar_fuente_novedades",
         "guardar_fuente_novedades",
         "listar_fuentes_novedades",
