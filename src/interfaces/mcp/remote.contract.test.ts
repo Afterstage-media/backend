@@ -132,6 +132,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "crear_copy_gemini",
         "crear_paquete_novedad_gemini",
         "buscar_novedades_semana",
+        "estado_automatizacion_novedades",
         "eliminar_fuente_novedades",
         "guardar_fuente_novedades",
         "listar_fuentes_novedades",
