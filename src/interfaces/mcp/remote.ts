@@ -114,6 +114,33 @@ const textResult = (value: Record<string, unknown>) => ({
   structuredContent: value,
 });
 
+const aiNewsItemOutputSchema = z.object({
+  id: z.string().uuid(),
+  sourceId: z.string(),
+  sourceName: z.string(),
+  topic: z.string(),
+  title: z.string(),
+  url: z.string().url(),
+  summary: z.string(),
+  scrapedAt: z.string(),
+});
+const aiNewsWeeklyOutputSchema = z.object({
+  query: z.string(),
+  windowStart: z.string(),
+  windowEnd: z.string(),
+  stories: z.array(
+    z.object({
+      itemIds: z.array(z.string().uuid()),
+      relevanceScore: z.number().int(),
+      reason: z.string(),
+      items: z.array(aiNewsItemOutputSchema),
+    }),
+  ),
+  candidatesScanned: z.number().int(),
+  duplicateItemsGrouped: z.number().int(),
+  rankingMethod: z.enum(["gemini", "recency-fallback"]),
+});
+
 const runMcpIdempotentOperation = async <T extends Record<string, unknown>>(
   press: PressManager,
   actorId: string,
@@ -572,6 +599,7 @@ export const createRemoteMcpServer = (
         days: z.number().int().min(1).max(14).default(7),
         limit: z.number().int().min(1).max(10).default(10),
       },
+      outputSchema: aiNewsWeeklyOutputSchema,
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
     async ({ query, days, limit }, extra) => {
@@ -659,6 +687,7 @@ export const createRemoteMcpServer = (
     {
       title: "Listar novedades scrapeadas",
       inputSchema: { topic: z.string().max(80).optional(), limit: z.number().int().min(1).max(200).optional() },
+      outputSchema: z.object({ items: z.array(aiNewsItemOutputSchema) }),
       annotations: { readOnlyHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
     },
