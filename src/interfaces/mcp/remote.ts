@@ -467,6 +467,7 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   gestionar_operacion_plataforma: ["platform:write"],
   listar_fuentes_novedades: ["notes:read"],
   buscar_novedades_semana: ["notes:write"],
+  estado_automatizacion_novedades: ["notes:read"],
   crear_paquete_novedad_gemini: ["notes:write"],
   guardar_fuente_novedades: ["notes:write"],
   eliminar_fuente_novedades: ["notes:write"],
