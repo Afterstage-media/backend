@@ -609,6 +609,29 @@ export const createRemoteMcpServer = (
     },
   );
   registerTool(
+    "estado_automatizacion_novedades",
+    {
+      title: "Ver el estado de borradores semanales automáticos",
+      description:
+        "Muestra el horario semanal y la última corrida de borradores. La automatización nunca publica en Instagram.",
+      inputSchema: {},
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async (_input, extra) => {
+      authFromExtra(extra, "notes:read", readNotesRoles);
+      if (!aiNews) aiNewsUnavailable();
+      return textResult({
+        enabled: true,
+        cadence: "weekly",
+        day: "Monday",
+        time: "09:00",
+        timeZone: "America/Argentina/Buenos_Aires",
+        action: "create_drafts_only",
+        lastRun: await aiNews!.weeklyAutomationStatus(),
+      });
+    },
+  );
+  registerTool(
     "crear_paquete_novedad_gemini",
     {
       title: "Crear nota y copys desde una noticia seleccionada",

@@ -26,6 +26,17 @@ export interface AiNewsStore {
   removeSource(id: string): Promise<boolean>;
   listItems(topic?: string, limit?: number): Promise<ScrapedItem[]>;
   saveItems(items: ScrapedItem[]): Promise<void>;
+  beginWeeklyRun?(
+    weekKey: string,
+  ): Promise<{ claimed: boolean; existing: Array<{ id: string; title: string; index: number }> }>;
+  completeWeeklyRun?(weekKey: string, notes: Array<{ id: string; title: string }>): Promise<void>;
+  failWeeklyRun?(weekKey: string, errorType: string): Promise<void>;
+  weeklyRunStatus?(): Promise<{
+    week: string;
+    status: string;
+    completedAt: string | null;
+    notes: Array<{ id: string; title: string; index?: number }>;
+  } | null>;
 }
 
 const privateIpv4 = (ip: string) => {
@@ -170,6 +181,87 @@ export class AiNewsManager {
   ) {}
   listSources() {
     return this.store.listSources();
+  }
+  weeklyAutomationStatus() {
+    return this.store.weeklyRunStatus?.() ?? Promise.resolve(null);
+  }
+  async runWeeklyDrafts(
+    createDraft: (input: {
+      title: string;
+      summary: string;
+      body: string;
+      instagramCopy: string;
+      tags: string[];
+      source: string;
+      idempotencyKey: string;
+    }) => Promise<{ id: string; title: string }>,
+    correlationId = "",
+  ) {
+    if (!this.store.beginWeeklyRun || !this.store.completeWeeklyRun || !this.store.failWeeklyRun)
+      throw new Error("La automatización semanal no tiene almacenamiento persistente");
+    if (!process.env.GEMINI_API_KEY) throw new Error("Gemini no está configurado");
+    const now = new Date();
+    const weekKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Argentina/Buenos_Aires",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(now);
+    const weekday = new Date(now.toLocaleString("en-US", { timeZone: "America/Argentina/Buenos_Aires" })).getDay();
+    if (weekday !== 1) return { ran: false, reason: "not-monday", week: weekKey, drafts: [] };
+    const claim = await this.store.beginWeeklyRun(weekKey);
+    if (!claim.claimed) return { ran: false, reason: "already-claimed", week: weekKey, drafts: claim.existing };
+    try {
+      const draftResults = new Map<number, { id: string; title: string }>();
+      for (const existing of claim.existing) draftResults.set(existing.index, existing);
+      const previous = await this.store.weeklyRunStatus?.();
+      const digest = await this.discoverWeekly("música Argentina", 7, 5, correlationId);
+      for (const [index, story] of digest.stories.slice(0, 5).entries()) {
+        const existing =
+          draftResults.get(index) ??
+          (previous?.week === weekKey
+            ? previous.notes.find((note) => (note as { index?: number }).index === index)
+            : undefined);
+        if (existing) {
+          draftResults.set(index, { id: existing.id, title: existing.title });
+          continue;
+        }
+        const copy = await this.createPackageFromItems(
+          "música Argentina",
+          story.itemIds,
+          "Automatización semanal. Prepará un borrador verificable con fuentes; excluí todo hecho ambiguo o repetido. No inventes datos.",
+        );
+        const sources = story.items
+          .map((item) => `${item.sourceName}: ${item.url}`)
+          .join("; ")
+          .slice(0, 500);
+        const draft = await createDraft({
+          title: copy.articleTitle,
+          summary: copy.articleSummary,
+          body: copy.articleBody,
+          instagramCopy: [copy.instagramPost, copy.hashtags.map((tag) => `#${tag.replace(/^#/, "")}`).join(" ")]
+            .filter(Boolean)
+            .join("\n\n"),
+          tags: ["música", "automatización semanal"],
+          source: sources,
+          idempotencyKey: `${weekKey}-${index + 1}`,
+        });
+        draftResults.set(index, draft);
+        await this.store.completeWeeklyRun!(
+          weekKey,
+          [...draftResults].map(([draftIndex, note]) => ({ ...note, index: draftIndex })),
+        );
+      }
+      const drafts = [...draftResults.values()];
+      await this.store.completeWeeklyRun!(
+        weekKey,
+        drafts.map((note, index) => ({ ...note, index })),
+      );
+      return { ran: true, week: weekKey, drafts };
+    } catch (error) {
+      await this.store.failWeeklyRun!(weekKey, error instanceof Error ? error.name : "UnknownError");
+      throw error;
+    }
   }
   async saveSource(input: unknown) {
     const parsed = sourceInputSchema.parse(input);

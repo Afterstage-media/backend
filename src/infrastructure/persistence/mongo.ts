@@ -81,6 +81,7 @@ class MongoAiNewsStore implements AiNewsStore {
   constructor(
     private readonly sources: Collection<MongoRecord>,
     private readonly items: Collection<MongoRecord>,
+    private readonly automation: Collection<MongoRecord>,
   ) {}
   async init() {
     await Promise.all([
@@ -133,6 +134,66 @@ class MongoAiNewsStore implements AiNewsStore {
       })),
       { ordered: false },
     );
+  }
+  async beginWeeklyRun(weekKey: string) {
+    const now = timestamps();
+    try {
+      await this.automation.insertOne({ _id: weekKey, status: "running", startedAt: now, updatedAt: now });
+      return { claimed: true, existing: [] };
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        const existing = await this.automation.findOne({ _id: weekKey });
+        if (existing?.status === "failed" || existing?.status === "running") {
+          const retry = await this.automation.updateOne(
+            { _id: weekKey, status: existing.status },
+            { $set: { status: "running", updatedAt: now, errorType: null } },
+          );
+          return {
+            claimed: retry.modifiedCount === 1,
+            existing: Array.isArray(existing.notes)
+              ? (existing.notes as Array<{ id: string; title: string; index: number }>)
+              : [],
+          };
+        }
+        return {
+          claimed: false,
+          existing: Array.isArray(existing?.notes)
+            ? (existing.notes as Array<{ id: string; title: string; index: number }>)
+            : [],
+        };
+      }
+      throw error;
+    }
+  }
+  async completeWeeklyRun(weekKey: string, notes: Array<{ id: string; title: string; index?: number }>) {
+    const allSaved = notes.length >= 5;
+    await this.automation.updateOne(
+      { _id: weekKey },
+      {
+        $set: {
+          status: allSaved ? "completed" : "running",
+          updatedAt: timestamps(),
+          ...(allSaved ? { completedAt: timestamps() } : {}),
+          notes,
+        },
+      },
+    );
+  }
+  async failWeeklyRun(weekKey: string, errorType: string) {
+    await this.automation.updateOne(
+      { _id: weekKey },
+      { $set: { status: "failed", errorType, updatedAt: timestamps() } },
+    );
+  }
+  async weeklyRunStatus(): ReturnType<NonNullable<AiNewsStore["weeklyRunStatus"]>> {
+    const latest = await this.automation.find().sort({ _id: -1 }).limit(1).next();
+    if (!latest) return null;
+    return {
+      week: String(latest._id),
+      status: String(latest.status ?? "unknown"),
+      completedAt: typeof latest.completedAt === "string" ? latest.completedAt : null,
+      notes: Array.isArray(latest.notes) ? (latest.notes as Array<{ id: string; title: string; index?: number }>) : [],
+    };
   }
 }
 const timestamps = () => new Date().toISOString();
@@ -920,6 +981,7 @@ export const createMongoPersistence = async (): Promise<MongoPersistence | undef
   const aiNews = new MongoAiNewsStore(
     db.collection<MongoRecord>("ai_news_sources"),
     db.collection<MongoRecord>("ai_news_items"),
+    db.collection<MongoRecord>("ai_news_weekly_automation"),
   );
   await Promise.all([
     content.init(),

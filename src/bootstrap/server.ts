@@ -47,9 +47,40 @@ const app = await createApp(
 app.listen(port, () => log("info", "server_started", { port }));
 
 const interval = Number(process.env.SCHEDULER_INTERVAL_MS ?? 30_000);
+let weeklyNewsCheckDate = "";
 const timer = setInterval(
   () =>
     void schedulerRun(async () => {
+      const argentinaNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Argentina/Buenos_Aires" }));
+      const dateKey = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Argentina/Buenos_Aires",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date());
+      if (
+        aiNews &&
+        argentinaNow.getDay() === 1 &&
+        argentinaNow.getHours() === 9 &&
+        argentinaNow.getMinutes() < 5 &&
+        weeklyNewsCheckDate !== dateKey
+      ) {
+        weeklyNewsCheckDate = dateKey;
+        const result = await aiNews.runWeeklyDrafts(async (input) => {
+          const note = await manager.createNoteWithAi(
+            { ...input, channels: ["website", "instagram"], images: [] },
+            `weekly-news:${dateKey}`,
+          );
+          return { id: note.id, title: note.title };
+        }, "weekly-news-scheduler");
+        if (result.ran)
+          log("info", "ai_news_weekly_drafts_created", {
+            correlationId: "weekly-news-scheduler",
+            week: result.week,
+            count: result.drafts.length,
+            timeZone: "America/Argentina/Buenos_Aires",
+          });
+      }
       if (socialSeries && socialTemplates) {
         const scheduledStories = await scheduleDueRecurringStories(manager, socialSeries, socialTemplates);
         if (scheduledStories) {
