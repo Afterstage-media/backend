@@ -73,6 +73,7 @@ import { MongoSocialTemplateStore } from "./social-templates.js";
 import { MongoSocialSeriesStore } from "./social-series.js";
 import { AiNewsManager, type AiNewsStore } from "../../application/ai-news-manager.js";
 import type { NewsSource, ScrapedItem } from "../../domain/ai-news/types.js";
+import { mongoNewsItemToScrapedItem } from "./mongo-news-mapper.js";
 
 type MongoRecord = Record<string, unknown> & { _id: string };
 
@@ -108,7 +109,7 @@ class MongoAiNewsStore implements AiNewsStore {
         .sort({ scrapedAt: -1 })
         .limit(limit)
         .toArray()
-    ).map(({ _id, ...item }) => item as unknown as ScrapedItem);
+    ).map(mongoNewsItemToScrapedItem);
   }
   async saveItems(items: ScrapedItem[]) {
     if (!items.length) return;
