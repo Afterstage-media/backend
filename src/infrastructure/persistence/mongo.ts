@@ -143,9 +143,13 @@ class MongoAiNewsStore implements AiNewsStore {
     } catch (error) {
       if ((error as { code?: number }).code === 11000) {
         const existing = await this.automation.findOne({ _id: weekKey });
-        if (existing?.status === "failed" || existing?.status === "running") {
+        const runIsStale =
+          existing?.status === "running" &&
+          typeof existing.updatedAt === "string" &&
+          Date.now() - Date.parse(existing.updatedAt) > 30 * 60_000;
+        if (existing?.status === "failed" || runIsStale) {
           const retry = await this.automation.updateOne(
-            { _id: weekKey, status: existing.status },
+            { _id: weekKey, status: existing.status, updatedAt: existing.updatedAt },
             { $set: { status: "running", updatedAt: now, errorType: null } },
           );
           return {
@@ -165,18 +169,22 @@ class MongoAiNewsStore implements AiNewsStore {
       throw error;
     }
   }
-  async completeWeeklyRun(weekKey: string, notes: Array<{ id: string; title: string; index?: number }>) {
-    const allSaved = notes.length >= 5;
+  async saveWeeklyRunProgress(weekKey: string, notes: Array<{ id: string; title: string; index: number }>) {
     await this.automation.updateOne(
       { _id: weekKey },
       {
         $set: {
-          status: allSaved ? "completed" : "running",
+          status: "running",
           updatedAt: timestamps(),
-          ...(allSaved ? { completedAt: timestamps() } : {}),
           notes,
         },
       },
+    );
+  }
+  async completeWeeklyRun(weekKey: string, notes: Array<{ id: string; title: string; index: number }>) {
+    await this.automation.updateOne(
+      { _id: weekKey },
+      { $set: { status: "completed", completedAt: timestamps(), updatedAt: timestamps(), notes } },
     );
   }
   async failWeeklyRun(weekKey: string, errorType: string) {

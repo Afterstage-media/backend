@@ -29,7 +29,8 @@ export interface AiNewsStore {
   beginWeeklyRun?(
     weekKey: string,
   ): Promise<{ claimed: boolean; existing: Array<{ id: string; title: string; index: number }> }>;
-  completeWeeklyRun?(weekKey: string, notes: Array<{ id: string; title: string }>): Promise<void>;
+  saveWeeklyRunProgress?(weekKey: string, notes: Array<{ id: string; title: string; index: number }>): Promise<void>;
+  completeWeeklyRun?(weekKey: string, notes: Array<{ id: string; title: string; index: number }>): Promise<void>;
   failWeeklyRun?(weekKey: string, errorType: string): Promise<void>;
   weeklyRunStatus?(): Promise<{
     week: string;
@@ -197,7 +198,12 @@ export class AiNewsManager {
     }) => Promise<{ id: string; title: string }>,
     correlationId = "",
   ) {
-    if (!this.store.beginWeeklyRun || !this.store.completeWeeklyRun || !this.store.failWeeklyRun)
+    if (
+      !this.store.beginWeeklyRun ||
+      !this.store.saveWeeklyRunProgress ||
+      !this.store.completeWeeklyRun ||
+      !this.store.failWeeklyRun
+    )
       throw new Error("La automatización semanal no tiene almacenamiento persistente");
     if (!process.env.GEMINI_API_KEY) throw new Error("Gemini no está configurado");
     const now = new Date();
@@ -247,7 +253,7 @@ export class AiNewsManager {
           idempotencyKey: `${weekKey}-${index + 1}`,
         });
         draftResults.set(index, draft);
-        await this.store.completeWeeklyRun!(
+        await this.store.saveWeeklyRunProgress!(
           weekKey,
           [...draftResults].map(([draftIndex, note]) => ({ ...note, index: draftIndex })),
         );
@@ -255,7 +261,7 @@ export class AiNewsManager {
       const drafts = [...draftResults.values()];
       await this.store.completeWeeklyRun!(
         weekKey,
-        drafts.map((note, index) => ({ ...note, index })),
+        [...draftResults].map(([index, note]) => ({ ...note, index })),
       );
       return { ran: true, week: weekKey, drafts };
     } catch (error) {
