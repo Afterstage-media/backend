@@ -76,6 +76,9 @@ export class MediaAssetStore {
           mediaType: "image",
           altText: input.altText,
           credit: input.credit,
+          ...(input.photoRights
+            ? { photoRights: { ...input.photoRights, review: { status: "pending" as const } } }
+            : {}),
         });
       }
       return created;

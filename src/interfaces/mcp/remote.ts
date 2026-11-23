@@ -25,6 +25,7 @@ import {
   correctedCarouselImageSchema,
   instagramCarouselInputSchema,
   instagramSocialPublicationInputShape,
+  instagramEditorialGraphicInputSchema,
   publicInstagramDraft,
 } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
@@ -432,6 +433,9 @@ const toolScopes: Record<string, readonly McpScope[]> = {
   crear_nota: ["notes:write"],
   recompartir_nota_instagram: ["instagram:publish"],
   crear_carrusel_instagram: ["notes:write"],
+  crear_grafica_tipografica_instagram: ["notes:write"],
+  buscar_fotos_instagram: ["notes:read"],
+  revisar_derechos_foto_instagram: ["notes:write"],
   crear_pieza_instagram: ["notes:write"],
   crear_serie_social: ["notes:write"],
   actualizar_serie_social: ["notes:write"],
@@ -1876,6 +1880,132 @@ export const createRemoteMcpServer = (
       );
       const note = publicCarousel(await manager.required(operation.id), actor.userId);
       return textResult(note);
+    },
+  );
+
+  registerTool(
+    "buscar_fotos_instagram",
+    {
+      title: "Buscar fotos reales para Instagram",
+      description:
+        "Busca candidatos en Openverse con licencia declarada compatible con uso comercial y modificaciones. Los resultados no tienen derechos verificados y nunca autorizan el uso por sí mismos. Revisá tema, fecha/contexto, licencia y evidencia de forma independiente; si no hay candidato adecuado, usá una gráfica tipográfica de Afterstage.",
+      inputSchema: { query: z.string().trim().min(3).max(200), limit: z.number().int().min(1).max(20).default(10) },
+      outputSchema: z.object({
+        provider: z.literal("Openverse"),
+        rightsVerified: z.literal(false),
+        candidates: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            imageUrl: z.string().url(),
+            sourceUrl: z.string().url(),
+            creator: z.string(),
+            creatorUrl: z.string().url().nullable(),
+            license: z.string(),
+            licenseVersion: z.string(),
+            licenseUrl: z.string().url().nullable(),
+            providerName: z.string(),
+            sourceName: z.string(),
+            thumbnailUrl: z.string().url().nullable(),
+            width: z.number().nullable(),
+            height: z.number().nullable(),
+            tags: z.array(z.string()),
+            rightsVerified: z.literal(false),
+          }),
+        ),
+      }),
+      annotations: { readOnlyHint: true, destructiveHint: false },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:read"] }] },
+    },
+    async ({ query, limit }, extra) => {
+      const actor = authFromExtra(extra, "notes:read", readNotesRoles);
+      const candidates = await manager.searchPhotoCandidates(query, limit);
+      log("info", "instagram_photo_candidates_searched", {
+        correlationId,
+        actorId: actor.userId,
+        query,
+        resultCount: candidates.length,
+      });
+      return textResult({ provider: "Openverse", rightsVerified: false, candidates });
+    },
+  );
+
+  registerTool(
+    "crear_grafica_tipografica_instagram",
+    {
+      title: "Crear una placa editorial tipográfica",
+      description:
+        "Usá este flujo cuando no haya una foto real pertinente con derechos verificables. Renderiza una placa de marca desde una plantilla y solo copy/datos provistos; no recibe ni genera imágenes. Guarda un borrador para revisión y nunca publica automáticamente.",
+      inputSchema: instagramEditorialGraphicInputSchema.shape,
+      outputSchema: carouselOutputSchema,
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ idempotencyKey, slides, templateId, ...copy }, extra) => {
+      const actor = authFromExtra(extra, "notes:write", writeNotesRoles);
+      const template = await templates.get(templateId);
+      if (!template) throw new Error("No se encontró la plantilla seleccionada");
+      const operation = await runMcpIdempotentOperation(
+        press,
+        actor.userId,
+        "crear_grafica_tipografica_instagram",
+        idempotencyKey,
+        { templateId, slides, ...copy },
+        async () => {
+          const created = await manager.prepareEditorialGraphic(
+            template,
+            { ...copy, idempotencyKey: `instagram-brand-graphic:${actor.userId}:${idempotencyKey}` },
+            slides,
+          );
+          return { id: created.id };
+        },
+      );
+      return textResult(publicCarousel(await manager.required(operation.id), actor.userId));
+    },
+  );
+
+  registerTool(
+    "revisar_derechos_foto_instagram",
+    {
+      title: "Revisar derechos y relevancia de foto",
+      description:
+        "Registra la revisión humana de una foto del borrador. Aprobar exige confirmar que es una fotografía real (no sintética), confirmar pertinencia temática/temporal, comprobar trazabilidad completa, usos compatibles con Instagram/edición/comercial/Meta y dejar nota concreta. Una foto de archivo no debe presentarse como imagen del evento actual. No publica ni aprueba el contenido.",
+      inputSchema: {
+        publicationId: z.string().trim().min(1).max(180),
+        slide: z.number().int().min(1).max(9),
+        decision: z.enum(["approved", "rejected"]),
+        relevanceNotes: z.string().trim().min(1).max(1000),
+        isAuthenticPhotoVerified: z.boolean().default(false),
+        contextVerified: z.boolean().default(false),
+      },
+      outputSchema: z.object({
+        publicationId: z.string(),
+        slide: z.number(),
+        decision: z.enum(["approved", "rejected"]),
+        draftStatus: z.string(),
+      }),
+      annotations: { destructiveHint: false, idempotentHint: true },
+      _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
+    },
+    async ({ publicationId, slide, decision, relevanceNotes, isAuthenticPhotoVerified, contextVerified }, extra) => {
+      const actor = authFromExtra(extra, "notes:write", ["admin", "editor"]);
+      const updated = await manager.reviewInstagramPhoto(
+        publicationId,
+        slide,
+        actor.userId,
+        decision,
+        relevanceNotes,
+        isAuthenticPhotoVerified,
+        contextVerified,
+      );
+      log("info", "instagram_photo_rights_reviewed", {
+        correlationId,
+        publicationId,
+        slide,
+        reviewerId: actor.userId,
+        decision,
+      });
+      return textResult({ publicationId, slide, decision, draftStatus: updated.status });
     },
   );
 

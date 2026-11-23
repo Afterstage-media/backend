@@ -284,10 +284,10 @@ test("crea un paquete de nota y copy con tono editorial y contexto de las fuente
                     stories: ["La Premiere Ceremony llega a Disney+ por primera vez."],
                     hashtags: ["Grammys2027", "DisneyPlus", "Musica"],
                     imageRecommendation: {
-                      kind: "editorial_illustration",
-                      rationale: "La fuente no ofrece una imagen verificable.",
-                      searchQuery: "Ilustración editorial de transmisión musical en streaming",
-                      altText: "Ilustración editorial sobre música en streaming.",
+                      kind: "brand_graphic",
+                      rationale: "La fuente no ofrece una fotografía verificable.",
+                      searchQuery: "",
+                      altText: "Placa tipográfica de Afterstage sobre música en streaming.",
                       sourceUrl: null,
                     },
                   }),
@@ -318,7 +318,7 @@ test("crea un paquete de nota y copy con tono editorial y contexto de las fuente
   assert.equal(requestData?.data.sourceItems[0]?.url, item.url);
   assert.match(systemPrompt, /español rioplatense natural/);
   assert.match(systemPrompt, /No agregues preguntas genéricas/);
-  assert.match(userPrompt, /No inventes una URL de imagen/);
-  assert.equal(result.imageRecommendation.kind, "editorial_illustration");
+  assert.match(userPrompt, /No inventes URL/);
+  assert.equal(result.imageRecommendation.kind, "brand_graphic");
   assert.equal(result.imageRecommendation.sourceUrl, null);
 });

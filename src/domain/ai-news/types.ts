@@ -59,7 +59,7 @@ export const aiCopySchema = z.object({
   stories: z.array(z.string().max(500)).max(10),
   hashtags: z.array(z.string().max(80)).max(20),
   imageRecommendation: z.object({
-    kind: z.enum(["source_image", "editorial_illustration", "no_image"]),
+    kind: z.enum(["source_image", "brand_graphic", "no_image"]),
     rationale: z.string().max(500),
     searchQuery: z.string().max(240),
     altText: z.string().max(300),
