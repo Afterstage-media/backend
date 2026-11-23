@@ -253,7 +253,7 @@ export class ContentManager {
 
   async prepareEditorialGraphic(
     template: SocialTemplate,
-    copy: Pick<ContentInput, "title" | "summary" | "instagramCopy" | "source" | "notes" | "tags"> & {
+    copy: Pick<ContentInput, "title" | "slug" | "summary" | "instagramCopy" | "source" | "notes" | "tags"> & {
       idempotencyKey: string;
     },
     slides: readonly { eyebrow: string; title: string; body: string }[],

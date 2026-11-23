@@ -278,6 +278,7 @@ export async function prepareInstagramEditorial(
     template,
     {
       title: article.title,
+      slug: `instagram-editorial-${day}`,
       summary: clean(article.summary),
       instagramCopy: [clean(article.summary), section.cta, `Fuente: ${source}`].join("\n\n"),
       source,
