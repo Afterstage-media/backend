@@ -75,7 +75,21 @@ test("bloquea publicación de fotos hasta validar derechos y contexto con revisi
         1,
         "editor-1",
         "approved",
+        "Foto de Banda Aurora en Niceto, imagen auténtica y contexto confirmado.",
+        true,
+        true,
+      ),
+    /comprobar los términos de la licencia/,
+  );
+  await assert.rejects(
+    () =>
+      manager.reviewInstagramPhoto(
+        item.id,
+        1,
+        "editor-1",
+        "approved",
         "La foto es de una artista distinta.",
+        true,
         true,
         true,
       ),
@@ -87,6 +101,7 @@ test("bloquea publicación de fotos hasta validar derechos y contexto con revisi
     "editor-1",
     "approved",
     "La foto muestra a Banda Aurora durante su presentación en Niceto.",
+    true,
     true,
     true,
   );
@@ -130,7 +145,16 @@ test("rechaza foto de archivo si el copy la presenta como un evento actual", asy
   });
   await assert.rejects(
     () =>
-      manager.reviewInstagramPhoto(item.id, 1, "editor-1", "approved", "Foto de archivo de Banda Aurora.", true, true),
+      manager.reviewInstagramPhoto(
+        item.id,
+        1,
+        "editor-1",
+        "approved",
+        "Foto de archivo de Banda Aurora.",
+        true,
+        true,
+        true,
+      ),
     /copy presenta el contenido como actual/,
   );
 });
@@ -188,6 +212,7 @@ test("bloquea una publicación programada una sola vez y permite recuperarla tra
     "editor-1",
     "approved",
     "Foto de archivo identificada de Banda Aurora en Niceto.",
+    true,
     true,
     true,
   );
@@ -510,6 +535,7 @@ test("publica canales y persiste ids remotos, slug web y container", async (cont
     "editor",
     "approved",
     "La foto muestra al artista de esta publicación.",
+    true,
     true,
     true,
   );

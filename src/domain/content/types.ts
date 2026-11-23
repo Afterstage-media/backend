@@ -45,7 +45,7 @@ export const photoRightsInputSchema = z
     subjectContext: z.string().trim().min(3).max(300),
     contextType: z.enum(["event_current", "event_archive", "artist_or_subject", "illustrative_context"]),
     eventDate: z.string().date().optional(),
-    documentaryPhotograph: z.literal(true),
+    documentaryPhotograph: z.boolean().default(false),
   })
   .superRefine((value, context) => {
     if (value.contextType === "event_current" && !value.eventDate) {
@@ -66,6 +66,7 @@ export const photoRightsSchema = photoRightsInputSchema.extend({
       relevanceNotes: z.string().max(1000).optional(),
       isAuthenticPhotoVerified: z.boolean().optional(),
       contextVerified: z.boolean().optional(),
+      isLicenseVerified: z.boolean().optional(),
     })
     .default({ status: "pending" }),
 });

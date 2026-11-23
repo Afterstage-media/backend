@@ -56,3 +56,105 @@ test("la agenda omite eventos cancelados y exige dos fechas con fuente", async (
   );
   assert.deepEqual(result, { result: "insufficient_agenda" });
 });
+
+test("la búsqueda automática usa una sola foto claramente coincidente y nunca publica", async () => {
+  const templates = new MemorySocialTemplateStore();
+  await templates.init();
+  const template = await templates.findBySlug("noticia-musical");
+  const calls: unknown[] = [];
+  const manager = {
+    store: { findByIdempotencyKey: async () => undefined, list: async () => [article()] },
+    searchPhotoCandidates: async () => [photo("Soda Stereo", ["Soda Stereo", "Buenos Aires"])],
+    downloadOpenversePhoto: async () => ({ bytes: Buffer.from([1, 2, 3]), mimeType: "image/jpeg" }),
+    createInstagramSocialPublication: async (...args: unknown[]) => {
+      calls.push(args);
+      return { id: "photo-draft" };
+    },
+    prepareEditorialGraphic: async () => {
+      throw new Error("no debe usar fallback");
+    },
+  } as unknown as ContentManager;
+  const result = await prepareInstagramEditorial(
+    manager,
+    {} as PressManager,
+    templates,
+    new Date("2026-11-26T15:00:00Z"),
+  );
+  assert.deepEqual(result, { result: "draft", id: "photo-draft", visual: "photo_pending_review" });
+  const [input, , usedTemplate, key] = calls[0] as [any, string, any, string];
+  assert.equal(usedTemplate.id, template?.id);
+  assert.equal(key, "instagram-editorial:2026-11-26");
+  assert.equal(input.slides.length, 1);
+  assert.equal(input.slides[0].image.photoRights.documentaryPhotograph, false);
+  assert.deepEqual(input.slides[0].image.photoRights.allowedUses, [
+    "instagram",
+    "commercial",
+    "adaptation",
+    "platform_sublicense",
+  ]);
+});
+
+test("si Openverse no tiene una coincidencia clara conserva la placa tipográfica", async () => {
+  const templates = new MemorySocialTemplateStore();
+  await templates.init();
+  let graphicCalls = 0;
+  const manager = {
+    store: { findByIdempotencyKey: async () => undefined, list: async () => [article()] },
+    searchPhotoCandidates: async () => [photo("Festival", ["festival", "rock", "música"])],
+    downloadOpenversePhoto: async () => {
+      throw new Error("no debería descargarse");
+    },
+    prepareEditorialGraphic: async () => {
+      graphicCalls += 1;
+      return { id: "graphic-draft" };
+    },
+  } as unknown as ContentManager;
+  const result = await prepareInstagramEditorial(
+    manager,
+    {} as PressManager,
+    templates,
+    new Date("2026-11-26T15:00:00Z"),
+  );
+  assert.deepEqual(result, { result: "draft", id: "graphic-draft" });
+  assert.equal(graphicCalls, 1);
+});
+
+function article() {
+  return {
+    id: "article-1",
+    type: "article",
+    status: "published",
+    channels: ["website"],
+    publishedAt: "2026-11-20T12:00:00Z",
+    slug: "soda-stereo",
+    title: "Soda Stereo anuncia una fecha",
+    summary: "La banda confirmó una fecha especial y compartió detalles del concierto para sus seguidores.",
+    body: "Soda Stereo confirmó una fecha en Buenos Aires.",
+    source: "https://press.example/soda",
+    tags: ["Soda Stereo", "Novedades"],
+    remoteIds: {},
+    createdAt: "2026-11-20T12:00:00Z",
+  } as any;
+}
+
+function photo(title: string, tags: string[]) {
+  return {
+    provider: "openverse" as const,
+    id: title,
+    title,
+    imageUrl: "https://images.unsplash.com/photo",
+    sourceUrl: "https://source.example/photo",
+    creator: "Autora",
+    creatorUrl: null,
+    license: "by",
+    licenseVersion: "4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    providerName: "Flickr",
+    sourceName: "flickr",
+    thumbnailUrl: null,
+    width: 1200,
+    height: 800,
+    tags,
+    rightsVerified: false as const,
+  };
+}

@@ -534,6 +534,7 @@ export class ContentManager {
     input: unknown,
     actorId: string,
     template: SocialTemplate,
+    idempotencyKeyOverride?: string,
   ): Promise<ContentItem> {
     const parsed = instagramSocialPublicationInputSchema.parse(input) as InstagramSocialPublicationInput;
     if (parsed.templateId !== template.id || parsed.type !== template.outputType)
@@ -560,7 +561,9 @@ export class ContentManager {
         }),
       )
       .digest("hex");
-    const idempotencyKey = `instagram-${parsed.type}:${actorId}:${fingerprint}`;
+    const idempotencyKey = idempotencyKeyOverride
+      ? idempotencyKeySchema.parse(idempotencyKeyOverride)
+      : `instagram-${parsed.type}:${actorId}:${fingerprint}`;
     const existing = await this.store.findByIdempotencyKey(idempotencyKey);
     if (existing) return existing;
 
@@ -991,6 +994,10 @@ export class ContentManager {
     return this.openverse.search(query, limit);
   }
 
+  async downloadOpenversePhoto(candidate: Awaited<ReturnType<OpenverseClient["search"]>>[number]) {
+    return this.openverse.download(candidate);
+  }
+
   async reviewInstagramPhoto(
     publicationId: string,
     slideNumber: number,
@@ -999,6 +1006,7 @@ export class ContentManager {
     relevanceNotes: string,
     isAuthenticPhotoVerified = false,
     contextVerified = false,
+    isLicenseVerified = false,
   ): Promise<ContentItem> {
     const item = await this.required(publicationId);
     if (
@@ -1032,6 +1040,8 @@ export class ContentManager {
           "La licencia debe permitir uso comercial, edición, publicación en Instagram y sublicencia técnica a Meta",
         );
       }
+      if (!isLicenseVerified)
+        throw new Error("El revisor debe comprobar los términos de la licencia o permiso de la foto");
       if (!source.credit.trim()) throw new Error("La publicación debe incluir el crédito público de la fotografía");
       const restrictiveLicense = /(?:by-)?nc|(?:by-)?nd/i.test(rights.license);
       if (
@@ -1076,6 +1086,7 @@ export class ContentManager {
     }
     const photoRights = {
       ...rights,
+      documentaryPhotograph: decision === "approved" && isAuthenticPhotoVerified,
       review: {
         status: decision,
         reviewedBy: reviewerId,
@@ -1083,6 +1094,7 @@ export class ContentManager {
         relevanceNotes: relevanceNotes.trim(),
         isAuthenticPhotoVerified,
         contextVerified,
+        isLicenseVerified,
       },
     };
     const patch = slides[slideIndex]

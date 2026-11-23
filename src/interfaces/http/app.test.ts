@@ -632,6 +632,7 @@ test("permite recompartir una nota publicada en Instagram con el permiso corresp
     "La foto muestra a la banda de esta nota.",
     true,
     true,
+    true,
   );
   await manager.update(item.id, { status: "review" });
   await manager.update(item.id, { status: "approved" });

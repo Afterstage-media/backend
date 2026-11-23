@@ -64,3 +64,46 @@ test("Openverse rechaza búsquedas vacías y credenciales parciales", async (con
   });
   await assert.rejects(() => client.search("rock band"), /deben configurarse juntos/);
 });
+
+test("la descarga de Openverse exige host HTTPS permitido, MIME de imagen y tamaño acotado", async () => {
+  const candidate = (imageUrl: string) => ({
+    provider: "openverse" as const,
+    id: "1",
+    title: "",
+    imageUrl,
+    sourceUrl: "https://source.example/photo",
+    creator: "A",
+    creatorUrl: null,
+    license: "by",
+    licenseVersion: "4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    providerName: "Flickr",
+    sourceName: "flickr",
+    thumbnailUrl: null,
+    width: 1000,
+    height: 800,
+    tags: [],
+    rightsVerified: false as const,
+  });
+  const bytes = new Uint8Array([1, 2, 3]);
+  const client = new OpenverseClient(async (_input, init) => {
+    assert.equal(init?.redirect, "manual");
+    return new Response(bytes, { headers: { "content-type": "image/jpeg", "content-length": "3" } });
+  });
+  const image = await client.download(candidate("https://images.unsplash.com/photo"));
+  assert.equal(image.mimeType, "image/jpeg");
+  assert.deepEqual(image.bytes, Buffer.from(bytes));
+  await assert.rejects(() => client.download(candidate("http://images.unsplash.com/photo")), /host.*permitido/);
+  await assert.rejects(() => client.download(candidate("https://127.0.0.1/private")), /host.*permitido/);
+  const htmlClient = new OpenverseClient(
+    async () => new Response("<html>", { headers: { "content-type": "text/html" } }),
+  );
+  await assert.rejects(() => htmlClient.download(candidate("https://images.unsplash.com/photo")), /JPG, PNG o WebP/);
+  const largeClient = new OpenverseClient(
+    async () =>
+      new Response(new Uint8Array(2_700_000), {
+        headers: { "content-type": "image/jpeg", "content-length": "2700000" },
+      }),
+  );
+  await assert.rejects(() => largeClient.download(candidate("https://images.unsplash.com/photo")), /2,5 MiB/);
+});
