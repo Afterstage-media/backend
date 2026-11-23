@@ -60,7 +60,8 @@ test("la agenda omite eventos cancelados y exige dos fechas con fuente", async (
 test("la búsqueda automática usa una sola foto claramente coincidente y nunca publica", async () => {
   const templates = new MemorySocialTemplateStore();
   await templates.init();
-  const template = await templates.findBySlug("noticia-musical");
+  const template = await findTemplateWithLayout(templates, "type-poster");
+  assert.equal(template?.visualStyle.layout, "type-poster");
   const calls: unknown[] = [];
   const manager = {
     store: { findByIdempotencyKey: async () => undefined, list: async () => [article()] },
@@ -98,11 +99,13 @@ test("si Openverse no tiene una coincidencia clara conserva la placa tipográfic
   const templates = new MemorySocialTemplateStore();
   await templates.init();
   const sourceArticle = article("Quilmes Rock anuncia una fecha", "quilmes-rock");
+  const template = await findTemplateWithLayout(templates, "type-poster");
+  assert.equal(template?.visualStyle.layout, "type-poster");
   let graphicCalls = 0;
   let fallbackCopy: Record<string, unknown> | undefined;
   const manager = {
     store: { findByIdempotencyKey: async () => undefined, list: async () => [sourceArticle] },
-    searchPhotoCandidates: async () => [photo("Festival", ["festival", "rock", "música"])],
+    searchPhotoCandidates: async () => [],
     downloadOpenversePhoto: async () => {
       throw new Error("no debería descargarse");
     },
@@ -141,6 +144,20 @@ function article(title = "Soda Stereo anuncia una fecha", slug = "soda-stereo") 
     remoteIds: {},
     createdAt: "2026-11-20T12:00:00Z",
   } as any;
+}
+
+async function findTemplateWithLayout(
+  templates: MemorySocialTemplateStore,
+  layout: "photo-overlay" | "split-panel" | "type-poster",
+) {
+  const findBySlug = templates.findBySlug.bind(templates);
+  templates.findBySlug = async (slug) => {
+    const template = await findBySlug(slug);
+    return template && slug === "noticia-musical"
+      ? { ...template, visualStyle: { ...template.visualStyle, layout } }
+      : template;
+  };
+  return templates.findBySlug("noticia-musical");
 }
 
 function photo(title: string, tags: string[]) {

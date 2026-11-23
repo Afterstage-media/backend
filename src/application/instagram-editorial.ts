@@ -22,6 +22,7 @@ const sections = {
 };
 
 type Section = keyof typeof sections;
+const photoCapableLayouts = new Set(["photo-overlay", "split-panel", "type-poster"]);
 const sectionFor = (item: ContentItem): Section => {
   const tags = item.tags.map(slugify);
   if (tags.some((tag) => ["cronica", "cobertura", "show-recap"].includes(tag))) return "show-recap";
@@ -216,7 +217,7 @@ export async function prepareInstagramEditorial(
   if (
     section.template === "noticia-musical" &&
     template.outputType === "post" &&
-    template.visualStyle.layout === "photo-overlay"
+    photoCapableLayouts.has(template.visualStyle.layout)
   ) {
     try {
       const query = `${article.title} ${article.tags.join(" ")} ${clean(article.summary).slice(0, 100)}`.slice(0, 200);
