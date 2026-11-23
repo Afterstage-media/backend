@@ -218,6 +218,51 @@ export class ContentManager {
     return this.store.create(parsed);
   }
 
+  async prepareEditorialGraphic(
+    template: SocialTemplate,
+    copy: Pick<ContentInput, "title" | "summary" | "instagramCopy" | "source" | "notes" | "tags"> & {
+      idempotencyKey: string;
+    },
+    slides: readonly { eyebrow: string; title: string; body: string }[],
+  ): Promise<ContentItem> {
+    if (template.status !== "published" || !template.channels.includes("instagram"))
+      throw new Error("El formato editorial no está habilitado para Instagram");
+    const draft = await this.store.create(
+      contentInputSchema.parse({
+        ...copy,
+        type: slides.length > 1 ? "carousel" : "post",
+        channels: ["instagram"],
+        status: "draft",
+        author: "Afterstage",
+      }),
+    );
+    if (draft.status !== "draft" || draft.assets.length) return draft;
+    const data: Record<string, string> = {};
+    const layout = slides.map(({ eyebrow, title, body }, index) => {
+      const titleField = `headline${index}`;
+      const bodyField = `body${index}`;
+      data[titleField] = title;
+      data[bodyField] = body;
+      return {
+        eyebrow,
+        titleField,
+        bodyField,
+        accent: template.visualStyle.palette.accent,
+        background: template.visualStyle.palette.background,
+      };
+    });
+    const graphics = await this.templateRenderer.render(
+      { ...template, artworkSvg: "", slides: layout, canvas: { width: 1080, height: 1350 } },
+      draft,
+      data,
+    );
+    const assets = await this.persistCarouselImages(draft.id, graphics);
+    const updated = await this.store.update(draft.id, { assets });
+    if (!updated) throw new Error("No se pudo guardar la gráfica editorial");
+    if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(draft.id, assets);
+    return updated;
+  }
+
   async scheduleRecurringStory(input: {
     seriesId: string;
     runDate: string;
@@ -250,11 +295,17 @@ export class ContentManager {
           status: "scheduled",
           channels: ["instagram"],
           assets: [],
-          instagramCopy: "",
+          instagramCopy: [
+            [input.data.headline1, input.data.headline2, input.data.headline3].filter(Boolean).join(" "),
+            [input.data.body1, input.data.body2, input.data.body3].filter(Boolean).join(" "),
+            "Conocé Afterstage y escribinos desde afterstage.ar.",
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
           facebookCopy: "",
           tags: ["afterstage", "historias"],
           scheduledAt: input.scheduledAt,
-          notes: "Secuencia diaria generada desde una plantilla editable de Afterstage.",
+          notes: "Historia institucional generada desde una plantilla editable de Afterstage.",
           author: "Afterstage",
           photographer: "",
           source: template.name,
@@ -997,16 +1048,36 @@ export class ContentManager {
     const current = await this.required(id);
     const mediaId = current.remoteIds.instagram;
     if (!mediaId) throw new Error("El contenido todavía no tiene una publicación de Instagram");
-    const metrics = await this.publisher.getInstagramMetrics(mediaId, dryRun);
+    const metrics = await this.publisher.getInstagramMetrics(mediaId, dryRun, current.type);
+    if (dryRun) return { ...current, instagramMetrics: metrics };
     const updated = await this.store.update(id, { instagramMetrics: metrics });
     if (!updated) throw new Error("Contenido no encontrado");
     return updated;
   }
 
+  async refreshRecentInstagramMetrics(now = Date.now()) {
+    const items = (await this.store.list())
+      .filter((item) => {
+        if (item.status !== "published" || !item.remoteIds.instagram || !item.publishedAt) return false;
+        const age = now - Date.parse(item.publishedAt);
+        if (item.type === "story") return age >= 60 * 60_000 && age < 23 * 60 * 60_000 && !item.instagramMetrics;
+        return (
+          age >= 60 * 60_000 &&
+          age < 28 * 86_400_000 &&
+          (!item.instagramMetrics || now - Date.parse(item.instagramMetrics.fetchedAt) >= 7 * 86_400_000)
+        );
+      })
+      .sort((a, b) => Number(b.type === "story") - Number(a.type === "story"))
+      .slice(0, 12);
+    const outcomes = await Promise.allSettled(items.map((item) => this.refreshInstagramMetrics(item.id)));
+    const refreshed = outcomes.filter((outcome) => outcome.status === "fulfilled").length;
+    return { refreshed, failed: outcomes.length - refreshed };
+  }
+
   async instagramMetrics() {
     const contents = await this.store.list();
     const posts = contents.filter((item) => item.remoteIds.instagram && item.instagramMetrics);
-    const sum = (key: keyof Omit<NonNullable<ContentItem["instagramMetrics"]>, "fetchedAt">) =>
+    const sum = (key: keyof Omit<NonNullable<ContentItem["instagramMetrics"]>, "fetchedAt" | "observed">) =>
       posts.reduce((total, item) => total + (item.instagramMetrics?.[key] ?? 0), 0);
     return {
       posts: posts.length,

@@ -569,7 +569,7 @@ test("expone y protege las métricas de Instagram", async (context) => {
     });
     assert.equal(summary.status, 200);
     const data = await summary.json();
-    assert.equal(data.posts, 1);
+    assert.equal(data.posts, 0);
     assert.equal(data.totals.reach, 0);
     assert.equal(
       (

@@ -52,13 +52,6 @@ export const socialSeriesSchema = socialSeriesInputSchema.superRefine((series, c
   if (series.active && !series.nextRunAt) {
     context.addIssue({ code: "custom", path: ["nextRunAt"], message: "Una serie activa necesita su próxima fecha" });
   }
-  if (series.autoPublish && (series.cadence.every !== 1 || series.cadence.unit !== "day")) {
-    context.addIssue({
-      code: "custom",
-      path: ["cadence"],
-      message: "La publicación automática requiere frecuencia diaria",
-    });
-  }
   if (series.autoPublish && series.fixedStoryTemplates.length !== 3) {
     context.addIssue({
       code: "custom",

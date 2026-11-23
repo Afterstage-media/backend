@@ -61,13 +61,11 @@ export const starterSocialSeries: SocialSeriesInput[] = [
   },
   {
     slug: "secuencia-afterstage-diaria",
-    name: "Afterstage · historias diarias",
-    description:
-      "Tres historias editables generadas desde las plantillas de Afterstage y publicadas en orden todos los días.",
+    name: "Afterstage · invitación semanal",
+    description: "Una historia semanal que alterna entre comunidad, difusión y coberturas.",
     templateSlug: "afterstage-historia-red",
-    editorialBrief:
-      "Generar cada historia con su plantilla editable de Afterstage y publicar la secuencia en el orden definido.",
-    cadence: { every: 1, unit: "day" },
+    editorialBrief: "Rotar las historias institucionales de Afterstage para invitar a participar de la escena.",
+    cadence: { every: 1, unit: "week" },
     nextRunAt: storyPublishDate(),
     active: true,
     autoPublish: true,
@@ -150,7 +148,7 @@ const normalize = (doc: SeriesRecord): SocialSeries => {
   return socialSeriesSchema.parse({ ...data, id: _id }) as SocialSeries;
 };
 
-const nextDate = (from: string, every: number, unit: "day" | "week" | "month") => {
+export const nextSeriesDate = (from: string, every: number, unit: "day" | "week" | "month") => {
   const [year, month, day] = from.split("-").map(Number);
   const date = new Date(Date.UTC(year!, month! - 1, day!, 12));
   if (unit === "day") date.setUTCDate(date.getUTCDate() + every);
@@ -166,6 +164,26 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
     await this.collection.createIndex({ slug: 1 }, { unique: true });
     for (const series of starterSocialSeries) {
       if (!(await this.findBySlug(series.slug))) await this.create(series);
+    }
+    const institutional = starterSocialSeries.find((series) => series.slug === "secuencia-afterstage-diaria")!;
+    const current = await this.findBySlug(institutional.slug);
+    if (current?.autoPublish && current.cadence.unit === "day" && current.cadence.every === 1) {
+      const nextRunAt = current.lastAutoScheduledAt
+        ? nextSeriesDate(current.lastAutoScheduledAt.slice(0, 10), 1, "week")
+        : storyPublishDate();
+      await this.collection.updateOne(
+        { _id: current.id, updatedAt: current.updatedAt },
+        {
+          $set: {
+            name: institutional.name,
+            description: institutional.description,
+            editorialBrief: institutional.editorialBrief,
+            cadence: institutional.cadence,
+            nextRunAt: nextRunAt < today() ? storyPublishDate() : nextRunAt,
+            updatedAt: timestamp(),
+          },
+        },
+      );
     }
     const obsoleteStorySeries = await this.findBySlug("historias-de-la-escena");
     if (
@@ -252,7 +270,7 @@ export class MongoSocialSeriesStore implements SocialSeriesRepository {
     const nowDate = today();
     let nextRunAt = existing.nextRunAt ?? nowDate;
     do {
-      nextRunAt = nextDate(nextRunAt, existing.cadence.every, existing.cadence.unit);
+      nextRunAt = nextSeriesDate(nextRunAt, existing.cadence.every, existing.cadence.unit);
     } while (nextRunAt <= nowDate);
     return this.save({ ...existing, nextRunAt, lastDraftAt: timestamp(), lastDraftId: draftId }, id);
   }
@@ -328,7 +346,7 @@ export class MemorySocialSeriesStore implements SocialSeriesRepository {
     const nowDate = today();
     let nextRunAt = existing.nextRunAt ?? nowDate;
     do {
-      nextRunAt = nextDate(nextRunAt, existing.cadence.every, existing.cadence.unit);
+      nextRunAt = nextSeriesDate(nextRunAt, existing.cadence.every, existing.cadence.unit);
     } while (nextRunAt <= nowDate);
     return this.save({ ...existing, nextRunAt, lastDraftAt: timestamp(), lastDraftId: draftId }, id);
   }
