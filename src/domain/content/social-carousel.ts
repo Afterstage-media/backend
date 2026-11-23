@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ContentItem } from "./types.js";
+import { photoRightsInputSchema, type ContentItem } from "./types.js";
 
 export const publicInstagramDraft = (note: ContentItem, createdBy: string) => ({
   id: note.id,
@@ -14,6 +14,7 @@ export const publicInstagramDraft = (note: ContentItem, createdBy: string) => ({
     url: asset.url,
     altText: asset.altText,
     credit: asset.credit,
+    ...(asset.photoRights ? { photoRights: { ...asset.photoRights, evidenceUrl: undefined } } : {}),
   })),
   slides: (note.socialSlides ?? []).map((slide, index) => ({
     slide: index + 1,
@@ -22,6 +23,7 @@ export const publicInstagramDraft = (note: ContentItem, createdBy: string) => ({
     text: slide.text,
     altText: slide.source.altText,
     credit: slide.source.credit,
+    ...(slide.source.photoRights ? { photoRights: { ...slide.source.photoRights, evidenceUrl: undefined } } : {}),
   })),
 });
 
@@ -31,8 +33,12 @@ const imageInput = z.object({
   filename: z.string().trim().max(255).optional(),
   altText: z.string().trim().min(1).max(500),
   credit: z.string().max(500).default(""),
+  photoRights: photoRightsInputSchema.optional(),
 });
-const correctedImageInput = imageInput.extend({ altText: z.string().max(500).optional() });
+const correctedImageInput = imageInput.extend({
+  altText: z.string().max(500).optional(),
+  photoRights: photoRightsInputSchema,
+});
 
 export const instagramCarouselInputSchema = z.object({
   seriesId: z.string().trim().min(2).max(120).optional(),
@@ -55,6 +61,27 @@ export const instagramCarouselInputSchema = z.object({
 });
 
 export const correctedCarouselImageSchema = z.object({ image: correctedImageInput });
+
+export const instagramEditorialGraphicInputSchema = z.object({
+  templateId: z.string().trim().min(1).max(120),
+  title: z.string().trim().min(1).max(180),
+  summary: z.string().trim().min(1).max(600),
+  instagramCopy: z.string().trim().min(1).max(2200),
+  source: z.string().trim().min(1).max(500),
+  notes: z.string().trim().min(1).max(2000),
+  tags: z.array(z.string().trim().min(1).max(80)).max(30).default([]),
+  idempotencyKey: z.string().trim().min(1).max(200),
+  slides: z
+    .array(
+      z.object({
+        eyebrow: z.string().trim().max(80).default(""),
+        title: z.string().trim().min(1).max(180),
+        body: z.string().trim().max(500).default(""),
+      }),
+    )
+    .min(1)
+    .max(9),
+});
 
 export const instagramCarouselUpdateSchema = instagramCarouselInputSchema.extend({
   slides: z

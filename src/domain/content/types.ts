@@ -14,12 +14,69 @@ export const contentStatuses = [
 export const contentTypes = ["article", "post", "carousel", "reel", "story"] as const;
 export const channels = ["website", "instagram", "facebook"] as const;
 
+export const photoRightsInputSchema = z
+  .object({
+    sourceUrl: z
+      .string()
+      .url()
+      .max(2000)
+      .refine((value) => value.startsWith("https://")),
+    creator: z.string().trim().min(1).max(180),
+    license: z.string().trim().min(1).max(80),
+    licenseVersion: z.string().trim().min(1).max(40),
+    licenseUrl: z
+      .string()
+      .url()
+      .max(2000)
+      .refine((value) => value.startsWith("https://")),
+    permissionType: z.enum(["license_terms", "written_permission", "owned_work", "collaborator_release"]),
+    termsUrl: z
+      .string()
+      .url()
+      .max(2000)
+      .refine((value) => value.startsWith("https://")),
+    evidenceUrl: z
+      .string()
+      .url()
+      .max(2000)
+      .refine((value) => value.startsWith("https://")),
+    evidenceCheckedAt: z.string().datetime(),
+    allowedUses: z.array(z.enum(["instagram", "commercial", "adaptation", "platform_sublicense"])).min(1),
+    subjectContext: z.string().trim().min(3).max(300),
+    contextType: z.enum(["event_current", "event_archive", "artist_or_subject", "illustrative_context"]),
+    eventDate: z.string().date().optional(),
+    documentaryPhotograph: z.literal(true),
+  })
+  .superRefine((value, context) => {
+    if (value.contextType === "event_current" && !value.eventDate) {
+      context.addIssue({
+        code: "custom",
+        path: ["eventDate"],
+        message: "La foto del evento actual requiere la fecha del evento",
+      });
+    }
+  });
+
+export const photoRightsSchema = photoRightsInputSchema.extend({
+  review: z
+    .object({
+      status: z.enum(["pending", "approved", "rejected"]).default("pending"),
+      reviewedBy: z.string().optional(),
+      reviewedAt: z.string().datetime().optional(),
+      relevanceNotes: z.string().max(1000).optional(),
+      isAuthenticPhotoVerified: z.boolean().optional(),
+      contextVerified: z.boolean().optional(),
+    })
+    .default({ status: "pending" }),
+});
+
 export const imageInputSchema = z.object({
   base64: z.string().trim().min(1).max(30_000_000),
   mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]).optional(),
   filename: z.string().trim().max(255).optional(),
   altText: z.string().max(500).default(""),
   credit: z.string().max(500).default(""),
+  photoRights: photoRightsInputSchema.optional(),
 });
 
 export const assetSchema = z.object({
@@ -33,6 +90,7 @@ export const assetSchema = z.object({
   mediaType: z.enum(["image", "video"]).default("image"),
   altText: z.string().default(""),
   credit: z.string().default(""),
+  photoRights: photoRightsSchema.optional(),
   storage: z.enum(["local", "r2"]).optional(),
   key: z.string().max(512).optional(),
   mediaAssetId: z.string().max(100).optional(),
@@ -64,6 +122,7 @@ export const contentInputSchema = z.object({
   socialTemplateVersion: z.number().int().positive().optional(),
   socialTemplateData: z.record(z.string(), z.string().max(500)).optional(),
   socialRenderedAt: z.string().datetime().nullable().optional(),
+  visualSource: z.enum(["brand_graphic", "photograph"]).optional(),
   socialSlides: z
     .array(z.object({ text: z.string().max(180), source: assetSchema }))
     .max(9)

@@ -66,54 +66,55 @@ npm run dev
 
 ## Variables
 
-| Variable | Uso |
-| --- | --- |
-| `MONGODB_URI` | URI obligatoria de MongoDB Atlas. |
-| `MONGODB_DB` | Base de datos, por defecto `afterstage`. |
-| `PUBLIC_BASE_URL` | Origen HTTPS público desde el que Meta descargará imágenes y Mercado Pago volverá al checkout. |
-| `MERCADOPAGO_ACCESS_TOKEN` | Token privado para crear preferencias y validar pagos desde el webhook. |
-| `MONETIZATION_PRODUCTS_JSON` | Catálogo opcional configurable en JSON; si se omite se usa el catálogo inicial de monetización. |
-| `MEDIA_ROOT` | Raíz local autorizada para archivos que se sirven bajo `/media`. |
-| `PUBLIC_MEDIA_BASE_URL` | Base pública alternativa para medios locales. |
-| `MEDIA_GATEWAY_URL` | URL del Worker `afterstage-storage-gateway`; habilita grants y mantenimiento R2. |
-| `MEDIA_GATEWAY_SERVICE_TOKEN` | Token servidor-a-servidor para el gateway; nunca se envía al navegador. |
-| `MEDIA_PUBLIC_BASE_URL` | Base pública del gateway para servir fotos, por ejemplo `https://media.afterstage.ar`. |
-| `MEDIA_MAX_OBJECT_BYTES` | Máximo por foto; por defecto 5 MiB. |
-| `MEDIA_MAX_TOTAL_BYTES` | Cuota total reservada en Mongo; por defecto 25 GiB. |
-| `MEDIA_MAX_MONTHLY_UPLOAD_BYTES` | Cuota mensual de nuevas fotos; por defecto 2 GiB. |
-| `MEDIA_RESERVATION_TTL_MS` | Vida operativa de una reserva pendiente; por defecto 24 horas. |
-| `MEDIA_ORPHAN_GRACE_MS` | Período de gracia antes de borrar fotos no vinculadas; por defecto 48 horas. |
-| `MEDIA_MAINTENANCE_INTERVAL_MS` | Frecuencia de limpieza y reconciliación R2 ↔ Mongo; por defecto semanal. |
-| `VITE_R2_MEDIA_UPLOADS` | Variable del frontend; cuando vale `true`, el navegador sube fotos directamente al gateway R2. |
-| `CLOUDFLARE_TUNNEL_URL` | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor. |
-| `AI_API_KEY` | Opcional para las herramientas internas de regeneración editorial (`/api/content/:id/generate`); no es necesaria para el MCP, porque el agente genera la nota. Nunca debe configurarse en el cliente, Git o la conexión MCP. |
-| `GEMINI_API_KEY` | Opcional para el módulo de novedades y generación estructurada de copy; se conserva solo en el backend. |
-| `GEMINI_MODEL` | Modelo Gemini habilitado para la cuenta; por defecto `gemini-3.8-flash`. |
-| `AI_BASE_URL` | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`. |
-| `AI_MODEL` | Modelo de redacción. |
-| `META_INSTAGRAM_APP_ID` | ID de la app Meta usada para OAuth de Instagram. Debe corresponder al secreto de la misma app. |
-| `META_INSTAGRAM_APP_SECRET` | Secreto servidor de la app Meta, usado para canjear el código OAuth. |
-| `META_INSTAGRAM_REDIRECT_URI` | Callback registrado en Meta; por defecto `/api/integrations/instagram/callback` en `PUBLIC_BASE_URL`. |
-| `META_TOKEN_ENCRYPTION_KEY` | Clave base64url de 32 bytes que cifra tokens conectados en MongoDB. |
-| `META_ACCESS_TOKEN` | Fallback heredado de Page token si no hay una cuenta conectada mediante Facebook Login. |
-| `META_INSTAGRAM_ACCOUNT_ID` | ID de la cuenta profesional vinculada; también permite elegirla si hay varias páginas. |
-| `META_PAGE_ID` | ID de la página de Facebook. |
-| `META_API_VERSION` | Versión de Graph API, configurable para facilitar upgrades. |
-| `CORS_ORIGINS` | Lista opcional de orígenes permitidos, separada por comas. |
-| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Habilitan el envío de solicitudes de acreditación, seguros, respuestas desde la bandeja y enlaces de recuperación de acceso. |
-| `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM` | Ajustes del transporte de correo. |
-| `INSURANCE_FROM_EMAIL` | Identidad del circuito de seguros; por defecto `seguros@afterstage.ar`. |
-| `INSURANCE_RECIPIENT_EMAIL` | Destinatario del productor/aseguradora para las solicitudes de seguros. Si falta, la solicitud se guarda y queda marcada como no configurada. |
-| `INBOUND_EMAIL_WEBHOOK_SECRET` | Secreto compartido con el Email Worker de Cloudflare para aceptar mensajes entrantes. |
-| `INBOUND_EMAIL_DOMAIN` | Dominio permitido para destinatarios entrantes; por defecto `afterstage.ar`. |
-| `JWT_SECRET` | Clave obligatoria para firmar y validar los JWT del login. |
-| `JWT_ISSUER` | Emisor esperado y firmado en el JWT; por defecto `afterstage`. |
-| `JWT_AUDIENCE` | Audiencia esperada y firmada en el JWT; por defecto `afterstage-web`. |
-| `JWT_ACCESS_TTL_SECONDS` | Duración de la sesión emitida por `/api/auth/login` (mínimo 5 minutos; por defecto 15). |
-| `MCP_PUBLIC_URL` | URL pública HTTPS del recurso MCP y su Authorization Server; por defecto usa `PUBLIC_BASE_URL`. |
-| `JSON_BODY_LIMIT` | Límite del cuerpo JSON para notas con imágenes base64; por defecto `32mb`. |
-| `RATE_LIMIT` | Máximo de requests por IP y ventana de un minuto (default 120). |
-| `EVENTS_RSS_URLS` | URLs RSS/Atom públicas separadas por coma. Sus eventos se combinan con la agenda editorial, con caché de 5 minutos. |
+| Variable                                          | Uso                                                                                                                                                                                                                          |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MONGODB_URI`                                     | URI obligatoria de MongoDB Atlas.                                                                                                                                                                                            |
+| `MONGODB_DB`                                      | Base de datos, por defecto `afterstage`.                                                                                                                                                                                     |
+| `PUBLIC_BASE_URL`                                 | Origen HTTPS público desde el que Meta descargará imágenes y Mercado Pago volverá al checkout.                                                                                                                               |
+| `MERCADOPAGO_ACCESS_TOKEN`                        | Token privado para crear preferencias y validar pagos desde el webhook.                                                                                                                                                      |
+| `MONETIZATION_PRODUCTS_JSON`                      | Catálogo opcional configurable en JSON; si se omite se usa el catálogo inicial de monetización.                                                                                                                              |
+| `MEDIA_ROOT`                                      | Raíz local autorizada para archivos que se sirven bajo `/media`.                                                                                                                                                             |
+| `PUBLIC_MEDIA_BASE_URL`                           | Base pública alternativa para medios locales.                                                                                                                                                                                |
+| `MEDIA_GATEWAY_URL`                               | URL del Worker `afterstage-storage-gateway`; habilita grants y mantenimiento R2.                                                                                                                                             |
+| `MEDIA_GATEWAY_SERVICE_TOKEN`                     | Token servidor-a-servidor para el gateway; nunca se envía al navegador.                                                                                                                                                      |
+| `MEDIA_PUBLIC_BASE_URL`                           | Base pública del gateway para servir fotos, por ejemplo `https://media.afterstage.ar`.                                                                                                                                       |
+| `MEDIA_MAX_OBJECT_BYTES`                          | Máximo por foto; por defecto 5 MiB.                                                                                                                                                                                          |
+| `MEDIA_MAX_TOTAL_BYTES`                           | Cuota total reservada en Mongo; por defecto 25 GiB.                                                                                                                                                                          |
+| `MEDIA_MAX_MONTHLY_UPLOAD_BYTES`                  | Cuota mensual de nuevas fotos; por defecto 2 GiB.                                                                                                                                                                            |
+| `MEDIA_RESERVATION_TTL_MS`                        | Vida operativa de una reserva pendiente; por defecto 24 horas.                                                                                                                                                               |
+| `MEDIA_ORPHAN_GRACE_MS`                           | Período de gracia antes de borrar fotos no vinculadas; por defecto 48 horas.                                                                                                                                                 |
+| `MEDIA_MAINTENANCE_INTERVAL_MS`                   | Frecuencia de limpieza y reconciliación R2 ↔ Mongo; por defecto semanal.                                                                                                                                                     |
+| `VITE_R2_MEDIA_UPLOADS`                           | Variable del frontend; cuando vale `true`, el navegador sube fotos directamente al gateway R2.                                                                                                                               |
+| `CLOUDFLARE_TUNNEL_URL`                           | URL HTTPS vigente del túnel Cloudflare que apunta al puerto del gestor.                                                                                                                                                      |
+| `AI_API_KEY`                                      | Opcional para las herramientas internas de regeneración editorial (`/api/content/:id/generate`); no es necesaria para el MCP, porque el agente genera la nota. Nunca debe configurarse en el cliente, Git o la conexión MCP. |
+| `GEMINI_API_KEY`                                  | Opcional para el módulo de novedades y generación estructurada de copy; se conserva solo en el backend.                                                                                                                      |
+| `GEMINI_MODEL`                                    | Modelo Gemini habilitado para la cuenta; por defecto `gemini-3.8-flash`.                                                                                                                                                     |
+| `AI_BASE_URL`                                     | Base OpenAI-compatible; por defecto `https://api.openai.com/v1`.                                                                                                                                                             |
+| `AI_MODEL`                                        | Modelo de redacción.                                                                                                                                                                                                         |
+| `OPENVERSE_CLIENT_ID` / `OPENVERSE_CLIENT_SECRET` | Opcionales, en pareja, para autenticar búsquedas de fotos en Openverse y acceder al límite estándar. La búsqueda anónima funciona sin credenciales; cada resultado requiere verificación independiente de derechos.          |
+| `META_INSTAGRAM_APP_ID`                           | ID de la app Meta usada para OAuth de Instagram. Debe corresponder al secreto de la misma app.                                                                                                                               |
+| `META_INSTAGRAM_APP_SECRET`                       | Secreto servidor de la app Meta, usado para canjear el código OAuth.                                                                                                                                                         |
+| `META_INSTAGRAM_REDIRECT_URI`                     | Callback registrado en Meta; por defecto `/api/integrations/instagram/callback` en `PUBLIC_BASE_URL`.                                                                                                                        |
+| `META_TOKEN_ENCRYPTION_KEY`                       | Clave base64url de 32 bytes que cifra tokens conectados en MongoDB.                                                                                                                                                          |
+| `META_ACCESS_TOKEN`                               | Fallback heredado de Page token si no hay una cuenta conectada mediante Facebook Login.                                                                                                                                      |
+| `META_INSTAGRAM_ACCOUNT_ID`                       | ID de la cuenta profesional vinculada; también permite elegirla si hay varias páginas.                                                                                                                                       |
+| `META_PAGE_ID`                                    | ID de la página de Facebook.                                                                                                                                                                                                 |
+| `META_API_VERSION`                                | Versión de Graph API, configurable para facilitar upgrades.                                                                                                                                                                  |
+| `CORS_ORIGINS`                                    | Lista opcional de orígenes permitidos, separada por comas.                                                                                                                                                                   |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`             | Habilitan el envío de solicitudes de acreditación, seguros, respuestas desde la bandeja y enlaces de recuperación de acceso.                                                                                                 |
+| `SMTP_PORT`, `SMTP_SECURE`, `SMTP_FROM`           | Ajustes del transporte de correo.                                                                                                                                                                                            |
+| `INSURANCE_FROM_EMAIL`                            | Identidad del circuito de seguros; por defecto `seguros@afterstage.ar`.                                                                                                                                                      |
+| `INSURANCE_RECIPIENT_EMAIL`                       | Destinatario del productor/aseguradora para las solicitudes de seguros. Si falta, la solicitud se guarda y queda marcada como no configurada.                                                                                |
+| `INBOUND_EMAIL_WEBHOOK_SECRET`                    | Secreto compartido con el Email Worker de Cloudflare para aceptar mensajes entrantes.                                                                                                                                        |
+| `INBOUND_EMAIL_DOMAIN`                            | Dominio permitido para destinatarios entrantes; por defecto `afterstage.ar`.                                                                                                                                                 |
+| `JWT_SECRET`                                      | Clave obligatoria para firmar y validar los JWT del login.                                                                                                                                                                   |
+| `JWT_ISSUER`                                      | Emisor esperado y firmado en el JWT; por defecto `afterstage`.                                                                                                                                                               |
+| `JWT_AUDIENCE`                                    | Audiencia esperada y firmada en el JWT; por defecto `afterstage-web`.                                                                                                                                                        |
+| `JWT_ACCESS_TTL_SECONDS`                          | Duración de la sesión emitida por `/api/auth/login` (mínimo 5 minutos; por defecto 15).                                                                                                                                      |
+| `MCP_PUBLIC_URL`                                  | URL pública HTTPS del recurso MCP y su Authorization Server; por defecto usa `PUBLIC_BASE_URL`.                                                                                                                              |
+| `JSON_BODY_LIMIT`                                 | Límite del cuerpo JSON para notas con imágenes base64; por defecto `32mb`.                                                                                                                                                   |
+| `RATE_LIMIT`                                      | Máximo de requests por IP y ventana de un minuto (default 120).                                                                                                                                                              |
+| `EVENTS_RSS_URLS`                                 | URLs RSS/Atom públicas separadas por coma. Sus eventos se combinan con la agenda editorial, con caché de 5 minutos.                                                                                                          |
 
 En `/admin/instagram`, conectá la cuenta con Facebook para colaboraciones para usar inbox, comentarios, métricas, publicación y aceptación automática de colaboraciones. La cuenta debe ser profesional y estar vinculada a una página de Facebook; si el usuario administra varias páginas, configurá `META_INSTAGRAM_ACCOUNT_ID` para elegir la de Afterstage. El OAuth solicita permisos de contenido, insights, mensajes y comentarios. Los tokens se cifran en MongoDB.
 

@@ -25,6 +25,7 @@ import {
   instagramCarouselUpdateSchema,
   instagramSocialPublicationInputSchema,
   instagramSocialPublicationUpdateSchema,
+  instagramEditorialGraphicInputSchema,
   publicInstagramDraft,
 } from "../../domain/content/social-carousel.js";
 import { socialEditorialStandards } from "../../domain/content/social-editorial-standards.js";
@@ -2159,6 +2160,84 @@ export const createApp = async (
       throw error;
     }
   });
+  app.get(
+    "/api/instagram/photo-candidates",
+    requireRole("admin", "editor"),
+    new RateLimiter(30, 60_000).middleware,
+    async (request, response) => {
+      const query = z.string().trim().min(3).max(200).parse(request.query.q);
+      const limit = z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(20)
+        .default(10)
+        .parse(request.query.limit ?? 10);
+      const candidates = await manager.searchPhotoCandidates(query, limit);
+      log("info", "instagram_photo_candidates_searched", {
+        correlationId: (request as typeof request & { correlationId?: string }).correlationId,
+        actorId: (request as typeof request & { actor?: { id: string } }).actor?.id,
+        query,
+        resultCount: candidates.length,
+      });
+      response.json({ provider: "Openverse", rightsVerified: false, candidates });
+    },
+  );
+  app.post("/api/instagram/brand-graphic", requireRole("admin", "editor"), async (request, response) => {
+    const input = instagramEditorialGraphicInputSchema.parse(request.body);
+    const template = await templateStore.get(input.templateId);
+    if (!template) return response.status(404).json({ error: "No se encontró la plantilla seleccionada" });
+    const actor = (request as typeof request & { actor?: { id: string } }).actor;
+    if (!actor?.id) return response.status(401).json({ error: "No autorizado" });
+    const { idempotencyKey, slides, ...copy } = input;
+    const draft = await manager.prepareEditorialGraphic(
+      template,
+      { ...copy, idempotencyKey: `instagram-brand-graphic:${actor.id}:${idempotencyKey}` },
+      slides,
+    );
+    log("info", "instagram_brand_graphic_created", {
+      correlationId: (request as typeof request & { correlationId?: string }).correlationId,
+      actorId: actor.id,
+      publicationId: draft.id,
+      slideCount: slides.length,
+    });
+    response.status(201).json(publicInstagramDraft(draft, actor.id));
+  });
+  app.post(
+    "/api/social-publication/:id/photos/:slide/review",
+    requireRole("admin", "editor"),
+    async (request, response) => {
+      const input = z
+        .object({
+          decision: z.enum(["approved", "rejected"]),
+          relevanceNotes: z.string().trim().min(1).max(1000),
+          isAuthenticPhotoVerified: z.boolean().default(false),
+          contextVerified: z.boolean().default(false),
+        })
+        .parse(request.body);
+      const actor = (request as typeof request & { actor?: { id: string } }).actor;
+      if (!actor?.id) return response.status(401).json({ error: "No autorizado" });
+      const publicationId = String(request.params.id);
+      const slide = z.coerce.number().int().min(1).max(9).parse(request.params.slide);
+      const updated = await manager.reviewInstagramPhoto(
+        publicationId,
+        slide,
+        actor.id,
+        input.decision,
+        input.relevanceNotes,
+        input.isAuthenticPhotoVerified,
+        input.contextVerified,
+      );
+      log("info", "instagram_photo_rights_reviewed", {
+        correlationId: (request as typeof request & { correlationId?: string }).correlationId,
+        publicationId,
+        slide,
+        reviewerId: actor.id,
+        decision: input.decision,
+      });
+      response.json(publicInstagramDraft(updated, actor.id));
+    },
+  );
   app.put("/api/social-publication/:id", requireRole("admin", "editor"), async (request, response) => {
     const input = instagramSocialPublicationUpdateSchema.parse(request.body);
     const template = await templateStore.get(input.templateId);

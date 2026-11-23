@@ -600,8 +600,39 @@ test("permite recompartir una nota publicada en Instagram con el permiso corresp
     summary: "Una bajada",
     body: "El texto completo",
     channels: ["instagram"],
-    assets: [{ id: "foto", url: "https://example.com/foto.jpg", altText: "", credit: "" }],
+    assets: [
+      {
+        id: "foto",
+        url: "https://example.com/foto.jpg",
+        altText: "",
+        credit: "Foto: Prensa",
+        photoRights: {
+          sourceUrl: "https://example.com/source",
+          creator: "Prensa",
+          license: "by",
+          licenseVersion: "4.0",
+          licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+          termsUrl: "https://example.com/terms",
+          permissionType: "license_terms",
+          evidenceUrl: "https://example.com/evidence",
+          evidenceCheckedAt: new Date().toISOString(),
+          allowedUses: ["instagram", "commercial", "adaptation", "platform_sublicense"],
+          subjectContext: "Nota para recompartir",
+          contextType: "artist_or_subject",
+          documentaryPhotograph: true,
+        },
+      },
+    ],
   });
+  await manager.reviewInstagramPhoto(
+    item.id,
+    1,
+    "admin",
+    "approved",
+    "La foto muestra a la banda de esta nota.",
+    true,
+    true,
+  );
   await manager.update(item.id, { status: "review" });
   await manager.update(item.id, { status: "approved" });
   await manager.publish(item.id);

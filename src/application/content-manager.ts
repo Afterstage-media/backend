@@ -7,6 +7,7 @@ import {
   contentInputSchema,
   agentNoteInputSchema,
   imageInputSchema,
+  photoRightsSchema,
   type AgentNoteInput,
   type ContentInput,
   type ContentItem,
@@ -35,6 +36,7 @@ import {
 import type { SocialTemplate } from "../domain/content/social-template.js";
 import { MediaAssetService } from "../infrastructure/integrations/media-storage.js";
 import { SocialTemplateRenderer } from "../infrastructure/integrations/social-template-renderer.js";
+import { OpenverseClient } from "../infrastructure/integrations/openverse.js";
 
 export class DuplicateContentError extends Error {
   constructor(readonly matches: DuplicateMatch[]) {
@@ -54,7 +56,22 @@ export class ContentIdempotentOperationError extends Error {
   }
 }
 
+export class InstagramPhotoRightsBlockedError extends Error {
+  constructor() {
+    super(
+      "Instagram bloqueado: cada foto debe tener licencia, permiso, autenticidad y relevancia aprobados por una persona",
+    );
+    this.name = "InstagramPhotoRightsBlockedError";
+  }
+}
+
+const markPhotoRightsPending = (asset: ContentItem["assets"][number]) =>
+  asset.photoRights
+    ? { ...asset, photoRights: { ...asset.photoRights, review: { status: "pending" as const } } }
+    : asset;
+
 export class ContentManager {
+  private readonly openverse = new OpenverseClient();
   constructor(
     readonly store: ContentRepository = new ContentStore(),
     private readonly ai = new AiWriter(),
@@ -129,6 +146,7 @@ export class ContentManager {
         filename: image.filename,
         altText: image.altText,
         credit: image.credit,
+        photoRights: image.photoRights ? photoRightsSchema.parse(image.photoRights) : undefined,
       };
     });
     let sources: ContentItem["assets"];
@@ -157,6 +175,7 @@ export class ContentManager {
             localPath: "",
             altText: image.altText,
             credit: image.credit,
+            photoRights: image.photoRights ? photoRightsSchema.parse(image.photoRights) : undefined,
           });
         }
       } catch (error) {
@@ -165,6 +184,10 @@ export class ContentManager {
       }
     } else {
       sources = await this.media.createImages(originals);
+      sources = sources.map((source, index) => ({
+        ...source,
+        photoRights: originals[index]?.photoRights ? photoRightsSchema.parse(originals[index]!.photoRights) : undefined,
+      }));
     }
     return slides.map((slide, index) => ({ text: slide.text, source: sources[index]! }));
   }
@@ -195,11 +218,21 @@ export class ContentManager {
       filename: path.basename(sourceUrl.pathname),
       altText: source.altText,
       credit: source.credit,
+      ...(source.photoRights ? { photoRights: source.photoRights } : {}),
     };
   }
 
   async create(input: unknown): Promise<ContentItem> {
     const parsed = contentInputSchema.parse(input);
+    delete parsed.visualSource;
+    parsed.assets = parsed.assets.map(markPhotoRightsPending);
+    if (parsed.socialSlides) {
+      parsed.socialSlides = parsed.socialSlides.map((slide) => ({
+        ...slide,
+        source: markPhotoRightsPending(slide.source),
+      }));
+    }
+    if (parsed.channels.includes("instagram") && parsed.assets.length) parsed.visualSource = "photograph";
     if (!["idea", "draft"].includes(parsed.status)) {
       throw new Error("El contenido nuevo debe comenzar como idea o borrador");
     }
@@ -227,22 +260,44 @@ export class ContentManager {
   ): Promise<ContentItem> {
     if (template.status !== "published" || !template.channels.includes("instagram"))
       throw new Error("El formato editorial no está habilitado para Instagram");
-    const draft = await this.store.create(
-      contentInputSchema.parse({
-        ...copy,
-        type: slides.length > 1 ? "carousel" : "post",
-        channels: ["instagram"],
-        status: "draft",
-        author: "Afterstage",
-      }),
+    if (!slides.length || slides.length > 9) throw new Error("La gráfica editorial admite entre una y nueve láminas");
+    const data = Object.fromEntries(
+      slides.flatMap(({ title, body }, index) => [
+        [`headline${index}`, title],
+        [`body${index}`, body],
+      ]),
     );
+    const existing = await this.store.findByIdempotencyKey(copy.idempotencyKey);
+    if (existing) {
+      const payloadMatches =
+        existing.title === copy.title &&
+        existing.summary === copy.summary &&
+        existing.instagramCopy === copy.instagramCopy &&
+        existing.source === copy.source &&
+        existing.socialTemplateId === template.id &&
+        JSON.stringify(existing.socialTemplateData ?? {}) === JSON.stringify(data);
+      if (!payloadMatches) throw new ContentIdempotentOperationError("conflict");
+      if (existing.assets.length) return existing;
+    }
+    const draft =
+      existing ??
+      (await this.store.create(
+        contentInputSchema.parse({
+          ...copy,
+          type: slides.length > 1 ? "carousel" : "post",
+          channels: ["instagram"],
+          visualSource: "brand_graphic",
+          status: "draft",
+          author: "Afterstage",
+          socialTemplateId: template.id,
+          socialTemplateVersion: template.templateVersion,
+          socialTemplateData: data,
+        }),
+      ));
     if (draft.status !== "draft" || draft.assets.length) return draft;
-    const data: Record<string, string> = {};
-    const layout = slides.map(({ eyebrow, title, body }, index) => {
+    const layout = slides.map(({ eyebrow }, index) => {
       const titleField = `headline${index}`;
       const bodyField = `body${index}`;
-      data[titleField] = title;
-      data[bodyField] = body;
       return {
         eyebrow,
         titleField,
@@ -257,7 +312,13 @@ export class ContentManager {
       data,
     );
     const assets = await this.persistCarouselImages(draft.id, graphics);
-    const updated = await this.store.update(draft.id, { assets });
+    const updated = await this.store.update(draft.id, {
+      assets,
+      visualSource: "brand_graphic",
+      socialTemplateId: template.id,
+      socialTemplateVersion: template.templateVersion,
+      socialRenderedAt: new Date().toISOString(),
+    });
     if (!updated) throw new Error("No se pudo guardar la gráfica editorial");
     if (this.mediaStorage?.configured) await this.mediaStorage.syncContentAssets(draft.id, assets);
     return updated;
@@ -294,6 +355,7 @@ export class ContentManager {
           body: template.description,
           status: "scheduled",
           channels: ["instagram"],
+          visualSource: "brand_graphic",
           assets: [],
           instagramCopy: [
             [input.data.headline1, input.data.headline2, input.data.headline3].filter(Boolean).join(" "),
@@ -421,6 +483,7 @@ export class ContentManager {
     const shell = await this.store.create(
       contentInputSchema.parse({
         type: "carousel",
+        visualSource: "photograph",
         title: parsed.title,
         slug: `instagram-${slugify(parsed.title).slice(0, 185)}-${fingerprint.slice(0, 8)}`,
         summary: parsed.slides[0]!.text,
@@ -505,6 +568,7 @@ export class ContentManager {
     const shell = await this.store.create(
       contentInputSchema.parse({
         type: parsed.type,
+        visualSource: "photograph",
         title: parsed.title,
         slug: `instagram-${parsed.type}-${slugify(parsed.title).slice(0, 175)}-${fingerprint.slice(0, 8)}`,
         summary: parsed.slides[0]!.text,
@@ -807,15 +871,58 @@ export class ContentManager {
       altText: parsed.image.altText?.trim() || previous.altText,
       credit: parsed.image.credit || previous.credit,
     };
+    const sourceSlides = item.socialSlides ?? [];
+    if (sourceSlides.length) {
+      const slides = sourceSlides.map((slide, sourceIndex) =>
+        sourceIndex === index
+          ? { image: correctionImage, text: slide.text }
+          : { sourceAssetId: slide.source.id, text: slide.text },
+      );
+      if (item.type === "carousel") {
+        return this.updateInstagramCarousel(
+          publicationId,
+          {
+            templateId: template.id,
+            title: item.title,
+            instagramCopy: item.instagramCopy,
+            slides,
+            tags: item.tags,
+            source: item.source,
+            author: item.author,
+            photographer: item.photographer,
+          },
+          template,
+        );
+      }
+      return this.updateInstagramSocialPublication(
+        publicationId,
+        {
+          templateId: template.id,
+          type: item.type,
+          title: item.title,
+          instagramCopy: item.instagramCopy,
+          slides,
+          tags: item.tags,
+          source: item.source,
+          author: item.author,
+          photographer: item.photographer,
+        },
+        template,
+      );
+    }
     const buffer = await this.carouselRenderer.normalizeCorrection(template, correctionImage);
     const replacement = await this.persistCarouselImages(publicationId, [
       { buffer, altText: correctionImage.altText, credit: correctionImage.credit },
     ]);
     try {
       const assets = [...item.assets];
-      assets[index] = replacement[0]!;
+      assets[index] = {
+        ...replacement[0]!,
+        photoRights: photoRightsSchema.parse(parsed.image.photoRights),
+      };
       const updated = await this.store.update(publicationId, {
         assets,
+        visualSource: "photograph",
         socialRenderedAt: new Date().toISOString(),
       });
       if (!updated) throw new Error("No se pudo reemplazar la lámina");
@@ -850,6 +957,16 @@ export class ContentManager {
   async update(id: string, input: unknown): Promise<ContentItem> {
     const current = await this.required(id);
     const patch = parsePatch(contentInputSchema, input);
+    if (patch.visualSource !== undefined)
+      throw new Error("El origen visual solo puede definirlo un flujo editorial del servidor");
+    if (patch.assets) patch.assets = patch.assets.map(markPhotoRightsPending);
+    if (patch.assets && current.visualSource === "brand_graphic") patch.visualSource = "photograph";
+    if (patch.socialSlides) {
+      patch.socialSlides = patch.socialSlides.map((slide) => ({
+        ...slide,
+        source: markPhotoRightsPending(slide.source),
+      }));
+    }
     if (patch.title || patch.slug || patch.summary || patch.body || patch.source) {
       const duplicates = detectDuplicates({ ...current, ...patch }, await this.store.list(), id, 0.82);
       if (duplicates.length) throw new DuplicateContentError(duplicates);
@@ -867,6 +984,116 @@ export class ContentManager {
     }
     const updated = await this.store.update(id, patch);
     if (!updated) throw new Error("Contenido no encontrado");
+    return updated;
+  }
+
+  async searchPhotoCandidates(query: string, limit = 10) {
+    return this.openverse.search(query, limit);
+  }
+
+  async reviewInstagramPhoto(
+    publicationId: string,
+    slideNumber: number,
+    reviewerId: string,
+    decision: "approved" | "rejected",
+    relevanceNotes: string,
+    isAuthenticPhotoVerified = false,
+    contextVerified = false,
+  ): Promise<ContentItem> {
+    const item = await this.required(publicationId);
+    if (
+      item.status !== "draft" &&
+      item.status !== "review" &&
+      item.status !== "approved" &&
+      item.status !== "scheduled" &&
+      item.status !== "failed"
+    ) {
+      throw new Error("Solo se pueden revisar derechos antes de publicar la pieza");
+    }
+    const slides = [...(item.socialSlides ?? [])];
+    const slideIndex = slideNumber - 1;
+    const sources = slides.map((slide) => slide.source);
+    const source = sources[slideIndex] ?? item.assets[slideIndex];
+    if (!Number.isInteger(slideNumber) || slideIndex < 0 || !source) {
+      throw new Error("La lámina solicitada no tiene una foto fuente");
+    }
+    const rights = source.photoRights;
+    if (!rights) throw new Error("La foto no tiene trazabilidad de derechos completa");
+    if (Date.parse(rights.evidenceCheckedAt) > Date.now()) {
+      throw new Error("La fecha de verificación de derechos no puede estar en el futuro");
+    }
+    if (decision === "approved") {
+      if (!isAuthenticPhotoVerified)
+        throw new Error("El revisor debe confirmar que es una fotografía real y no una imagen sintética");
+      if (!contextVerified) throw new Error("El revisor debe confirmar la pertinencia temática y temporal de la foto");
+      const requiredUses: readonly string[] = ["instagram", "commercial", "adaptation", "platform_sublicense"];
+      if (requiredUses.some((use) => !rights.allowedUses.includes(use as (typeof rights.allowedUses)[number]))) {
+        throw new Error(
+          "La licencia debe permitir uso comercial, edición, publicación en Instagram y sublicencia técnica a Meta",
+        );
+      }
+      if (!source.credit.trim()) throw new Error("La publicación debe incluir el crédito público de la fotografía");
+      const restrictiveLicense = /(?:by-)?nc|(?:by-)?nd/i.test(rights.license);
+      if (
+        restrictiveLicense &&
+        !["written_permission", "owned_work", "collaborator_release"].includes(rights.permissionType)
+      ) {
+        throw new Error("Una licencia no comercial o sin obras derivadas requiere permiso independiente documentado");
+      }
+      if (relevanceNotes.trim().length < 20) {
+        throw new Error("La revisión debe explicar por qué la foto corresponde al contenido y su contexto temporal");
+      }
+      if (/distint[oa]|no corresponde|no coincide|irrelevante|otro evento/i.test(relevanceNotes)) {
+        throw new Error("La revisión indica que la foto no corresponde al contenido");
+      }
+      const terms = (value: string) =>
+        value
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .match(/[a-z0-9]{4,}/g) ?? [];
+      const contextTerms = new Set(terms(rights.subjectContext));
+      const editorialTerms = new Set(terms(`${item.title} ${item.summary} ${item.body} ${item.tags.join(" ")}`));
+      if (![...contextTerms].some((term) => editorialTerms.has(term))) {
+        throw new Error(
+          "El tema declarado de la foto no coincide con el título, resumen, cuerpo o etiquetas de la publicación",
+        );
+      }
+      if (rights.contextType === "event_current" && !rights.eventDate) {
+        throw new Error("No se puede aprobar una foto de evento actual sin fecha comprobada");
+      }
+      if (rights.contextType === "event_archive" && /evento actual|hoy|anoche|en vivo/i.test(relevanceNotes)) {
+        throw new Error("Una foto de archivo no puede aprobarse como evidencia de un evento actual");
+      }
+      if (
+        rights.contextType === "event_archive" &&
+        /hoy|anoche|esta noche|en vivo|en el show/i.test(
+          `${item.title} ${item.summary} ${item.body} ${item.instagramCopy}`,
+        )
+      ) {
+        throw new Error("El copy presenta el contenido como actual y no puede usar una foto de archivo");
+      }
+    }
+    const photoRights = {
+      ...rights,
+      review: {
+        status: decision,
+        reviewedBy: reviewerId,
+        reviewedAt: new Date().toISOString(),
+        relevanceNotes: relevanceNotes.trim(),
+        isAuthenticPhotoVerified,
+        contextVerified,
+      },
+    };
+    const patch = slides[slideIndex]
+      ? {
+          socialSlides: slides.map((entry, index) =>
+            index === slideIndex ? { ...entry, source: { ...entry.source, photoRights } } : entry,
+          ),
+        }
+      : { assets: item.assets.map((asset, index) => (index === slideIndex ? { ...asset, photoRights } : asset)) };
+    const updated = await this.store.update(item.id, patch);
+    if (!updated) throw new Error("No se pudo registrar la revisión de derechos de la foto");
     return updated;
   }
 
@@ -942,6 +1169,25 @@ export class ContentManager {
       throw new Error("Solo se puede publicar contenido aprobado, programado o fallido");
     }
     if (!current.channels.length) throw new Error("Seleccioná al menos un canal antes de publicar");
+    const photographs =
+      current.visualSource === "brand_graphic"
+        ? []
+        : (current.socialSlides?.map((slide) => slide.source) ?? current.assets);
+    if (
+      current.channels.includes("instagram") &&
+      photographs.some((photo) => photo.photoRights?.review.status !== "approved")
+    ) {
+      const error = new InstagramPhotoRightsBlockedError();
+      if (current.status === "scheduled" || current.status === "failed") {
+        await this.store.update(current.id, {
+          status: "failed",
+          scheduledAt: null,
+          nextAttemptAt: null,
+          lastError: error.message,
+        });
+      }
+      throw error;
+    }
     if (dryRun) {
       await this.publisher.publish(current, true);
       return current;
@@ -999,6 +1245,13 @@ export class ContentManager {
     if (current.status !== "published") throw new Error("Solo se puede recompartir una nota publicada");
     if (!current.channels.includes("instagram")) throw new Error("La nota no tiene Instagram entre sus canales");
     if (!current.assets.length) throw new Error("Instagram requiere al menos una imagen con URL pública");
+    const photographs =
+      current.visualSource === "brand_graphic"
+        ? []
+        : (current.socialSlides?.map((slide) => slide.source) ?? current.assets);
+    if (photographs.some((photo) => photo.photoRights?.review.status !== "approved")) {
+      throw new InstagramPhotoRightsBlockedError();
+    }
 
     const instagramItem: ContentItem = {
       ...current,

@@ -150,9 +150,11 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "eliminar_ruta_correo",
         "crear_evento",
         "buscar_directorio",
+        "buscar_fotos_instagram",
         "consultar_borradores",
         "corregir_lamina_instagram",
         "crear_carrusel_instagram",
+        "crear_grafica_tipografica_instagram",
         "crear_pieza_instagram",
         "crear_serie_social",
         "actualizar_serie_social",
@@ -204,6 +206,7 @@ test("expone contratos de salida como objetos y aplica filtros, límites y roles
         "obtener_voz_notero",
         "actualizar_voz_notero",
         "quitar_colaborador_confiable_instagram",
+        "revisar_derechos_foto_instagram",
       ].sort(),
     );
     const instagramReplyTool = tools.tools.find((tool) => tool.name === "instagram_responder_mensaje");
@@ -684,10 +687,12 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
         "actualizar_ruta_correo",
         "agregar_imagenes_nota",
         "buscar_directorio",
+        "buscar_fotos_instagram",
         "cambiar_estado_nota",
         "consultar_borradores",
         "corregir_lamina_instagram",
         "crear_carrusel_instagram",
+        "crear_grafica_tipografica_instagram",
         "crear_pieza_instagram",
         "crear_serie_social",
         "actualizar_serie_social",
@@ -712,6 +717,7 @@ test("filtra las tools expuestas según los roles del usuario", async () => {
         "obtener_nota",
         "obtener_voz_notero",
         "actualizar_voz_notero",
+        "revisar_derechos_foto_instagram",
       ].sort(),
     );
     const forbidden = await client.callTool({ name: "crear_evento", arguments: { name: "No debe existir" } });

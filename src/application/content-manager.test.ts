@@ -8,6 +8,7 @@ import { AiWriter } from "../infrastructure/integrations/ai.js";
 import { MetaPublisher } from "../infrastructure/integrations/meta.js";
 import { ContentStore } from "../infrastructure/persistence/content-store.js";
 import { MediaAssetStore } from "../infrastructure/persistence/media-assets.js";
+import { MemorySocialTemplateStore } from "../infrastructure/persistence/social-templates.js";
 
 test("la simulación no altera el estado editorial", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-"));
@@ -21,15 +22,7 @@ test("la simulación no altera el estado editorial", async (context) => {
   );
   const created = await manager.create({
     title: "Prueba de publicación",
-    channels: ["instagram"],
-    assets: [
-      {
-        id: "foto",
-        url: "https://example.com/foto.jpg",
-        altText: "",
-        credit: "",
-      },
-    ],
+    channels: ["website"],
   });
   await manager.update(created.id, { status: "review" });
   await manager.update(created.id, { status: "approved" });
@@ -37,6 +30,216 @@ test("la simulación no altera el estado editorial", async (context) => {
   const simulated = await manager.publish(created.id, true);
   assert.equal(simulated.status, "approved");
   assert.equal((await manager.required(created.id)).publishedAt, null);
+});
+
+test("bloquea publicación de fotos hasta validar derechos y contexto con revisión humana", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-photo-rights-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new ContentManager(
+    new ContentStore(directory),
+    {} as AiWriter,
+    {
+      publish: async () => ({ instagram: "published-photo" }),
+    } as unknown as MetaPublisher,
+  );
+  const photoRights = {
+    sourceUrl: "https://commons.example/recital",
+    creator: "Foto Real",
+    license: "by",
+    licenseVersion: "4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    termsUrl: "https://commons.example/terms",
+    permissionType: "license_terms" as const,
+    evidenceUrl: "https://commons.example/license-proof",
+    evidenceCheckedAt: new Date().toISOString(),
+    allowedUses: ["instagram", "commercial", "adaptation", "platform_sublicense"] as const,
+    subjectContext: "Banda Aurora show en Niceto",
+    contextType: "artist_or_subject" as const,
+    documentaryPhotograph: true as const,
+  };
+  const item = await manager.create({
+    title: "Banda Aurora en Niceto",
+    summary: "La banda presentó su nuevo disco en vivo.",
+    body: "La cobertura de Banda Aurora en Niceto.",
+    instagramCopy: "Banda Aurora en Niceto.",
+    channels: ["instagram"],
+    assets: [{ id: "photo-1", url: "https://afterstage.test/photo.jpg", credit: "Foto: Foto Real", photoRights }],
+  });
+  await manager.update(item.id, { status: "review" });
+  await manager.update(item.id, { status: "approved" });
+  await assert.rejects(() => manager.publish(item.id), /cada foto debe tener licencia/);
+  await assert.rejects(
+    () =>
+      manager.reviewInstagramPhoto(
+        item.id,
+        1,
+        "editor-1",
+        "approved",
+        "La foto es de una artista distinta.",
+        true,
+        true,
+      ),
+    /no corresponde/,
+  );
+  const reviewed = await manager.reviewInstagramPhoto(
+    item.id,
+    1,
+    "editor-1",
+    "approved",
+    "La foto muestra a Banda Aurora durante su presentación en Niceto.",
+    true,
+    true,
+  );
+  assert.equal(reviewed.assets[0]?.photoRights?.review.status, "approved");
+  assert.equal(reviewed.assets[0]?.photoRights?.review.reviewedBy, "editor-1");
+  assert.equal(reviewed.assets[0]?.photoRights?.evidenceUrl, "https://commons.example/license-proof");
+  const published = await manager.publish(item.id);
+  assert.equal(published.status, "published");
+});
+
+test("rechaza foto de archivo si el copy la presenta como un evento actual", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-photo-archive-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new ContentManager(new ContentStore(directory));
+  const item = await manager.create({
+    title: "Banda Aurora en vivo hoy",
+    instagramCopy: "Anoche en Niceto.",
+    channels: ["instagram"],
+    assets: [
+      {
+        id: "photo-archive",
+        url: "https://afterstage.test/archive.jpg",
+        credit: "Foto: Archivo Afterstage",
+        photoRights: {
+          sourceUrl: "https://afterstage.test/archive",
+          creator: "Archivo Afterstage",
+          license: "owned",
+          licenseVersion: "internal-2026-11",
+          licenseUrl: "https://afterstage.test/rights",
+          termsUrl: "https://afterstage.test/terms",
+          permissionType: "owned_work",
+          evidenceUrl: "https://afterstage.test/evidence",
+          evidenceCheckedAt: new Date().toISOString(),
+          allowedUses: ["instagram", "commercial", "adaptation", "platform_sublicense"],
+          subjectContext: "Banda Aurora archivo",
+          contextType: "event_archive",
+          documentaryPhotograph: true,
+        },
+      },
+    ],
+  });
+  await assert.rejects(
+    () =>
+      manager.reviewInstagramPhoto(item.id, 1, "editor-1", "approved", "Foto de archivo de Banda Aurora.", true, true),
+    /copy presenta el contenido como actual/,
+  );
+});
+
+test("bloquea una publicación programada una sola vez y permite recuperarla tras revisar derechos", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-photo-scheduled-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const manager = new ContentManager(
+    new ContentStore(directory),
+    {} as AiWriter,
+    {
+      publish: async () => ({ instagram: "photo-after-review" }),
+    } as unknown as MetaPublisher,
+  );
+  const item = await manager.create({
+    title: "Banda Aurora Niceto",
+    summary: "La banda tocó en Niceto.",
+    channels: ["instagram"],
+    assets: [
+      {
+        id: "photo-scheduled",
+        url: "https://afterstage.test/photo.jpg",
+        credit: "Foto: Archivo Afterstage",
+        photoRights: {
+          sourceUrl: "https://afterstage.test/photo-source",
+          creator: "Fotógrafa",
+          license: "by",
+          licenseVersion: "4.0",
+          licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+          termsUrl: "https://afterstage.test/terms",
+          permissionType: "license_terms",
+          evidenceUrl: "https://afterstage.test/evidence",
+          evidenceCheckedAt: new Date().toISOString(),
+          allowedUses: ["instagram", "commercial", "adaptation", "platform_sublicense"],
+          subjectContext: "Banda Aurora Niceto",
+          contextType: "artist_or_subject",
+          documentaryPhotograph: true,
+        },
+      },
+    ],
+  });
+  await manager.update(item.id, { status: "review" });
+  await manager.update(item.id, { status: "approved" });
+  await manager.update(item.id, { status: "scheduled", scheduledAt: new Date(Date.now() - 1000).toISOString() });
+  await manager.publishDue();
+  const blocked = await manager.required(item.id);
+  assert.equal(blocked.status, "failed");
+  assert.equal(blocked.scheduledAt, null);
+  assert.equal(blocked.nextAttemptAt, null);
+  await manager.publishDue();
+  assert.equal((await manager.required(item.id)).status, "failed");
+  const reviewed = await manager.reviewInstagramPhoto(
+    item.id,
+    1,
+    "editor-1",
+    "approved",
+    "Foto de archivo identificada de Banda Aurora en Niceto.",
+    true,
+    true,
+  );
+  assert.equal(reviewed.assets[0]?.photoRights?.review.status, "approved");
+  assert.equal((await manager.publish(item.id)).status, "published");
+});
+
+test("crea y deduplica una placa de marca sin imágenes de entrada", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-brand-graphic-"));
+  const mediaDirectory = await mkdtemp(path.join(os.tmpdir(), "afterstage-brand-graphic-files-"));
+  context.after(() =>
+    Promise.all([
+      rm(directory, { recursive: true, force: true }),
+      rm(mediaDirectory, { recursive: true, force: true }),
+    ]),
+  );
+  const templates = new MemorySocialTemplateStore();
+  await templates.init();
+  const template = await templates.findBySlug("agenda-mensual");
+  assert.ok(template);
+  const manager = new ContentManager(
+    new ContentStore(directory),
+    undefined,
+    undefined,
+    new MediaAssetStore(mediaDirectory, "https://afterstage.test"),
+  );
+  const brief = {
+    title: "Shows confirmados esta semana",
+    summary: "Fechas verificadas en las fuentes oficiales.",
+    instagramCopy: "Consultá las fechas confirmadas.",
+    source: "https://afterstage.test/agenda",
+    notes: "Fechas contrastadas con las páginas oficiales de cada evento.",
+    tags: ["Agenda"],
+    idempotencyKey: "instagram-brand-graphic:test",
+  };
+  const slides = [
+    { eyebrow: "AGENDA AFTERSTAGE", title: "Shows confirmados", body: "Esta semana" },
+    { eyebrow: "EN VIVO", title: "Banda Aurora", body: "Niceto · viernes" },
+  ];
+  const created = await manager.prepareEditorialGraphic(template, brief, slides);
+  assert.equal(created.visualSource, "brand_graphic");
+  assert.equal(created.assets.length, 2);
+  assert.equal(
+    created.assets.some((asset) => asset.photoRights),
+    false,
+  );
+  const replay = await manager.prepareEditorialGraphic(template, brief, slides);
+  assert.equal(replay.id, created.id);
+  await assert.rejects(
+    () => manager.prepareEditorialGraphic(template, { ...brief, title: "Otro título" }, slides),
+    /clave de idempotencia ya se usó/,
+  );
 });
 
 test("reclama una publicación para evitar duplicados concurrentes", async (context) => {
@@ -61,7 +264,7 @@ test("reclama una publicación para evitar duplicados concurrentes", async (cont
   assert.equal(results.filter((result) => result.status === "rejected").length, 1);
 });
 
-test("recomparte una nota publicada solamente en Instagram", async (context) => {
+test("bloquea el recompartido de Instagram cuando faltan derechos aprobados", async (context) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "afterstage-repost-instagram-"));
   context.after(() => rm(directory, { recursive: true, force: true }));
   const calls: any[] = [];
@@ -81,20 +284,14 @@ test("recomparte una nota publicada solamente en Instagram", async (context) => 
   });
   await manager.update(created.id, { status: "review" });
   await manager.update(created.id, { status: "approved" });
-  await manager.publish(created.id);
+  await assert.rejects(() => manager.publish(created.id), /cada foto debe tener licencia/);
 
   const previousJwtSecret = process.env.JWT_SECRET;
   process.env.JWT_SECRET = "content-manager-repost-test-secret";
   const idempotency = { key: "repost-1", actorId: "admin-1" };
-  const result = await manager.repostInstagram(created.id, false, idempotency);
-  assert.equal(result.status, "published");
-  assert.equal(result.remoteIds.instagram, "reposted-media");
-  assert.equal(calls.length, 2);
-  const replay = await manager.repostInstagram(created.id, false, idempotency);
-  assert.equal(replay.remoteIds.instagram, "reposted-media");
-  assert.equal(calls.length, 2);
-  assert.deepEqual(calls[1].channels, ["instagram"]);
-  assert.equal(calls[1].containerId, null);
+  await manager.store.update(created.id, { status: "published" });
+  await assert.rejects(() => manager.repostInstagram(created.id, false, idempotency), /cada foto debe tener licencia/);
+  assert.equal(calls.length, 0);
   if (previousJwtSecret === undefined) delete process.env.JWT_SECRET;
   else process.env.JWT_SECRET = previousJwtSecret;
 });
@@ -283,8 +480,39 @@ test("publica canales y persiste ids remotos, slug web y container", async (cont
   const item = await manager.create({
     title: "Publicable",
     channels: ["website", "instagram"],
-    assets: [{ id: "f", url: "https://example.com/f.jpg", altText: "", credit: "" }],
+    assets: [
+      {
+        id: "f",
+        url: "https://example.com/f.jpg",
+        altText: "",
+        credit: "Foto: Prensa",
+        photoRights: {
+          sourceUrl: "https://example.com/source",
+          creator: "Prensa",
+          license: "by",
+          licenseVersion: "4.0",
+          licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+          termsUrl: "https://example.com/terms",
+          permissionType: "license_terms",
+          evidenceUrl: "https://example.com/evidence",
+          evidenceCheckedAt: new Date().toISOString(),
+          allowedUses: ["instagram", "commercial", "adaptation", "platform_sublicense"],
+          subjectContext: "Publicable",
+          contextType: "artist_or_subject",
+          documentaryPhotograph: true,
+        },
+      },
+    ],
   });
+  await manager.reviewInstagramPhoto(
+    item.id,
+    1,
+    "editor",
+    "approved",
+    "La foto muestra al artista de esta publicación.",
+    true,
+    true,
+  );
   await manager.update(item.id, { status: "review" });
   await manager.update(item.id, { status: "approved" });
   const published = await manager.publish(item.id);
