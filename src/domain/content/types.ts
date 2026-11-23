@@ -118,6 +118,7 @@ export type InstagramMetrics = {
   plays: number;
   totalInteractions: number;
   fetchedAt: string;
+  observed?: (keyof Omit<InstagramMetrics, "fetchedAt" | "observed">)[];
 };
 
 export type Database = { contents: ContentItem[] };

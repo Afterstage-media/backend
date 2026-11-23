@@ -2,7 +2,8 @@ import { createApp } from "../interfaces/http/app.js";
 import { createManagers } from "../infrastructure/persistence/mongo.js";
 import { log } from "../interfaces/http/logger.js";
 import { schedulerRun } from "../application/ops.js";
-import { scheduleDueRecurringStories } from "../application/recurring-story-publisher.js";
+import { prepareInstagramEditorial } from "../application/instagram-editorial.js";
+import { argentinaParts, scheduleDueRecurringStories } from "../application/recurring-story-publisher.js";
 import { refreshInstagramLoginToken } from "../application/instagram-token-refresher.js";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -48,9 +49,12 @@ app.listen(port, () => log("info", "server_started", { port }));
 
 const interval = Number(process.env.SCHEDULER_INTERVAL_MS ?? 30_000);
 let weeklyNewsCheckDate = "";
+let editorialDay = "";
+let metricsHour = "";
 const timer = setInterval(
   () =>
     void schedulerRun(async () => {
+      await manager.publishDue();
       const argentinaNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Argentina/Buenos_Aires" }));
       const dateKey = new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/Argentina/Buenos_Aires",
@@ -90,7 +94,31 @@ const timer = setInterval(
           });
         }
       }
-      await manager.publishDue();
+      try {
+        const now = new Date();
+        const { day, time } = argentinaParts(now);
+        const hour = now.toISOString().slice(0, 13);
+        if (hour !== metricsHour) {
+          metricsHour = hour;
+          const refreshed = await manager.refreshRecentInstagramMetrics(+now);
+          if (refreshed.refreshed || refreshed.failed)
+            log(refreshed.failed ? "warn" : "info", "instagram_metrics_refreshed", {
+              correlationId: `instagram-metrics:${now.toISOString()}`,
+              ...refreshed,
+            });
+        }
+        if (socialTemplates && editorialDay !== day && time >= "10:00") {
+          const result = await prepareInstagramEditorial(manager, press, socialTemplates, now);
+          editorialDay = day;
+          if (result.result !== "no_slot")
+            log("info", "instagram_editorial_slot", { correlationId: `instagram-editorial:${day}`, ...result });
+        }
+      } catch (error) {
+        log("error", "instagram_editorial_job_failed", {
+          correlationId: `instagram-editorial:${argentinaParts(new Date()).day}`,
+          errorType: (error as Error).name,
+        });
+      }
       if (process.env.PRESS_AUTO_FOLLOWUP === "true") await press.sendDueFollowups(false);
     }).catch((error) => log("error", "scheduler_failed", { error: (error as Error).message })),
   interval,

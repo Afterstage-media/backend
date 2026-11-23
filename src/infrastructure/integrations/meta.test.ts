@@ -190,6 +190,7 @@ test("consulta insights de Instagram y normaliza métricas", async () => {
       impressions: 130,
       plays: 7,
       totalInteractions: 19,
+      observed: ["likes", "comments", "saves", "shares", "reach", "impressions", "plays", "totalInteractions"],
       fetchedAt: metrics.fetchedAt,
     });
   } finally {

@@ -87,7 +87,11 @@ export class MetaPublisher {
     };
   }
 
-  async getInstagramMetrics(mediaId: string, dryRun = false): Promise<InstagramMetrics> {
+  async getInstagramMetrics(
+    mediaId: string,
+    dryRun = false,
+    type: ContentItem["type"] = "post",
+  ): Promise<InstagramMetrics> {
     if (!mediaId) throw new Error("La publicación no tiene un ID remoto de Instagram");
     if (dryRun)
       return {
@@ -102,13 +106,31 @@ export class MetaPublisher {
         fetchedAt: new Date().toISOString(),
       };
     const { accessToken: token, host } = await this.instagramCredentials(false);
-    const result = await graphGet(
-      `${mediaId}/insights?metric=likes,comments,saved,shares,reach,impressions,plays,total_interactions`,
-      token,
-      host,
-    );
+    const query = type === "story" ? "reach" : "reach,saved,shares,likes,comments,total_interactions";
+    const resource = `${encodeURIComponent(mediaId)}/insights?metric=`;
+    let result;
+    try {
+      result = await graphGet(resource + query, token, host);
+    } catch (error) {
+      if (type === "story") throw error;
+      result = await graphGet(resource + "reach", token, host);
+    }
     const values = (result.data as Array<{ name?: string; values?: Array<{ value?: number }> }> | undefined) ?? [];
-    const metric = (name: string) => Number(values.find((entry) => entry.name === name)?.values?.[0]?.value ?? 0);
+    const names = {
+      likes: "likes",
+      comments: "comments",
+      saves: "saved",
+      shares: "shares",
+      reach: "reach",
+      impressions: "impressions",
+      plays: "plays",
+      totalInteractions: "total_interactions",
+    } as const;
+    const observed = (Object.keys(names) as (keyof typeof names)[]).filter((name) =>
+      values.some((entry) => entry.name === names[name] && Number.isFinite(entry.values?.[0]?.value)),
+    );
+    if (!observed.length) throw new Error("Meta no devolvió métricas para esta publicación");
+    const metric = (name: string) => values.find((entry) => entry.name === name)?.values?.[0]?.value ?? 0;
     return {
       likes: metric("likes"),
       comments: metric("comments"),
@@ -118,6 +140,7 @@ export class MetaPublisher {
       impressions: metric("impressions"),
       plays: metric("plays"),
       totalInteractions: metric("total_interactions"),
+      observed,
       fetchedAt: new Date().toISOString(),
     };
   }

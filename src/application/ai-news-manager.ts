@@ -143,6 +143,7 @@ const groupSameStories = (items: ScrapedItem[]) => {
       group.some((other) => {
         const otherWords = titleTokens(other.title);
         const shared = [...words].filter((word) => otherWords.has(word)).length;
+        if (shared && shared === words.size && shared === otherWords.size) return true;
         return shared >= 3 && shared / Math.min(words.size || 1, otherWords.size || 1) >= 0.68;
       }),
     );
@@ -413,9 +414,13 @@ export class AiNewsManager {
         })),
         schema: aiWeeklyDigestSchema,
       });
+      const usedGroups = new Set<number>();
       stories = ranked.stories
+        .sort((left, right) => right.relevanceScore - left.relevanceScore)
         .flatMap((story) => {
           const indexes = [...new Set(story.itemIndexes)].filter((index) => index >= 0 && index < rankedGroups.length);
+          if (indexes.some((index) => usedGroups.has(index))) return [];
+          for (const index of indexes) usedGroups.add(index);
           const grouped = [...new Set(indexes.flatMap((index) => rankedGroups[index]!.map((item) => item.id)))].slice(
             0,
             10,
