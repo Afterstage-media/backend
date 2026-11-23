@@ -97,15 +97,18 @@ test("la búsqueda automática usa una sola foto claramente coincidente y nunca 
 test("si Openverse no tiene una coincidencia clara conserva la placa tipográfica", async () => {
   const templates = new MemorySocialTemplateStore();
   await templates.init();
+  const sourceArticle = article("Quilmes Rock anuncia una fecha", "quilmes-rock");
   let graphicCalls = 0;
+  let fallbackCopy: Record<string, unknown> | undefined;
   const manager = {
-    store: { findByIdempotencyKey: async () => undefined, list: async () => [article()] },
+    store: { findByIdempotencyKey: async () => undefined, list: async () => [sourceArticle] },
     searchPhotoCandidates: async () => [photo("Festival", ["festival", "rock", "música"])],
     downloadOpenversePhoto: async () => {
       throw new Error("no debería descargarse");
     },
-    prepareEditorialGraphic: async () => {
+    prepareEditorialGraphic: async (_template: unknown, copy: Record<string, unknown>) => {
       graphicCalls += 1;
+      fallbackCopy = copy;
       return { id: "graphic-draft" };
     },
   } as unknown as ContentManager;
@@ -117,17 +120,20 @@ test("si Openverse no tiene una coincidencia clara conserva la placa tipográfic
   );
   assert.deepEqual(result, { result: "draft", id: "graphic-draft" });
   assert.equal(graphicCalls, 1);
+  assert.equal(fallbackCopy?.slug, "instagram-editorial-2026-11-26");
+  assert.notEqual(fallbackCopy?.slug, sourceArticle.slug);
+  assert.equal(fallbackCopy?.idempotencyKey, "instagram-editorial:2026-11-26");
 });
 
-function article() {
+function article(title = "Soda Stereo anuncia una fecha", slug = "soda-stereo") {
   return {
     id: "article-1",
     type: "article",
     status: "published",
     channels: ["website"],
     publishedAt: "2026-11-20T12:00:00Z",
-    slug: "soda-stereo",
-    title: "Soda Stereo anuncia una fecha",
+    slug,
+    title,
     summary: "La banda confirmó una fecha especial y compartió detalles del concierto para sus seguidores.",
     body: "Soda Stereo confirmó una fecha en Buenos Aires.",
     source: "https://press.example/soda",
