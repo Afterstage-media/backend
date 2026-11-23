@@ -1969,7 +1969,7 @@ export const createRemoteMcpServer = (
     {
       title: "Revisar derechos y relevancia de foto",
       description:
-        "Registra la revisión humana de una foto del borrador. Aprobar exige confirmar que es una fotografía real (no sintética), confirmar pertinencia temática/temporal, comprobar trazabilidad completa, usos compatibles con Instagram/edición/comercial/Meta y dejar nota concreta. Una foto de archivo no debe presentarse como imagen del evento actual. No publica ni aprueba el contenido.",
+        "Registra la revisión humana de una foto del borrador. Aprobar exige confirmar que es una fotografía real (no sintética), comprobar los términos de la licencia o permiso, confirmar pertinencia temática/temporal, comprobar trazabilidad completa, usos compatibles con Instagram/edición/comercial/Meta y dejar nota concreta. Una foto de archivo no debe presentarse como imagen del evento actual. No publica ni aprueba el contenido.",
       inputSchema: {
         publicationId: z.string().trim().min(1).max(180),
         slide: z.number().int().min(1).max(9),
@@ -1977,6 +1977,12 @@ export const createRemoteMcpServer = (
         relevanceNotes: z.string().trim().min(1).max(1000),
         isAuthenticPhotoVerified: z.boolean().default(false),
         contextVerified: z.boolean().default(false),
+        isLicenseVerified: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Confirma que una persona revisó los términos y verificó los usos de Instagram, adaptación, comercio y sublicencia técnica requeridos",
+          ),
       },
       outputSchema: z.object({
         publicationId: z.string(),
@@ -1987,7 +1993,10 @@ export const createRemoteMcpServer = (
       annotations: { destructiveHint: false, idempotentHint: true },
       _meta: { securitySchemes: [{ type: "oauth2", scopes: ["notes:write"] }] },
     },
-    async ({ publicationId, slide, decision, relevanceNotes, isAuthenticPhotoVerified, contextVerified }, extra) => {
+    async (
+      { publicationId, slide, decision, relevanceNotes, isAuthenticPhotoVerified, contextVerified, isLicenseVerified },
+      extra,
+    ) => {
       const actor = authFromExtra(extra, "notes:write", ["admin", "editor"]);
       const updated = await manager.reviewInstagramPhoto(
         publicationId,
@@ -1997,6 +2006,7 @@ export const createRemoteMcpServer = (
         relevanceNotes,
         isAuthenticPhotoVerified,
         contextVerified,
+        isLicenseVerified,
       );
       log("info", "instagram_photo_rights_reviewed", {
         correlationId,

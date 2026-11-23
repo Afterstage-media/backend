@@ -2213,6 +2213,7 @@ export const createApp = async (
           relevanceNotes: z.string().trim().min(1).max(1000),
           isAuthenticPhotoVerified: z.boolean().default(false),
           contextVerified: z.boolean().default(false),
+          isLicenseVerified: z.boolean().default(false),
         })
         .parse(request.body);
       const actor = (request as typeof request & { actor?: { id: string } }).actor;
@@ -2227,6 +2228,7 @@ export const createApp = async (
         input.relevanceNotes,
         input.isAuthenticPhotoVerified,
         input.contextVerified,
+        input.isLicenseVerified,
       );
       log("info", "instagram_photo_rights_reviewed", {
         correlationId: (request as typeof request & { correlationId?: string }).correlationId,

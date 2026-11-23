@@ -47,6 +47,17 @@ export type PhotoCandidate = {
   rightsVerified: false;
 };
 
+export type DownloadedPhoto = { bytes: Buffer; mimeType: "image/jpeg" | "image/png" | "image/webp" };
+
+const imageHosts = new Set([
+  "images.unsplash.com",
+  "live.staticflickr.com",
+  "upload.wikimedia.org",
+  "images.pexels.com",
+  "cdn.pixabay.com",
+]);
+const maxImageBytes = 2.5 * 1024 * 1024;
+
 export class OpenverseClient {
   private searchRequests: number[] = [];
 
@@ -115,5 +126,37 @@ export class OpenverseClient {
         tags: image.tags.map((tag) => tag.name).slice(0, 30),
         rightsVerified: false as const,
       }));
+  }
+
+  async download(candidate: PhotoCandidate): Promise<DownloadedPhoto> {
+    const url = new URL(candidate.imageUrl);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      (url.port && url.port !== "443") ||
+      !imageHosts.has(url.hostname.toLowerCase())
+    ) {
+      throw new Error("El host de la foto no está permitido");
+    }
+    const response = await this.fetcher(url, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw new Error(`La descarga de la foto respondió ${response.status}`);
+    if (response.url && new URL(response.url).origin !== url.origin) throw new Error("La foto redirigió a otro origen");
+    const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+    if (!(mimeType === "image/jpeg" || mimeType === "image/png" || mimeType === "image/webp")) {
+      throw new Error("La respuesta no es una foto JPG, PNG o WebP");
+    }
+    const length = Number(response.headers.get("content-length"));
+    if (Number.isFinite(length) && length > maxImageBytes) throw new Error("La foto supera el límite de 2,5 MiB");
+    if (!response.body) throw new Error("La descarga no contiene imagen");
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.byteLength;
+      if (size > maxImageBytes) throw new Error("La foto supera el límite de 2,5 MiB");
+      chunks.push(chunk);
+    }
+    if (!size) throw new Error("La descarga no contiene imagen");
+    return { bytes: Buffer.concat(chunks), mimeType };
   }
 }

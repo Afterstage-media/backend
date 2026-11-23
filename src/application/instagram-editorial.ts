@@ -4,6 +4,7 @@ import type { SocialTemplateRepository } from "../domain/content/social-template
 import type { ContentManager } from "./content-manager.js";
 import type { PressManager } from "./press-manager.js";
 import { argentinaParts } from "./recurring-story-publisher.js";
+import type { PhotoCandidate } from "../infrastructure/integrations/openverse.js";
 
 const timeZone = "America/Argentina/Buenos_Aires";
 const dateLabel = new Intl.DateTimeFormat("es-AR", { timeZone, day: "numeric", month: "short" });
@@ -26,6 +27,57 @@ const sectionFor = (item: ContentItem): Section => {
   if (tags.some((tag) => ["cronica", "cobertura", "show-recap"].includes(tag))) return "show-recap";
   if (tags.some((tag) => ["descubrimiento", "discovery"].includes(tag))) return "discovery";
   return "news";
+};
+
+const relevantPhotoCandidate = (article: ContentItem, candidates: PhotoCandidate[]) => {
+  const tokens = (value: string) =>
+    clean(value)
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .match(/[a-z0-9]{4,}/g) ?? [];
+  const generic = new Set([
+    "musica",
+    "musical",
+    "rock",
+    "banda",
+    "concierto",
+    "conciertos",
+    "show",
+    "shows",
+    "escena",
+    "argentina",
+    "nuevo",
+    "nueva",
+    "album",
+    "disco",
+    "cancion",
+    "live",
+    "photo",
+    "image",
+  ]);
+  const articleTerms = new Set(
+    tokens(`${article.title} ${article.tags.join(" ")}`).filter((token) => !generic.has(token)),
+  );
+  const matching = candidates
+    .filter(
+      (candidate) =>
+        candidate.rightsVerified === false &&
+        candidate.creator.trim() &&
+        candidate.license.trim() &&
+        candidate.licenseVersion.trim() &&
+        candidate.licenseUrl &&
+        candidate.sourceUrl.startsWith("https://"),
+    )
+    .map((candidate) => {
+      const candidateTerms = tokens(`${candidate.title} ${candidate.tags.join(" ")}`);
+      const overlap = new Set(candidateTerms.filter((token) => articleTerms.has(token)));
+      return { candidate, overlap: overlap.size };
+    })
+    .filter(({ overlap }) => overlap >= 2)
+    .sort((left, right) => right.overlap - left.overlap);
+  if (!matching.length || (matching.length > 1 && matching[0]!.overlap === matching[1]!.overlap)) return undefined;
+  return matching[0]!.candidate;
 };
 
 const performance = (items: ContentItem[], section: Section) => {
@@ -161,6 +213,67 @@ export async function prepareInstagramEditorial(
   const template = await templates.findBySlug(section.template);
   if (!template) return { result: "missing_template" };
   const source = articleUrl(article);
+  if (
+    section.template === "noticia-musical" &&
+    template.outputType === "post" &&
+    template.visualStyle.layout === "photo-overlay"
+  ) {
+    try {
+      const query = `${article.title} ${article.tags.join(" ")} ${clean(article.summary).slice(0, 100)}`.slice(0, 200);
+      const photoCandidates = await manager.searchPhotoCandidates(query, 10);
+      const candidate = relevantPhotoCandidate(article, photoCandidates);
+      if (candidate) {
+        const downloaded = await manager.downloadOpenversePhoto(candidate);
+        const checkedAt = new Date().toISOString();
+        const licenseLabel = `${candidate.license.toUpperCase()} ${candidate.licenseVersion}`;
+        const draft = await manager.createInstagramSocialPublication(
+          {
+            templateId: template.id,
+            type: "post",
+            title: article.title,
+            instagramCopy: [clean(article.summary), section.cta, `Fuente editorial: ${source}`].join("\n\n"),
+            slides: [
+              {
+                text: clean(article.summary).slice(0, 180),
+                image: {
+                  base64: downloaded.bytes.toString("base64"),
+                  mimeType: downloaded.mimeType,
+                  altText:
+                    "Foto candidata de Openverse. Revisar autenticidad, contexto y texto alternativo antes de publicar.",
+                  credit: `${candidate.creator} · ${candidate.providerName} · ${licenseLabel} (pendiente de verificación)`,
+                  photoRights: {
+                    sourceUrl: candidate.sourceUrl,
+                    creator: candidate.creator,
+                    license: candidate.license,
+                    licenseVersion: candidate.licenseVersion,
+                    licenseUrl: candidate.licenseUrl!,
+                    permissionType: "license_terms",
+                    termsUrl: candidate.licenseUrl!,
+                    evidenceUrl: candidate.sourceUrl,
+                    evidenceCheckedAt: checkedAt,
+                    allowedUses: ["instagram", "commercial", "adaptation", "platform_sublicense"],
+                    subjectContext: article.title.slice(0, 300),
+                    contextType: "illustrative_context",
+                    documentaryPhotograph: false,
+                  },
+                },
+              },
+            ],
+            tags: [section.label, "Foto pendiente de revisión"],
+            source: `${source} · Foto candidata: ${candidate.sourceUrl}`,
+            author: "Afterstage",
+            photographer: candidate.creator,
+          },
+          "afterstage-editorial",
+          template,
+          slot,
+        );
+        return { result: "draft", id: draft.id, visual: "photo_pending_review" };
+      }
+    } catch {
+      // Editorial image search is optional; keep the existing typographic fallback on any uncertainty.
+    }
+  }
   const draft = await manager.prepareEditorialGraphic(
     template,
     {
